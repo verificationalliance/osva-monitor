@@ -201,9 +201,9 @@ func main() throws {
     let open: Set<String> = ["pkg|npm|axios|1.14.1", "brew|nginx|1.30.2"]
     func popover(_ report: ScanReport?, scanning: Bool = false, progress: String = "", expanded: Set<String> = [],
                  fixes: [String: FixRowState] = [:], resolved: [Finding] = [], coverageOpen: Set<String> = [],
-                 whatsNew: Changelog.Entry? = nil) -> some View {
+                 whatsNew: Changelog.Entry? = nil, fixAll: FixAllPanel = .none) -> some View {
         PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now, resolved: resolved), actions: .none,
-                    fixes: fixes, whatsNew: whatsNew, expanded: expanded, scrolls: false, coverageOpen: coverageOpen)
+                    fixes: fixes, whatsNew: whatsNew, fixAll: fixAll, expanded: expanded, scrolls: false, coverageOpen: coverageOpen)
     }
     // What's New: the newest entry as an update shows it, and the entry with the most lines, the card at its largest.
     let changelog = Changelog.bundled
@@ -257,6 +257,11 @@ func main() throws {
     ] + PreviewData.fixSceneNames.map { name in
         let scene = PreviewData.fixScene(name)!
         return ("fix-\(name)", AnyView(popover(scene.report(), expanded: scene.open, fixes: scene.fixes, resolved: scene.resolvedFindings)), Method.imageRenderer)
+    } + PreviewData.fixAllSceneNames.map { name in
+        // Fix all: the header's button (and waiting), the review, step 3 of 7, stopped by a break, the summary
+        let all = PreviewData.fixAllScene(name)!
+        return ("fix-\(name)", AnyView(popover(all.scene.report(), expanded: all.scene.open, fixes: all.scene.fixes,
+                                               resolved: all.scene.resolvedFindings, fixAll: all.panel)), Method.imageRenderer)
     } + sheets(full, prefix: "sent") + sheets(PreviewData.bundlesReport(), prefix: "sent-bundles") + coverageLists()
     // Where each copy is and why: rows open, then one with its details open; on the window background and on a mid-grey
     // like the glass of the owner's panel over their desktop (sampled from their screenshot: rgb 122).
