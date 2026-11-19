@@ -67,8 +67,14 @@ public final class AppModel {
         prepareFixFolders()
         Task { await notifier.requestPermission() }
         let due = report.map { Date().timeIntervalSince($0.finishedAt) > interval } ?? true
-        if due { scanNow() }
+        // A newer app scans at once, so the findings carry what it adds (0.2.0's Fix button needs a new scan).
+        let scannedByOlder = report != nil && UserDefaults.standard.string(forKey: Self.scannedByKey) != Self.appVersion
+        if due || scannedByOlder { scanNow() }
     }
+
+    /// The app version that made the saved report.
+    static let scannedByKey = "lastFullScanAppVersion"
+    static var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
 
     private var interval: TimeInterval { TimeInterval(max(1, settings.scanIntervalHours) * 3600) }
 
@@ -106,6 +112,7 @@ public final class AppModel {
         isScanning = false
         progress = ""
         storage.save(result)
+        if full { UserDefaults.standard.set(Self.appVersion, forKey: Self.scannedByKey) }
         scanReplacedFindings(full: full)
         if settings.notificationsEnabled {
             let before = Set(previous?.findings.filter(\.deservesNotification).map(\.notificationKey) ?? [])
