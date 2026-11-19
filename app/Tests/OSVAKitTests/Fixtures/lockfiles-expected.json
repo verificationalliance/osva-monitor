@@ -1,0 +1,355 @@
+{
+ "bundler/Gemfile.lock": {
+  "dependencies": [
+   [
+    "RubyGems",
+    "actionpack",
+    "7.0.4"
+   ],
+   [
+    "RubyGems",
+    "actionview",
+    "7.0.4"
+   ],
+   [
+    "RubyGems",
+    "nokogiri",
+    "1.13.8-arm64-darwin"
+   ],
+   [
+    "RubyGems",
+    "racc",
+    "1.6.0"
+   ],
+   [
+    "RubyGems",
+    "rack",
+    "2.2.3"
+   ]
+  ],
+  "skipped": []
+ },
+ "cargo/Cargo.lock": {
+  "dependencies": [
+   [
+    "crates.io",
+    "openssl",
+    "0.10.55"
+   ],
+   [
+    "crates.io",
+    "time",
+    "0.1.43"
+   ]
+  ],
+  "skipped": []
+ },
+ "composer/composer.lock": {
+  "dependencies": [
+   [
+    "Packagist",
+    "guzzlehttp/guzzle",
+    "7.4.0"
+   ],
+   [
+    "Packagist",
+    "monolog/monolog",
+    "2.9.1"
+   ],
+   [
+    "Packagist",
+    "phpunit/phpunit",
+    "9.5.0"
+   ]
+  ],
+  "skipped": []
+ },
+ "go/go.sum": {
+  "dependencies": [
+   [
+    "Go",
+    "github.com/gin-gonic/gin",
+    "v1.9.0"
+   ],
+   [
+    "Go",
+    "golang.org/x/crypto",
+    "v0.14.0"
+   ],
+   [
+    "Go",
+    "golang.org/x/net",
+    "v0.17.0"
+   ]
+  ],
+  "skipped": []
+ },
+ "go-mod/go.mod": {
+  "dependencies": [
+   [
+    "Go",
+    "github.com/gin-gonic/gin",
+    "v1.9.0"
+   ],
+   [
+    "Go",
+    "golang.org/x/net",
+    "v0.17.0"
+   ],
+   [
+    "Go",
+    "stdlib",
+    "1.22.0"
+   ]
+  ],
+  "skipped": []
+ },
+ "npm-v1/npm-shrinkwrap.json": {
+  "dependencies": [
+   [
+    "npm",
+    "event-stream",
+    "3.3.6"
+   ],
+   [
+    "npm",
+    "flatmap-stream",
+    "0.1.1"
+   ],
+   [
+    "npm",
+    "minimist",
+    "0.0.8"
+   ],
+   [
+    "npm",
+    "mkdirp",
+    "0.5.1"
+   ]
+  ],
+  "skipped": []
+ },
+ "npm-v3/package-lock.json": {
+  "dependencies": [
+   [
+    "npm",
+    "@babel/core",
+    "7.24.0"
+   ],
+   [
+    "npm",
+    "debug",
+    "4.3.1"
+   ],
+   [
+    "npm",
+    "lodash",
+    "4.17.20"
+   ],
+   [
+    "npm",
+    "string-width",
+    "4.2.3"
+   ]
+  ],
+  "skipped": []
+ },
+ "pipenv/Pipfile.lock": {
+  "dependencies": [
+   [
+    "PyPI",
+    "idna",
+    "2.10"
+   ],
+   [
+    "PyPI",
+    "pytest",
+    "7.4.0"
+   ],
+   [
+    "PyPI",
+    "requests",
+    "2.25.0"
+   ]
+  ],
+  "skipped": []
+ },
+ "pnpm-v6/pnpm-lock.yaml": {
+  "dependencies": [
+   [
+    "npm",
+    "@types/node",
+    "20.10.0"
+   ],
+   [
+    "npm",
+    "accepts",
+    "1.3.8"
+   ],
+   [
+    "npm",
+    "express",
+    "4.18.2"
+   ],
+   [
+    "npm",
+    "undici-types",
+    "5.26.5"
+   ]
+  ],
+  "skipped": []
+ },
+ "pnpm-v9/pnpm-lock.yaml": {
+  "dependencies": [
+   [
+    "npm",
+    "@next/env",
+    "14.0.0"
+   ],
+   [
+    "npm",
+    "next",
+    "14.0.0"
+   ],
+   [
+    "npm",
+    "react",
+    "18.2.0"
+   ]
+  ],
+  "skipped": []
+ },
+ "poetry/poetry.lock": {
+  "dependencies": [
+   [
+    "PyPI",
+    "Jinja2",
+    "3.1.2"
+   ],
+   [
+    "PyPI",
+    "certifi",
+    "2023.7.22"
+   ],
+   [
+    "PyPI",
+    "typing_extensions",
+    "4.8.0"
+   ]
+  ],
+  "skipped": []
+ },
+ "requirements/requirements-dev.txt": {
+  "dependencies": [
+   [
+    "PyPI",
+    "Django",
+    "4.2.7"
+   ],
+   [
+    "PyPI",
+    "Flask_Login",
+    "0.6.3"
+   ],
+   [
+    "PyPI",
+    "PyYAML",
+    "6.0.1"
+   ],
+   [
+    "PyPI",
+    "requests",
+    "2.31.0"
+   ],
+   [
+    "PyPI",
+    "urllib3",
+    "1.26.5"
+   ],
+   [
+    "PyPI",
+    "zope.interface",
+    "6.1"
+   ]
+  ],
+  "skipped": []
+ },
+ "sbom/bom.cdx.json": {
+  "dependencies": [
+   [
+    "Maven",
+    "com.fasterxml.jackson.core:jackson-databind",
+    "2.13.0"
+   ],
+   [
+    "PyPI",
+    "urllib3",
+    "1.26.5"
+   ],
+   [
+    "npm",
+    "@babel/core",
+    "7.24.0"
+   ],
+   [
+    "npm",
+    "lodash",
+    "4.17.20"
+   ]
+  ],
+  "skipped": [
+   "zlib@1.2.11",
+   "debian/openssl@3.0.11-1"
+  ]
+ },
+ "yarn-berry/yarn.lock": {
+  "dependencies": [
+   [
+    "npm",
+    "@types/node",
+    "20.10.0"
+   ],
+   [
+    "npm",
+    "axios",
+    "1.6.0"
+   ],
+   [
+    "npm",
+    "demo",
+    "0.0.0-use.local"
+   ],
+   [
+    "npm",
+    "follow-redirects",
+    "1.15.2"
+   ]
+  ],
+  "skipped": []
+ },
+ "yarn-v1/yarn.lock": {
+  "dependencies": [
+   [
+    "npm",
+    "@babel/code-frame",
+    "7.22.13"
+   ],
+   [
+    "npm",
+    "axios",
+    "1.6.0"
+   ],
+   [
+    "npm",
+    "chalk",
+    "2.4.2"
+   ],
+   [
+    "npm",
+    "follow-redirects",
+    "1.15.2"
+   ]
+  ],
+  "skipped": []
+ }
+}

@@ -1,0 +1,5 @@
+.build/
+.lake/
+.swiftpm/
+*.xcuserstate
+DerivedData/

@@ -1,0 +1,351 @@
+#osva-app-index	1	2026-11-19T03:00:00Z	35	314
+P	linux	Linux kernel	git.kernel.org/pub/scm/linux/kernel/git/stable/linux
+P	glibc	glibc	sourceware.org/git/glibc
+P	systemd	systemd	github.com/systemd/systemd
+P	sudo	sudo	github.com/sudo-project/sudo
+P	busybox	BusyBox	github.com/mirror/busybox
+P	binutils	binutils / gdb	sourceware.org/git/binutils-gdb
+P	qemu	QEMU	gitlab.com/qemu-project/qemu
+P	zephyr	Zephyr RTOS	github.com/zephyrproject-rtos/zephyr
+P	vim	Vim	github.com/vim/vim
+P	openssl	OpenSSL	github.com/openssl/openssl
+P	openssh	OpenSSH	github.com/openssh/openssh-portable
+P	gnutls	GnuTLS	gitlab.com/gnutls/gnutls
+P	wolfssl	wolfSSL	github.com/wolfssl/wolfssl
+P	mbedtls	Mbed TLS	github.com/mbed-tls/mbedtls
+P	gnupg	GnuPG / libgcrypt	github.com/gpg/gnupg
+P	boringssl	BoringSSL	boringssl.googlesource.com/boringssl
+P	aws-lc	AWS-LC	github.com/aws/aws-lc
+P	firefox-nss	NSS (Firefox)	github.com/nss-dev/nss
+P	libssh	libssh	gitlab.com/libssh/libssh-mirror
+P	libssh2	libssh2	github.com/libssh2/libssh2
+P	krb5	MIT Kerberos	github.com/krb5/krb5
+P	curl	curl	github.com/curl/curl
+P	nginx	nginx	github.com/nginx/nginx
+P	httpd	Apache httpd	github.com/apache/httpd
+P	tomcat	Apache Tomcat	github.com/apache/tomcat
+P	envoy	Envoy	github.com/envoyproxy/envoy
+P	haproxy	HAProxy	github.com/haproxy/haproxy
+P	bind9	BIND 9	gitlab.isc.org/isc-projects/bind9
+P	unbound	Unbound	github.com/nlnetlabs/unbound
+P	samba	Samba	github.com/samba-team/samba
+P	openvpn	OpenVPN	github.com/openvpn/openvpn
+P	squid	Squid	github.com/squid-cache/squid
+P	freerdp	FreeRDP	github.com/freerdp/freerdp
+P	wireshark	Wireshark	gitlab.com/wireshark/wireshark
+P	netty	Netty	github.com/netty/netty
+P	cpython	CPython	github.com/python/cpython
+P	node	Node.js	github.com/nodejs/node
+P	go	Go	github.com/golang/go
+P	rust	Rust	github.com/rust-lang/rust
+P	openjdk	OpenJDK	github.com/openjdk/jdk
+P	php	PHP	github.com/php/php-src
+P	ruby	Ruby	github.com/ruby/ruby
+P	llvm	LLVM	github.com/llvm/llvm-project
+P	electron	Electron	github.com/electron/electron
+P	sqlite	SQLite	github.com/sqlite/sqlite
+P	postgres	PostgreSQL	github.com/postgres/postgres
+P	mysql	MySQL	github.com/mysql/mysql-server
+P	mariadb	MariaDB	github.com/mariadb/server
+P	redis	Redis	github.com/redis/redis
+P	libxml2	libxml2	gitlab.gnome.org/gnome/libxml2
+P	expat	Expat	github.com/libexpat/libexpat
+P	zlib	zlib	github.com/madler/zlib
+P	xz	XZ Utils	github.com/tukaani-project/xz
+P	libarchive	libarchive	github.com/libarchive/libarchive
+P	ffmpeg	FFmpeg	github.com/ffmpeg/ffmpeg
+P	imagemagick	ImageMagick	github.com/imagemagick/imagemagick
+P	ghostscript	Ghostscript	git.ghostscript.com/ghostpdl
+P	libtiff	libtiff	gitlab.com/libtiff/libtiff
+P	libpng	libpng	github.com/pnggroup/libpng
+P	libjpeg-turbo	libjpeg-turbo	github.com/libjpeg-turbo/libjpeg-turbo
+P	poppler	Poppler	gitlab.freedesktop.org/poppler/poppler
+P	freetype	FreeType	gitlab.freedesktop.org/freetype/freetype
+P	pcre2	PCRE2	github.com/pcre2project/pcre2
+P	git	Git	github.com/git/git
+P	gitlab	GitLab	gitlab.com/gitlab-org/gitlab
+P	gitea	Gitea	github.com/go-gitea/gitea
+P	jenkins	Jenkins	github.com/jenkinsci/jenkins
+P	kubernetes	Kubernetes	github.com/kubernetes/kubernetes
+P	containerd	containerd	github.com/containerd/containerd
+P	runc	runc	github.com/opencontainers/runc
+P	moby	Moby / Docker Engine	github.com/moby/moby
+P	helm	Helm	github.com/helm/helm
+P	etcd	etcd	github.com/etcd-io/etcd
+P	istio	Istio	github.com/istio/istio
+P	argo-cd	Argo CD	github.com/argoproj/argo-cd
+P	grafana	Grafana	github.com/grafana/grafana
+P	prometheus	Prometheus	github.com/prometheus/prometheus
+P	pytorch	PyTorch	github.com/pytorch/pytorch
+P	tensorflow	TensorFlow	github.com/tensorflow/tensorflow
+P	transformers	Transformers	github.com/huggingface/transformers
+P	vllm	vLLM	github.com/vllm-project/vllm
+P	llama-cpp	llama.cpp	github.com/ggml-org/llama.cpp
+P	ollama	Ollama	github.com/ollama/ollama
+P	langchain	LangChain	github.com/langchain-ai/langchain
+P	open-webui	Open WebUI	github.com/open-webui/open-webui
+P	langflow	Langflow	github.com/langflow-ai/langflow
+P	n8n	n8n	github.com/n8n-io/n8n
+P	microsoft-typescript	typescript	github.com/microsoft/typescript
+P	numpy-numpy	numpy	github.com/numpy/numpy
+P	junit-team-junit4	junit	github.com/junit-team/junit4
+P	go-x-sys	x/sys	cs.opensource.google/go/x/sys
+P	serde-rs-serde	serde	github.com/serde-rs/serde
+P	ruby-rake	rake	github.com/ruby/rake
+P	sebastianbergmann-phpunit	phpunit/phpunit	github.com/sebastianbergmann/phpunit
+P	jamesnk-newtonsoft-json	newtonsoft.json	github.com/jamesnk/newtonsoft.json
+P	eslint-eslint	eslint	github.com/eslint/eslint
+P	psf-requests	requests	github.com/psf/requests
+P	scala-scala3	scala-library	github.com/scala/scala3
+P	stretchr-testify	stretchr/testify	github.com/stretchr/testify
+P	serde-rs-json	serde_json	github.com/serde-rs/json
+P	ruby-rubygems	bundler	github.com/ruby/rubygems
+P	illuminate-support	illuminate/support	github.com/illuminate/support
+P	dotnet-dotnet	dotnet	github.com/dotnet/dotnet
+P	react-react	react	github.com/react/react
+P	pytest-dev-pytest	pytest	github.com/pytest-dev/pytest
+P	qos-ch-slf4j	slf4j	github.com/qos-ch/slf4j
+P	go-x-crypto	x/crypto	cs.opensource.google/go/x/crypto
+P	tokio-rs-tokio	tokio	github.com/tokio-rs/tokio
+P	rspec-rspec	rspec	github.com/rspec/rspec
+P	guzzle-guzzle	guzzlehttp/guzzle	github.com/guzzle/guzzle
+P	dotnet-standard	netstandard.library	github.com/dotnet/standard
+P	mochajs-mocha	mocha	github.com/mochajs/mocha
+P	pandas-dev-pandas	pandas	github.com/pandas-dev/pandas
+P	google-guava	guava	github.com/google/guava
+P	golang-protobuf	golang/protobuf	github.com/golang/protobuf
+P	rust-lang-log	log	github.com/rust-lang/log
+P	pry-pry	pry	github.com/pry/pry
+P	phpcsstandards-php-codesniffer	squizlabs/php_codesniffer	github.com/phpcsstandards/php_codesniffer
+P	definitelytyped-definitelytyped	definitelytyped	github.com/definitelytyped/definitelytyped
+P	matplotlib-matplotlib	matplotlib	github.com/matplotlib/matplotlib
+P	qos-ch-logback	logback-classic	github.com/qos-ch/logback
+P	davecgh-go-spew	davecgh/go-spew	github.com/davecgh/go-spew
+P	clap-rs-clap	clap	github.com/clap-rs/clap
+P	rails-rails	rails	github.com/rails/rails
+P	orchestral-testbench	orchestra/testbench	github.com/orchestral/testbench
+P	jestjs-jest	jest	github.com/jestjs/jest
+P	scipy-scipy	scipy	github.com/scipy/scipy
+P	mockito-mockito	mockito	github.com/mockito/mockito
+P	go-x-text	x/text	cs.opensource.google/go/x/text
+P	dtolnay-thiserror	thiserror	github.com/dtolnay/thiserror
+P	mockery-mockery	mockery/mockery	github.com/mockery/mockery
+P	prettier-prettier	prettier	github.com/prettier/prettier
+P	fasterxml-jackson-databind	jackson-databind	github.com/fasterxml/jackson-databind
+P	go-x-net	x/net	cs.opensource.google/go/x/net
+P	dtolnay-anyhow	anyhow	github.com/dtolnay/anyhow
+P	simplecov-ruby-simplecov	simplecov	github.com/simplecov-ruby/simplecov
+P	webpack-webpack	webpack	github.com/webpack/webpack
+P	pytest-dev-pytest-cov	pytest-cov	github.com/pytest-dev/pytest-cov
+P	repos-asf-commons-lang	commons-lang3	gitbox.apache.org/repos/asf/commons-lang
+P	pkg-errors	pkg/errors	github.com/pkg/errors
+P	rust-random-rand	rand	github.com/rust-random/rand
+P	minitest-minitest	minitest	github.com/minitest/minitest
+P	php-cs-fixer-php-cs-fixer	friendsofphp/php-cs-fixer	github.com/php-cs-fixer/php-cs-fixer
+P	apache-logging-log4net	log4net	github.com/apache/logging-log4net
+P	tqdm-tqdm	tqdm	github.com/tqdm/tqdm
+P	repos-asf-commons-parent	commons-io	gitbox.apache.org/repos/asf/commons-parent
+P	go-yaml-yaml	yaml	github.com/go-yaml/yaml
+P	rust-lang-futures-rs	futures	github.com/rust-lang/futures-rs
+P	superjagger-http-crawler	http_crawler	github.com/superjagger/http_crawler
+P	laravel-framework	laravel/framework	github.com/laravel/framework
+P	babel-babel	babel	github.com/babel/babel
+P	pallets-click	click	github.com/pallets/click
+P	jetbrains-kotlin	kotlin	github.com/jetbrains/kotlin
+P	chronotope-chrono	chrono	github.com/chronotope/chrono
+P	rubocop-rubocop	rubocop	github.com/rubocop/rubocop
+P	symfony-console	symfony/console	github.com/symfony/console
+P	babel-babel-loader	babel-loader	github.com/babel/babel-loader
+P	pydantic-pydantic	pydantic	github.com/pydantic/pydantic
+P	projectlombok-lombok	lombok	github.com/projectlombok/lombok
+P	protocolbuffers-protobuf-go	protobuf	github.com/protocolbuffers/protobuf-go
+P	rust-lang-nursery-lazy-static-rs	lazy_static	github.com/rust-lang-nursery/lazy-static.rs
+P	sparklemotion-sqlite3-ruby	sqlite3	github.com/sparklemotion/sqlite3-ruby
+P	yiisoft-yii2-framework	yiisoft/yii2	github.com/yiisoft/yii2-framework
+P	import-js-eslint-plugin-import	eslint-plugin-import	github.com/import-js/eslint-plugin-import
+P	psf-black	black	github.com/psf/black
+P	google-go-cmp	google/go-cmp	github.com/google/go-cmp
+P	rust-lang-regex	regex	github.com/rust-lang/regex
+P	symfony-framework-bundle	symfony/framework-bundle	github.com/symfony/framework-bundle
+P	isaacs-rimraf	rimraf	github.com/isaacs/rimraf
+P	scikit-learn-scikit-learn	scikit-learn	github.com/scikit-learn/scikit-learn
+P	javaee-servlet-spec	javax.servlet-api	github.com/javaee/servlet-spec
+P	pmezard-go-difflib	pmezard/go-difflib	github.com/pmezard/go-difflib
+P	seanmonstar-reqwest	reqwest	github.com/seanmonstar/reqwest
+P	symfony-yaml	symfony/yaml	github.com/symfony/yaml
+P	chaijs-chai	chai	github.com/chaijs/chai
+P	yaml-pyyaml	pyyaml	github.com/yaml/pyyaml
+P	assertj-assertj	assertj-core	github.com/assertj/assertj
+P	sirupsen-logrus	sirupsen/logrus	github.com/sirupsen/logrus
+P	dtolnay-syn	syn	github.com/dtolnay/syn
+P	illuminate-database	illuminate/database	github.com/illuminate/database
+P	dotnet-runtime	system.componentmodel.annotations	github.com/dotnet/runtime
+P	pycqa-flake8	flake8	github.com/pycqa/flake8
+P	apache-logging-log4j1	log4j 1.x (end of life)	github.com/apache/logging-log4j1
+P	fsnotify-fsnotify	fsnotify/fsnotify	github.com/fsnotify/fsnotify
+P	dtolnay-quote	quote	github.com/dtolnay/quote
+P	php-fig-log	psr/log	github.com/php-fig/log
+P	dotnet-corefx	microsoft.csharp	github.com/dotnet/corefx
+P	lodash-lodash	lodash	github.com/lodash/lodash
+P	pypa-setuptools	setuptools	github.com/pypa/setuptools
+P	gogo-protobuf	gogo/protobuf	github.com/gogo/protobuf
+P	rust-cli-env-logger	env_logger	github.com/rust-cli/env_logger
+P	illuminate-contracts	illuminate/contracts	github.com/illuminate/contracts
+P	dotnet-aspnetcore	aspnetcore	github.com/dotnet/aspnetcore
+P	python-typing-extensions	typing-extensions	github.com/python/typing_extensions
+P	google-gson	gson	github.com/google/gson
+P	spf13-pflag	spf13/pflag	github.com/spf13/pflag
+P	symfony-var-dumper	symfony/var-dumper	github.com/symfony/var-dumper
+P	babel-babel-eslint	babel-eslint	github.com/babel/babel-eslint
+P	sphinx-doc-sphinx	sphinx	github.com/sphinx-doc/sphinx
+P	fasterxml-jackson-core	jackson-core	github.com/fasterxml/jackson-core
+P	grpc-grpc-go	grpc	github.com/grpc/grpc-go
+P	rust-lang-libc	libc	github.com/rust-lang/libc
+P	seldaek-monolog	monolog/monolog	github.com/seldaek/monolog
+P	go-x-tools	x/tools	cs.opensource.google/go/x/tools
+P	dtolnay-proc-macro2	proc-macro2	github.com/dtolnay/proc-macro2
+P	vimeo-psalm	vimeo/psalm	github.com/vimeo/psalm
+P	dotnet-maintenance-packages	maintenance-packages	github.com/dotnet/maintenance-packages
+P	typicode-husky	husky	github.com/typicode/husky
+P	benjaminp-six	six	github.com/benjaminp/six
+P	serilog-serilog	serilog	github.com/serilog/serilog
+P	rollup-rollup	rollup	github.com/rollup/rollup
+P	junit-team-junit-framework	junit-framework	github.com/junit-team/junit-framework
+P	chalk-chalk	chalk	github.com/chalk/chalk
+P	repos-asf-httpcomponents-client	httpclient	gitbox.apache.org/repos/asf/httpcomponents-client
+P	dotnet-winforms	system.drawing.common	github.com/dotnet/winforms
+P	restsharp-restsharp	restsharp	github.com/restsharp/restsharp
+P	jetbrains-jetbrains-annotations	jetbrains.annotations	github.com/jetbrains/jetbrains.annotations
+P	luckypennysoftware-automapper	automapper	github.com/luckypennysoftware/automapper
+P	azuread-azure-activedirectory-identitymodel-extensions-for-dotnet	system.identitymodel.tokens.jwt	github.com/azuread/azure-activedirectory-identitymodel-extensions-for-dotnet
+P	app-vnext-polly	polly	github.com/app-vnext/polly
+P	dapperlib-dapper	dapper	github.com/dapperlib/dapper
+P	ruby-json	json	github.com/ruby/json
+P	bblimke-webmock	webmock	github.com/bblimke/webmock
+P	dotnet-fsharp	fsharp.core	github.com/dotnet/fsharp
+P	sparklemotion-nokogiri	nokogiri	github.com/sparklemotion/nokogiri
+P	openclaw-openclaw	openclaw	github.com/openclaw/openclaw
+P	wwbn-avideo	avideo	github.com/wwbn/avideo
+P	openemr-openemr	openemr	github.com/openemr/openemr
+P	siyuan-note-siyuan	siyuan	github.com/siyuan-note/siyuan
+P	gpac-gpac	gpac	github.com/gpac/gpac
+P	mervinpraison-praisonai	praisonai	github.com/mervinpraison/praisonai
+P	mattermost-mattermost	mattermost	github.com/mattermost/mattermost
+P	elastic-elasticsearch	elasticsearch	github.com/elastic/elasticsearch
+P	misp-misp	misp	github.com/misp/misp
+P	jeecgboot-jeecgboot	jeecgboot	github.com/jeecgboot/jeecgboot
+P	discourse-discourse	discourse	github.com/discourse/discourse
+P	getgrav-grav	grav	github.com/getgrav/grav
+P	craftcms-cms	cms	github.com/craftcms/cms
+P	apache-airflow	airflow	github.com/apache/airflow
+P	open5gs-open5gs	open5gs	github.com/open5gs/open5gs
+P	nocodb-nocodb	nocodb	github.com/nocodb/nocodb
+P	parse-community-parse-server	parse-server	github.com/parse-community/parse-server
+P	concretecms-concretecms	concretecms	github.com/concretecms/concretecms
+P	helidon-io-helidon	helidon	github.com/helidon-io/helidon
+P	flowiseai-flowise	flowise	github.com/flowiseai/flowise
+P	mongodb-mongo	mongo	github.com/mongodb/mongo
+P	thorsten-phpmyfaq	phpmyfaq	github.com/thorsten/phpmyfaq
+P	cap-go-capgo-app	capgo.app	github.com/cap-go/capgo.app
+P	frappe-erpnext	erpnext	github.com/frappe/erpnext
+P	hacl-star	HACL*	github.com/hacl-star/hacl-star
+P	vale	Vale	github.com/project-everest/vale
+P	fiat-crypto	Fiat Cryptography	github.com/mit-plv/fiat-crypto
+P	libcrux	libcrux	github.com/celabshq/libcrux
+P	cryptopt	CryptOpt	github.com/0xade1a1de/cryptopt
+P	s2n-bignum	s2n-bignum	github.com/awslabs/s2n-bignum
+P	mlkem-native	mlkem-native	github.com/pq-code-package/mlkem-native
+P	mldsa-native	mldsa-native	github.com/pq-code-package/mldsa-native
+P	libjade	Libjade	github.com/formosa-crypto/formosa-libjade
+P	symcrypt-rust	SymCrypt Rust	github.com/microsoft/symcrypt
+P	libmlkem-spark	LibMLKEM	github.com/awslabs/libmlkem
+P	aws-encryption-sdk-dafny	AWS Encryption SDK	github.com/aws/aws-encryption-sdk
+P	jasmin	Jasmin compiler	github.com/jasmin-lang/jasmin
+P	sel4	seL4 microkernel	github.com/sel4/sel4
+P	cakeml	CakeML	github.com/cakeml/cakeml
+P	cake-lpr	cake_lpr	github.com/tanyongkiam/cake_lpr
+P	bedrock2	Bedrock2	github.com/mit-plv/bedrock2
+P	ironfleet-ironclad	Ironclad Apps	github.com/microsoft/ironclad
+P	atmosphere	Atmosphere	github.com/mars-research/atmosphere
+P	verismo	VeriSMo	github.com/microsoft/verismo
+P	anvil	Anvil	github.com/anvil-verifier/anvil
+P	cedar	Cedar policy language	github.com/cedar-policy/cedar
+P	everparse	EverParse	github.com/project-everest/everparse
+P	rustbelt	RustBelt	gitlab.mpi-sws.org/iris/lambda-rust
+P	wireguard-protocol-proofs	WireGuard protocol proofs	git.zx2c4.com/wireguard-tamarin
+P	tls13-tamarin	TLS 1.3 Tamarin model	github.com/tls13tamarin/tls13tamarin
+P	mls-star	MLS*	github.com/inria-prosecco/mls-star
+P	signal-pqxdh-analysis	Signal PQXDH formal analysis	github.com/inria-prosecco/pqxdh-analysis
+P	signal-spqr	Signal SPQR	github.com/signalapp/sparsepostquantumratchet
+P	mi-cho-coq	Mi-Cho-Coq	gitlab.com/nomadic-labs/mi-cho-coq
+P	eth2-deposit-contract-verification	Ethereum 2.0 deposit contract verification	github.com/runtimeverification/deposit-contract-verification
+P	plutus-metatheory	Plutus Core metatheory	github.com/intersectmbo/plutus
+P	mitls-fstar	miTLS	github.com/project-everest/mitls-fstar
+P	everquic	EverQuic	github.com/project-everest/everquic-crypto
+P	noise-star	Noise*	github.com/inria-prosecco/noise-star
+P	bertie	Bertie	github.com/cryspen/bertie
+P	owl	Owl	github.com/secure-foundations/owl
+P	vest	Vest	github.com/secure-foundations/vest
+P	verdict	Verdict	github.com/secure-foundations/verdict
+P	armor	ARMOR	github.com/joyantadebnath/armor
+P	dice-star	DICE*	github.com/verified-hrot/dice-star
+P	certicoq	CertiCoq	github.com/certicoq/certicoq
+P	vellvm	Vellvm	github.com/vellvm/vellvm
+P	wasmcert-isabelle	WasmCert-Isabelle + WasmRef-Isabelle	github.com/wasmcert/wasmcert-isabelle
+P	wasmcert-coq	WasmCert-Coq	github.com/wasmcert/wasmcert-coq
+P	vwasm	vWasm	github.com/secure-foundations/vwasm
+P	sel4-microkit	seL4 Microkit	github.com/sel4/microkit
+P	fscq	FSCQ	github.com/mit-pdos/fscq
+P	komodo	Komodo	github.com/microsoft/komodo
+P	hyperkernel	Hyperkernel	github.com/uw-unsat/hyperkernel
+P	veribetrfs	VeriBetrFS	github.com/vmware-labs/verified-betrfs
+P	sekvm	SeKVM	github.com/verigu/sosp-paper211-ae
+P	nrkernel-page-table	Verified NrOS page table	github.com/utaal/verified-nrkernel
+P	ticktock	TickTock	github.com/plsyssec/tock
+P	creusat	CreuSAT	github.com/sarsko/creusat
+P	lrat-isa	lrat_isa	github.com/lammich/lrat_isa
+P	lean-bv-decide-lrat	Lean 4 bv_decide LRAT checker	github.com/leanprover/lean4
+P	concert	ConCert	github.com/au-cobra/concert
+P	evm-dafny	Dafny-EVM	github.com/consensys/evm-dafny
+P	eth2-dafny	Eth2.0 spec in Dafny	github.com/consensys/eth2.0-dafny
+P	muen	Muen Separation Kernel	github.com/codelabs-ch/muen
+P	sparknacl	SPARKNaCl	github.com/rod-chapman/sparknacl
+P	anssi-x509-parser	ANSSI x509-parser	github.com/anssi-fr/x509-parser
+P	metarocq	MetaRocq	github.com/metarocq/metarocq
+P	perennial	Perennial	github.com/mit-pdos/perennial
+K	npm	electron
+K	npm	axios
+K	PyPI	django
+K	RubyGems	rack
+K	PyPI	torch
+K	Go	golang.org/x/crypto
+K	Go	golang.org/x/net
+K	RubyGems	nokogiri
+K	Packagist	WWBN/AVideo
+K	crates.io	openssl
+K	PyPI	urllib3
+K	Packagist	guzzlehttp/guzzle
+K	PyPI	pip
+K	RubyGems	activesupport
+K	PyPI	jinja2
+K	RubyGems	json
+K	npm	lodash
+K	PyPI	setuptools
+K	npm	@tanstack/start-server-core
+K	PyPI	requests
+K	crates.io	time
+K	PyPI	wheel
+K	npm	01-0redi7qgbz0uv
+K	npm	02-echo
+K	npm	0ctf-chalweb
+K	PyPI	0requests
+K	PyPI	0xfighter3
+K	npm	minimist
+K	npm	colors
+K	npm	event-stream
+K	npm	flatmap-stream
+K	PyPI	pyyaml
+K	PyPI	pygments
+K	npm	JSONStream
+K	Go	github.com/gin-gonic/gin
+X	something	the app does not know yet

@@ -1,0 +1,76 @@
+// swift-tools-version: 6.2
+//
+// OSVA Monitor: a macOS menu-bar app that watches the software on this Mac and shows what the Open Source
+// Verification Alliance (https://verificationalliance.org/) knows about it: malicious packages, exploited and
+// critical vulnerabilities, fixed versions, trust grades and formal verification.
+//
+// Targets
+//   OSVACore       C. The verified core: version order, affectedness, the privacy filter, URL encoding.
+//   OSVAKit        What the app knows how to do: take inventory (Homebrew, Electron apps, global packages, project
+//                  folders), download the public index, ask the API, and turn answers into findings. Every decision
+//                  of the four kinds above goes through Sources/OSVAKit/Core.swift and nowhere else.
+//   OSVAMonitorUI  SwiftUI views and the app model.
+//   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
+//   osva-scan      One scan from the command line, with the same code the app runs.
+//   osva-render    Renders the popover and the settings window off-screen to PNG, from fixture data.
+import Foundation
+import PackageDescription
+
+// ── The verified core ──────────────────────────────────────────────────────────────────────────────────────────
+//
+// OSVACore is the C interface to the Lean core in ../core: its header, Sources/OSVACore/include/osva_core.h, is a copy
+// of ../core/include/osva_core.h (a test fails if the two differ), and its one source, Sources/OSVACore/osva_shim.c,
+// is a link to ../core/ffi/osva_shim.c, the only unproved code between the app and the theorems. It links:
+//   - the core itself, ../core/.lake/build/lib/libosvaCore_OSVACore.a, made by `lake build OSVACore:static` in ../core
+//     (../scripts/build-app.sh does this first);
+//   - the Lean runtime and libraries of the toolchain ../core/lean-toolchain names, found in elan's toolchains
+//     directory ($ELAN_HOME, else ~/.elan), or in $OSVA_LEAN_TOOLCHAIN when that is set.
+// The link line is the one ../scripts/check-core.sh uses on macOS.
+
+let coreDirectory = Context.packageDirectory + "/../core"
+
+/// The Lean toolchain's directory: "leanprover/lean4:v4.36.0" is ~/.elan/toolchains/leanprover--lean4---v4.36.0.
+let leanToolchain: String = {
+    if let explicit = Context.environment["OSVA_LEAN_TOOLCHAIN"], !explicit.isEmpty { return explicit }
+    let name = ((try? String(contentsOfFile: coreDirectory + "/lean-toolchain", encoding: .utf8)) ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: ":", with: "---").replacingOccurrences(of: "/", with: "--")
+    let elan = Context.environment["ELAN_HOME"] ?? ((Context.environment["HOME"] ?? "~") + "/.elan")
+    return elan + "/toolchains/" + name
+}()
+
+let verifiedCore: Target = .target(
+    name: "OSVACore",
+    path: "Sources/OSVACore",
+    sources: ["osva_shim.c"],
+    publicHeadersPath: "include",
+    cSettings: [.unsafeFlags(["-isystem", leanToolchain + "/include"])],     // Lean's header is not ours to warn about
+    linkerSettings: [.unsafeFlags([
+        "-L", coreDirectory + "/.lake/build/lib", "-losvaCore_OSVACore",
+        "-L", leanToolchain + "/lib/lean", "-lStd", "-lInit", "-lleanrt", "-lcadical",
+        "-L", leanToolchain + "/lib", "-lc++", "-lgmp", "-luv",
+    ])]
+)
+
+// ── The rest ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+let package = Package(
+    name: "OSVAMonitor",
+    platforms: [.macOS(.v26)],          // Liquid Glass (SwiftUI glassEffect, GlassEffectContainer, glass button styles)
+    products: [
+        .executable(name: "OSVAMonitor", targets: ["OSVAMonitor"]),
+        .executable(name: "osva-scan", targets: ["osva-scan"]),
+        .executable(name: "osva-render", targets: ["osva-render"]),
+        .library(name: "OSVAKit", targets: ["OSVAKit"]),
+    ],
+    targets: [
+        verifiedCore,
+        .target(name: "OSVAKit", dependencies: ["OSVACore"]),
+        .target(name: "OSVAMonitorUI", dependencies: ["OSVAKit"]),
+        .executableTarget(name: "OSVAMonitor", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
+        .executableTarget(name: "osva-scan", dependencies: ["OSVAKit"]),
+        .executableTarget(name: "osva-render", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
+        .testTarget(name: "OSVAKitTests", dependencies: ["OSVAKit", "OSVACore"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "OSVAMonitorUITests", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
+    ]
+)

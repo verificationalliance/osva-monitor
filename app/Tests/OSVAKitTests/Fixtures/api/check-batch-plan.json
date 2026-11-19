@@ -1,0 +1,43 @@
+{
+ "checked": 5, "vulnerable": 4, "malicious": 1,
+ "packages": [
+  {"ecosystem": "npm", "name": "axios", "version": "1.14.1", "malicious": true, "distinct_flaws": 34, "worst_severity": "HIGH", "exploited": [],
+   "advisories": ["MAL-2026-2309", "GHSA-35jp-ww65-95wh"],
+   "flaws": [{"id": "MAL-2026-2309", "aliases": [], "severity": null, "summary": "Malicious code in axios (npm)", "fixed_in": [], "fix_for_you": null,
+              "platform": null, "exploited_since": null, "malicious": true}],
+   "plan": {"target": null, "fixes": [], "remaining": [{"id": "MAL-2026-2309", "fixed_in": null, "reason": "malicious", "detail": null}],
+            "requires_python": null, "newest_installable": null}},
+  {"ecosystem": "PyPI", "name": "setuptools", "version": "58.0.4", "python": "3.9.6", "malicious": false, "distinct_flaws": 5, "worst_severity": "HIGH",
+   "exploited": [], "advisories": ["GHSA-5rjg-fvgr-3xxf", "GHSA-cx63-2mw6-8hw5", "GHSA-r9hx-vwmv-q579", "GHSA-h35f-9h28-mq5c", "PYSEC-2026-3447"],
+   "flaws": [
+     {"id": "GHSA-5rjg-fvgr-3xxf", "aliases": ["CVE-2025-47273"], "severity": "HIGH", "summary": "Path traversal in PackageIndex.download", "fixed_in": ["78.1.1"],
+      "fix_for_you": "78.1.1", "platform": null, "exploited_since": null, "malicious": false},
+     {"id": "GHSA-cx63-2mw6-8hw5", "aliases": ["CVE-2024-6345"], "severity": "HIGH", "summary": "Remote code execution via download functions", "fixed_in": ["70.0.0"],
+      "fix_for_you": "70.0.0", "platform": null, "exploited_since": null, "malicious": false},
+     {"id": "GHSA-r9hx-vwmv-q579", "aliases": ["CVE-2022-40897"], "severity": "HIGH", "summary": "ReDoS in package_index.py", "fixed_in": ["65.5.1"],
+      "fix_for_you": "65.5.1", "platform": null, "exploited_since": null, "malicious": false},
+     {"id": "GHSA-h35f-9h28-mq5c", "aliases": [], "severity": "MODERATE", "summary": "Unsafe archive extraction", "fixed_in": ["83.0.0"],
+      "fix_for_you": null, "platform": null, "exploited_since": null, "malicious": false},
+     {"id": "PYSEC-2026-3447", "aliases": [], "severity": "LOW", "summary": "Command injection on Windows", "fixed_in": ["84.1.0"],
+      "fix_for_you": null, "platform": "windows", "exploited_since": null, "malicious": false}],
+   "plan": {"target": "78.1.1", "fixes": ["GHSA-5rjg-fvgr-3xxf", "GHSA-cx63-2mw6-8hw5", "GHSA-r9hx-vwmv-q579"],
+            "remaining": [{"id": "GHSA-h35f-9h28-mq5c", "fixed_in": "83.0.0", "reason": "needs-python", "detail": "Python >=3.10"},
+                          {"id": "PYSEC-2026-3447", "fixed_in": "84.1.0", "reason": "other-platform", "detail": "Windows"}],
+            "requires_python": ">=3.9", "newest_installable": "82.0.1"}},
+  {"ecosystem": "npm", "name": "lodash", "version": "4.17.20", "malicious": false, "distinct_flaws": 2, "worst_severity": "HIGH", "exploited": [],
+   "advisories": ["GHSA-35jh-r3h4-6jhm", "GHSA-29mw-wpgm-hmr9"],
+   "flaws": [
+     {"id": "GHSA-35jh-r3h4-6jhm", "aliases": ["CVE-2021-23337"], "severity": "HIGH", "summary": "Command injection in lodash", "fixed_in": ["4.17.21"],
+      "fix_for_you": "4.17.21", "platform": null, "exploited_since": null, "malicious": false},
+     {"id": "GHSA-29mw-wpgm-hmr9", "aliases": ["CVE-2020-28500"], "severity": "MODERATE", "summary": "ReDoS in lodash", "fixed_in": ["4.17.21"],
+      "fix_for_you": "4.17.21", "platform": null, "exploited_since": null, "malicious": false}],
+   "plan": {"target": "4.17.21", "fixes": ["GHSA-35jh-r3h4-6jhm", "GHSA-29mw-wpgm-hmr9"], "remaining": [], "requires_python": null, "newest_installable": "4.17.21"}},
+  {"ecosystem": "PyPI", "name": "pygments", "version": "2.14.0", "python": "3.15.2", "malicious": false, "distinct_flaws": 1, "worst_severity": "HIGH",
+   "exploited": [], "advisories": ["GHSA-wq5c-xxxx-mmmm"],
+   "flaws": [{"id": "GHSA-wq5c-xxxx-mmmm", "aliases": [], "severity": "HIGH", "summary": "Code execution via a crafted path on Windows",
+              "fixed_in": ["2.15.0"], "fix_for_you": "2.15.0", "platform": "windows", "exploited_since": null, "malicious": false}],
+   "plan": {"target": null, "fixes": [], "remaining": [{"id": "GHSA-wq5c-xxxx-mmmm", "fixed_in": "2.15.0", "reason": "other-platform", "detail": "Windows"}],
+            "requires_python": null, "newest_installable": "2.19.2"}}
+ ],
+ "next": "…"
+}

@@ -1,0 +1,249 @@
+import OSVAKit
+import SwiftUI
+
+/// What the popover can ask the app to do.
+public struct PopoverActions {
+    public var scanNow: () -> Void
+    public var openSettings: () -> Void
+    public var quit: () -> Void
+    public var open: (URL) -> Void
+    public var copy: (String) -> Void
+
+    public init(scanNow: @escaping () -> Void, openSettings: @escaping () -> Void, quit: @escaping () -> Void,
+                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void) {
+        self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy
+    }
+
+    public static var none: PopoverActions { PopoverActions(scanNow: {}, openSettings: {}, quit: {}, open: { _ in }, copy: { _ in }) }
+}
+
+/// The menu-bar panel. The panel's own window is the one sheet of Liquid Glass; everything here is content on it:
+/// the hero (one shield, one number, one sentence), the findings in one container per group, and the controls, which
+/// are left untinted so they follow the person's accent colour.
+public struct PopoverView: View {
+    public static let width: CGFloat = 400
+    public static let maxListHeight: CGFloat = 480
+
+    public var content: PopoverContent
+    public var actions: PopoverActions
+    public var maxListHeight: CGFloat
+    /// False draws the list without a scroll view (for ImageRenderer, which does not draw scroll views' content).
+    public var scrolls: Bool
+    @State private var expanded: Set<String>
+    @State private var listHeight: CGFloat = 0
+
+    public init(content: PopoverContent, actions: PopoverActions, expanded: Set<String> = [],
+                maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true) {
+        self.content = content; self.actions = actions; self.maxListHeight = maxListHeight; self.scrolls = scrolls
+        _expanded = State(initialValue: expanded)
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HeroView(content: content).padding(.leading, 4)
+            if content.isScanning {
+                ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
+            }
+            if !content.sections.isEmpty || content.coverage.notCheckedCount + content.coverage.notInIndexCount > 0 {
+                if scrolls {
+                    ScrollView(.vertical) {
+                        groups.background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
+                    }
+                    .scrollIndicators(.automatic)
+                    .frame(height: min(max(listHeight, 1), maxListHeight))
+                    .onPreferenceChange(HeightKey.self) { listHeight = $0 }
+                } else {
+                    groups
+                }
+            }
+            footer
+        }
+        .padding(14)
+        .frame(width: Self.width)
+        .animation(.smooth(duration: 0.3), value: expanded)
+        .animation(.smooth(duration: 0.3), value: content.isScanning)
+    }
+
+    private var groups: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(content.sections) { section in
+                GroupContainer(section.group, count: section.findings.count) {
+                    ForEach(Array(section.findings.enumerated()), id: \.element.id) { i, f in
+                        if i > 0 { Divider().padding(.leading, 12) }
+                        FindingRow(finding: f, expanded: expanded.contains(f.id), actions: actions) {
+                            if expanded.contains(f.id) { expanded.remove(f.id) } else { expanded.insert(f.id) }
+                        }
+                    }
+                }
+            }
+            coverage
+        }
+    }
+
+    /// What could not be vouched for: what nothing classifies, then what was never reported. Neither is "clean".
+    @ViewBuilder private var coverage: some View {
+        let c = content.coverage
+        if c.notCheckedCount > 0 {
+            GroupContainer(.notChecked, count: c.notCheckedCount) {
+                ForEach(Array(c.notChecked.enumerated()), id: \.element.id) { i, bucket in
+                    if i > 0 { Divider().padding(.leading, 12) }
+                    ListDisclosureRow(bucket.source, items: bucket.items)
+                }
+            }
+        }
+        if c.notInIndexCount > 0 { NotInIndexSection(coverage: c) }
+    }
+
+    /// Scan Now is the one prominent control and takes the accent colour; Settings and Quit are quiet symbols.
+    private var footer: some View {
+        HStack(spacing: 4) {
+            Button(action: actions.scanNow) {
+                Label(content.isScanning ? "Scanning…" : "Scan Now", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(content.isScanning)
+            Spacer()
+            quiet("gearshape", "Settings…", action: actions.openSettings)
+            quiet("power", "Quit OSVA Monitor", action: actions.quit)
+        }
+    }
+
+    private func quiet(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 15)).frame(width: 30, height: 28).contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// The worst thing in one shield, one number and one sentence; no card, no tint. Colour lives in the glyph only.
+/// "1,186 not in the index", captioned "No known problems — not proof of safety", opening to the lists by source.
+struct NotInIndexSection: View {
+    let coverage: Coverage
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(coverage.notInIndexCount.formatted()) not in the index").foregroundStyle(.secondary)
+                    Text("No known problems — not proof of safety").font(Typeface.caption).foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .font(Typeface.small)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.smooth(duration: 0.25)) { open.toggle() } }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            if open {
+                VStack(spacing: 0) {
+                    ForEach(Array(coverage.notInIndex.enumerated()), id: \.element.id) { i, bucket in
+                        if i > 0 { Divider().padding(.leading, 12) }
+                        ListDisclosureRow(bucket.source, items: bucket.items)
+                    }
+                }
+                .background(.quinary, in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+                .clipShape(ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+            }
+        }
+    }
+}
+
+struct HeroView: View {
+    let content: PopoverContent
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            shield
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.breathe, isActive: content.isScanning)
+                .symbolEffect(.bounce, value: content.heroCount ?? 0)
+                .frame(width: 36, height: 38)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let n = content.heroCount {
+                        Text("\(n)").font(Typeface.heroCount).foregroundStyle(.primary)
+                            .contentTransition(.numericText(value: Double(n)))
+                    }
+                    Text(content.sentence).font(Typeface.heroSentence).foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(minHeight: 32, alignment: .bottomLeading)              // the sentence alone sits level with the shield
+                if let advice = content.advice {
+                    Text(advice).font(Typeface.body).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                }
+                if !content.tallies.isEmpty {
+                    WrapAtSpaces(spacing: 4, lineSpacing: 4) {
+                        ForEach(content.tallies) { t in StatusChip(.count(t.tally, t.count)) }
+                    }
+                    .padding(.vertical, 2)
+                }
+                if !content.subline.isEmpty {
+                    Text(content.subline).font(Typeface.heroSubline).foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let p = content.problem {
+                    Label(p, systemImage: "exclamationmark.triangle")
+                        .font(Typeface.heroSubline).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if content.hero == .clean {
+                    Text("Not proof of safety: it is what has been reported.").font(Typeface.heroSubline).foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A status shield is two solid colours: a white mark on the status colour, with the system gradient, so it reads
+    /// crisply on any glass. Neutral states (not scanned, first scan, scanning) stay a quiet hierarchical outline.
+    @ViewBuilder private var shield: some View {
+        let image = Image(systemName: content.hero.symbol).font(.system(size: 32))
+        if let fill = statusFill, !content.isScanning {
+            image.symbolRenderingMode(.palette).symbolColorRenderingMode(.gradient).foregroundStyle(.white, fill)
+        } else {
+            image.symbolRenderingMode(.hierarchical).foregroundStyle(glyphStyle)
+        }
+    }
+
+    private var statusFill: Color? {
+        switch content.hero {
+        case .malicious: return Tokens.Malicious.glyph.color
+        case .critical: return Tokens.critical.glyph.color
+        case .high: return Tokens.high.glyph.color
+        case .clean: return Tokens.clean.color
+        case .notScanned, .firstScan: return nil
+        }
+    }
+
+    private var glyphStyle: AnyShapeStyle {
+        if content.isScanning { return AnyShapeStyle(.secondary) }
+        switch content.hero {
+        case .notScanned: return AnyShapeStyle(.tertiary)
+        case .firstScan: return AnyShapeStyle(.secondary)
+        case .malicious: return AnyShapeStyle(Tokens.Malicious.glyph.color)
+        case .critical: return AnyShapeStyle(Tokens.critical.glyph.color)
+        case .high: return AnyShapeStyle(Tokens.high.glyph.color)
+        case .clean: return AnyShapeStyle(Tokens.clean.color)
+        }
+    }
+}
+
+private struct HeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}

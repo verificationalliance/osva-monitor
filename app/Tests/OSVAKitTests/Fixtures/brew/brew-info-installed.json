@@ -1,0 +1,674 @@
+{
+ "formulae": [
+  {
+   "name": "abseil",
+   "full_name": "abseil",
+   "tap": "homebrew/core",
+   "desc": "C++ Common Libraries",
+   "homepage": "https://abseil.io",
+   "urls": {
+    "stable": {
+     "url": "https://github.com/abseil/abseil-cpp/archive/refs/tags/20260817.0.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    },
+    "head": {
+     "url": "https://github.com/abseil/abseil-cpp.git",
+     "branch": "master",
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "20260817.0",
+    "head": "HEAD",
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "20260817.0",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1790760416
+    }
+   ],
+   "linked_keg": "20260817.0",
+   "keg_only": false
+  },
+  {
+   "name": "berkeley-db",
+   "full_name": "berkeley-db",
+   "tap": "homebrew/core",
+   "desc": "High performance key/value database",
+   "homepage": "https://www.oracle.com/database/technologies/related/berkeleydb.html",
+   "urls": {
+    "stable": {
+     "url": "https://download.oracle.com/berkeley-db/db-18.1.40.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "18.1.40",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 4,
+   "installed": [
+    {
+     "version": "18.1.40_4",
+     "installed_on_request": true,
+     "poured_from_bottle": true,
+     "time": 1790760376
+    }
+   ],
+   "linked_keg": null,
+   "keg_only": true
+  },
+  {
+   "name": "git",
+   "full_name": "git",
+   "tap": "homebrew/core",
+   "desc": "Distributed revision control system",
+   "homepage": "https://git-scm.com",
+   "urls": {
+    "stable": {
+     "url": "https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.56.1.tar.xz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    },
+    "head": {
+     "url": "https://github.com/git/git.git",
+     "branch": "master",
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "2.56.1",
+    "head": "HEAD",
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "2.56.1",
+     "installed_on_request": true,
+     "poured_from_bottle": true,
+     "time": 1794860449
+    }
+   ],
+   "linked_keg": "2.56.1",
+   "keg_only": false
+  },
+  {
+   "name": "go",
+   "full_name": "go",
+   "tap": "homebrew/core",
+   "desc": "Open source programming language to build simple/reliable/efficient software",
+   "homepage": "https://go.dev/",
+   "urls": {
+    "stable": {
+     "url": "https://go.dev/dl/go1.27.4.src.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    },
+    "head": {
+     "url": "https://go.googlesource.com/go.git",
+     "branch": "master",
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "1.27.4",
+    "head": "HEAD",
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "1.27.4",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1794378913
+    }
+   ],
+   "linked_keg": "1.27.4",
+   "keg_only": false
+  },
+  {
+   "name": "imagemagick",
+   "full_name": "imagemagick",
+   "tap": "homebrew/core",
+   "desc": "Tools and libraries to manipulate images in select formats",
+   "homepage": "https://imagemagick.org",
+   "urls": {
+    "stable": {
+     "url": "https://github.com/ImageMagick/ImageMagick/releases/download/7.1.2-36/ImageMagick-7.1.2-36.7z",
+     "tag": null,
+     "revision": null,
+     "using": null
+    },
+    "head": {
+     "url": "https://github.com/ImageMagick/ImageMagick.git",
+     "branch": "main",
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "7.1.2-36",
+    "head": "HEAD",
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "7.1.2-36",
+     "installed_on_request": true,
+     "poured_from_bottle": true,
+     "time": 1794940435
+    }
+   ],
+   "linked_keg": "7.1.2-36",
+   "keg_only": false
+  },
+  {
+   "name": "libomp",
+   "full_name": "libomp",
+   "tap": "homebrew/core",
+   "desc": "LLVM's OpenMP runtime library",
+   "homepage": "https://openmp.llvm.org/",
+   "urls": {
+    "stable": {
+     "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/llvm-project-23.1.6.src.tar.xz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "23.1.6",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "23.1.6",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1795051687
+    }
+   ],
+   "linked_keg": null,
+   "keg_only": true
+  },
+  {
+   "name": "node",
+   "full_name": "node",
+   "tap": "homebrew/core",
+   "desc": "Open-source, cross-platform JavaScript runtime environment",
+   "homepage": "https://nodejs.org/",
+   "urls": {
+    "stable": {
+     "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1.tar.xz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    },
+    "head": {
+     "url": "https://github.com/nodejs/node.git",
+     "branch": "main",
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "26.13.1",
+    "head": "HEAD",
+    "bottle": true
+   },
+   "revision": 2,
+   "installed": [
+    {
+     "version": "26.13.1_2",
+     "installed_on_request": true,
+     "poured_from_bottle": true,
+     "time": 1794860444
+    }
+   ],
+   "linked_keg": "26.13.1_2",
+   "keg_only": false
+  },
+  {
+   "name": "openssl@1.1",
+   "full_name": "openssl@1.1",
+   "tap": "homebrew/core",
+   "desc": "Cryptography and SSL/TLS Toolkit",
+   "homepage": "https://openssl.org/",
+   "urls": {
+    "stable": {
+     "url": "https://www.openssl.org/source/openssl-1.1.1w.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "1.1.1w",
+    "head": null,
+    "bottle": false
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "1.1.1w",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1694463532
+    }
+   ],
+   "linked_keg": null,
+   "keg_only": true
+  },
+  {
+   "name": "openssl@3",
+   "full_name": "openssl@3",
+   "tap": "homebrew/core",
+   "desc": "Cryptography and SSL/TLS Toolkit",
+   "homepage": "https://openssl-library.org",
+   "urls": {
+    "stable": {
+     "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "3.5.9",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "3.5.9",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1792461308
+    }
+   ],
+   "linked_keg": null,
+   "keg_only": true
+  },
+  {
+   "name": "postgresql@16",
+   "full_name": "postgresql@16",
+   "tap": "homebrew/core",
+   "desc": "Object-relational database system",
+   "homepage": "https://www.postgresql.org/",
+   "urls": {
+    "stable": {
+     "url": "https://ftp.postgresql.org/pub/source/v16.16/postgresql-16.16.tar.bz2",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "16.16",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "16.16",
+     "installed_on_request": true,
+     "poured_from_bottle": true,
+     "time": 1794860398
+    }
+   ],
+   "linked_keg": "16.16",
+   "keg_only": true
+  },
+  {
+   "name": "python@3.14",
+   "full_name": "python@3.14",
+   "tap": "homebrew/core",
+   "desc": "Interpreted, interactive, object-oriented programming language",
+   "homepage": "https://www.python.org/",
+   "urls": {
+    "stable": {
+     "url": "https://www.python.org/ftp/python/3.14.10/Python-3.14.10.tgz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "3.14.10",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "3.14.10",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1793074914
+    }
+   ],
+   "linked_keg": "3.14.10",
+   "keg_only": false
+  },
+  {
+   "name": "sqlite",
+   "full_name": "sqlite",
+   "tap": "homebrew/core",
+   "desc": "Command-line interface for SQLite",
+   "homepage": "https://sqlite.org/index.html",
+   "urls": {
+    "stable": {
+     "url": "https://www.sqlite.org/2026/sqlite-autoconf-3540100.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "3.54.1",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "3.54.1",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1792461305
+    }
+   ],
+   "linked_keg": null,
+   "keg_only": true
+  },
+  {
+   "name": "xz",
+   "full_name": "xz",
+   "tap": "homebrew/core",
+   "desc": "General-purpose data compression with high compression ratio",
+   "homepage": "https://tukaani.org/xz/",
+   "urls": {
+    "stable": {
+     "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.gz",
+     "tag": null,
+     "revision": null,
+     "using": null
+    }
+   },
+   "versions": {
+    "stable": "5.8.4",
+    "head": null,
+    "bottle": true
+   },
+   "revision": 0,
+   "installed": [
+    {
+     "version": "5.8.4",
+     "installed_on_request": false,
+     "poured_from_bottle": true,
+     "time": 1790760316
+    }
+   ],
+   "linked_keg": "5.8.4",
+   "keg_only": false
+  }
+ ],
+ "casks": [
+  {
+   "token": "alfred",
+   "full_token": "alfred",
+   "name": [
+    "Alfred"
+   ],
+   "homepage": "https://www.alfredapp.com/",
+   "url": "https://cachefly.alfredapp.com/Alfred_6.0_3219.dmg",
+   "version": "6.0,3219",
+   "installed": "5.7.3,2320",
+   "artifacts": [
+    {
+     "app": [
+      "Alfred 6.app"
+     ],
+     "target": "/Applications/Alfred 6.app"
+    },
+    {
+     "zap": [
+      {
+       "trash": [
+        "~/Library/Application Support/Alfred",
+        "~/Library/Caches/com.runningwithcrayons.Alfred",
+        "~/Library/Cookies/com.runningwithcrayons.Alfred.binarycookies",
+        "~/Library/Preferences/com.runningwithcrayons.Alfred-Preferences.plist",
+        "~/Library/Preferences/com.runningwithcrayons.Alfred.plist",
+        "~/Library/Saved Application State/com.runningwithcrayons.Alfred-Preferences.savedState"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "token": "google-chrome",
+   "full_token": "google-chrome",
+   "name": [
+    "Google Chrome"
+   ],
+   "homepage": "https://www.google.com/chrome/",
+   "url": "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg",
+   "version": "158.0.8127.37",
+   "installed": "153.0.8010.37",
+   "artifacts": [
+    {
+     "app": [
+      "Google Chrome.app"
+     ],
+     "target": "/Applications/Google Chrome.app"
+    },
+    {
+     "zap": [
+      {
+       "launchctl": [
+        "com.google.keystone.agent",
+        "com.google.keystone.daemon"
+       ],
+       "trash": [
+        "/Library/Caches/com.google.SoftwareUpdate.*",
+        "/Library/Google/Google Chrome Brand.plist",
+        "/Library/Google/GoogleSoftwareUpdate",
+        "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.google.chrome.app.*.sfl*",
+        "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.google.chrome.sfl*",
+        "~/Library/Application Support/Google/Chrome",
+        "~/Library/Caches/com.google.Chrome",
+        "~/Library/Caches/com.google.Chrome.helper.*",
+        "~/Library/Caches/com.google.Keystone",
+        "~/Library/Caches/com.google.Keystone.Agent",
+        "~/Library/Caches/com.google.SoftwareUpdate",
+        "~/Library/Caches/Google/Chrome",
+        "~/Library/Google/Google Chrome Brand.plist",
+        "~/Library/Google/GoogleSoftwareUpdate",
+        "~/Library/LaunchAgents/com.google.keystone.agent.plist",
+        "~/Library/LaunchAgents/com.google.keystone.xpcservice.plist",
+        "~/Library/Logs/GoogleSoftwareUpdateAgent.log",
+        "~/Library/Preferences/com.google.Chrome.plist",
+        "~/Library/Preferences/com.google.Keystone.Agent.plist",
+        "~/Library/Saved Application State/com.google.Chrome.app.*.savedState",
+        "~/Library/Saved Application State/com.google.Chrome.savedState",
+        "~/Library/WebKit/com.google.Chrome"
+       ],
+       "rmdir": [
+        "/Library/Google",
+        "~/Library/Application Support/Google",
+        "~/Library/Caches/Google",
+        "~/Library/Google"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "token": "openmtp",
+   "full_token": "openmtp",
+   "name": [
+    "OpenMTP"
+   ],
+   "homepage": "https://openmtp.ganeshrvel.com/",
+   "url": "https://github.com/ganeshrvel/openmtp/releases/download/v3.3.0/openmtp-3.3.0-mac-arm64.zip",
+   "version": "3.3.0",
+   "installed": "3.3.0",
+   "artifacts": [
+    {
+     "app": [
+      "OpenMTP.app"
+     ],
+     "target": "/Applications/OpenMTP.app"
+    },
+    {
+     "zap": [
+      {
+       "trash": [
+        "~/.io.ganeshrvel",
+        "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/io.ganeshrvel.openmtp.sfl*",
+        "~/Library/Application Support/io.ganeshrvel.openmtp",
+        "~/Library/Application Support/OpenMTP",
+        "~/Library/Preferences/io.ganeshrvel.openmtp.plist"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "token": "qbittorrent",
+   "full_token": "qbittorrent",
+   "name": [
+    "qBittorrent"
+   ],
+   "homepage": "https://www.qbittorrent.org/",
+   "url": "https://downloads.sourceforge.net/qbittorrent/qbittorrent-mac/qbittorrent-5.2.3/qbittorrent-5.2.3.dmg",
+   "version": "5.2.3",
+   "installed": "5.2.3",
+   "artifacts": [
+    {
+     "app": [
+      "qbittorrent.app",
+      {
+       "target": "qBittorrent.app"
+      }
+     ],
+     "target": "/Applications/qBittorrent.app"
+    },
+    {
+     "zap": [
+      {
+       "trash": [
+        "~/.config/qBittorrent",
+        "~/Library/Application Support/qBittorrent",
+        "~/Library/Caches/qBittorrent",
+        "~/Library/Preferences/org.qbittorrent.qBittorrent.plist",
+        "~/Library/Preferences/qBittorrent",
+        "~/Library/Saved Application State/org.qbittorrent.qBittorrent.savedState"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "token": "slack",
+   "full_token": "slack",
+   "name": [
+    "Slack"
+   ],
+   "homepage": "https://slack.com/",
+   "url": "https://downloads.slack-edge.com/desktop-releases/mac/arm64/4.53.292/Slack-4.53.292-macOS.dmg",
+   "version": "4.53.292",
+   "installed": "4.51.180",
+   "artifacts": [
+    {
+     "app": [
+      "Slack.app"
+     ],
+     "target": "/Applications/Slack.app"
+    },
+    {
+     "zap": [
+      {
+       "trash": [
+        "/Library/Logs/DiagnosticReports/Slack_*",
+        "~/Library/Application Scripts/com.tinyspeck.slackmacgap",
+        "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.tinyspeck.slackmacgap.sfl*",
+        "~/Library/Application Support/Slack",
+        "~/Library/Caches/com.tinyspeck.slackmacgap*",
+        "~/Library/Containers/com.tinyspeck.slackmacgap*",
+        "~/Library/Cookies/com.tinyspeck.slackmacgap.binarycookies",
+        "~/Library/Group Containers/*.com.tinyspeck.slackmacgap",
+        "~/Library/Group Containers/*.slack",
+        "~/Library/HTTPStorages/com.tinyspeck.slackmacgap*",
+        "~/Library/Logs/Slack",
+        "~/Library/Preferences/ByHost/com.tinyspeck.slackmacgap.ShipIt.*.plist",
+        "~/Library/Preferences/com.tinyspeck.slackmacgap*",
+        "~/Library/Saved Application State/com.tinyspeck.slackmacgap.savedState",
+        "~/Library/WebKit/com.tinyspeck.slackmacgap"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "token": "visual-studio-code",
+   "full_token": "visual-studio-code",
+   "name": [
+    "Microsoft Visual Studio Code",
+    "VS Code"
+   ],
+   "homepage": "https://code.visualstudio.com/",
+   "url": "https://update.code.visualstudio.com/1.147.0/darwin-arm64/stable",
+   "version": "1.147.0",
+   "installed": "1.137.0",
+   "artifacts": [
+    {
+     "app": [
+      "Visual Studio Code.app"
+     ],
+     "target": "/Applications/Visual Studio Code.app"
+    },
+    {
+     "zap": [
+      {
+       "trash": [
+        "~/.vscode",
+        "~/Library/Application Support/Code",
+        "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.microsoft.vscode.sfl*",
+        "~/Library/Caches/com.microsoft.VSCode",
+        "~/Library/Caches/com.microsoft.VSCode.ShipIt",
+        "~/Library/HTTPStorages/com.microsoft.VSCode",
+        "~/Library/Preferences/ByHost/com.microsoft.VSCode.ShipIt.*.plist",
+        "~/Library/Preferences/com.microsoft.VSCode.helper.plist",
+        "~/Library/Preferences/com.microsoft.VSCode.plist",
+        "~/Library/Saved Application State/com.microsoft.VSCode.savedState"
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

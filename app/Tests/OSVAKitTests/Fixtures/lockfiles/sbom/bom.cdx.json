@@ -1,0 +1,12 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    { "type": "library", "name": "lodash", "version": "4.17.20", "purl": "pkg:npm/lodash@4.17.20" },
+    { "type": "library", "name": "core", "version": "7.24.0", "purl": "pkg:npm/%40babel/core@7.24.0",
+      "components": [ { "type": "library", "name": "jackson-databind", "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.13.0" } ] },
+    { "type": "library", "name": "urllib3", "purl": "pkg:pypi/urllib3@1.26.5" },
+    { "type": "library", "name": "zlib", "purl": "pkg:generic/zlib@1.2.11" },
+    { "type": "library", "name": "openssl", "purl": "pkg:deb/debian/openssl@3.0.11-1?arch=amd64" }
+  ]
+}
