@@ -170,8 +170,8 @@ import Testing
             (fixable(.homebrewCask(token: "firefox"), "firefox", nil), ["/opt/homebrew/bin/brew", "upgrade", "--cask", "firefox"]),
             (fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "eslint", fixed: "9.1.0"), ["/opt/homebrew/bin/npm", "install", "-g", "eslint@9.1.0"]),
             (fixable(.cargoInstall, "ripgrep", .crates, fixed: "14.1.1"), ["/Users/ana/.cargo/bin/cargo", "install", "ripgrep@14.1.1"]),
-            (fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "six", .pypi, fixed: "1.17.0"),
-             ["/usr/bin/python3", "-m", "pip", "install", "--user", "--upgrade", "six==1.17.0"]),
+            (fixable(.pip(python: Fixture.pythonOrg, user: true, formula: nil), "six", .pypi, fixed: "1.17.0"),
+             [Fixture.pythonOrg.executable, "-m", "pip", "install", "--user", "--upgrade", "six==1.17.0"]),
             (fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "evil", .pypi, malicious: true),
              ["/usr/bin/python3", "-m", "pip", "uninstall", "-y", "evil"]),
         ]
@@ -300,11 +300,17 @@ final class UpdateRecorder: @unchecked Sendable {
 
     @Test func aCommandThatIgnoresSIGTERMIsKilledAfterTheGracePeriod() async {
         let t = tool("trap '' TERM; echo ignoring; while :; do sleep 0.1; done")
+        let updates = UpdateRecorder()
+        let p = FixProcessLauncher().launch(FixInvocation(executable: t.path, arguments: []), environment: ["PATH": "/usr/bin:/bin"],
+                                            limits: FixLimits(grace: 0.5)) { updates.add($0) }
+        // stop once the trap is set (a loaded machine may take a while to get there)
+        for _ in 0..<100 where !updates.all.contains(where: { $0.lines.contains("ignoring") }) { try? await Task.sleep(for: .milliseconds(50)) }
         let start = Date()
-        let (ending, _) = await run(FixInvocation(executable: t.path, arguments: []), limits: FixLimits(grace: 0.5), stopAfter: 0.3)
+        p.stop()
+        let (ending, _) = await p.ending()
         #expect(ending == .stopped)
         let took = Date().timeIntervalSince(start)
-        #expect(took >= 0.75 && took < 4, "\(took)")
+        #expect(took >= 0.45 && took < 4, "\(took)")
     }
 
     @Test func theTimeLimitStopsIt() async {
@@ -457,11 +463,18 @@ final class UpdateRecorder: @unchecked Sendable {
         #expect(undo.restores == ["starlette 0.48.0"] && undo.command.hasSuffix("starlette==0.48.0"))
     }
 
+    /// Rule A-R12: exact pins only. Never `>=`, which let pip take starlette 1.10 over 1.3.1.
     @Test func pipUpgradesPinTheExactVersion() throws {
-        let p = try ok(plan(fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")))
-        #expect(p.command == "/usr/bin/python3 -m pip install --user --upgrade setuptools==78.1.1")
-        #expect(p.pip == FixPlan.Pip(python: "/usr/bin/python3", requirement: "setuptools==78.1.1", user: true, name: "setuptools", target: "78.1.1"))
+        let p = try ok(plan(fixable(.pip(python: Fixture.pythonOrg, user: false, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")))
+        #expect(p.command == "\(Fixture.pythonOrg.executable) -m pip install --upgrade setuptools==78.1.1")
+        #expect(p.pip == FixPlan.Pip(python: Fixture.pythonOrg.executable, requirement: "setuptools==78.1.1", user: false, name: "setuptools",
+                                     target: "78.1.1", installed: "58.0.4"))
         #expect(p.actionTitle == "Update to 78.1.1" && p.summary == "pip updates setuptools to 78.1.1.")
+        #expect(!p.command.contains(">=") && !p.invocation.argv.contains { $0.contains(">=") })
+        // the copyable command for a requirements file pins exactly too
+        let r = UpgradeCommand.advice(UpgradeCommand.Inputs(origin: .folder(root: "/p", lockfile: "/p/requirements.txt", direct: true), name: "django",
+                                                            ecosystem: .pypi, target: "5.2.17", malicious: false), home: home)
+        #expect(r.command == "cd /p && python3 -m pip install django==5.2.17")
     }
 
     @Test func anAdvisorWithholdsTheButtonFromWhatDependsOnIt() async throws {
@@ -477,6 +490,130 @@ final class UpdateRecorder: @unchecked Sendable {
         let silent = ToolEnvironment(home: URL(fileURLWithPath: home), base: [:], runner: SwitchableRunner([:]), isExecutable: { _ in true })
         guard case let .withheld(why) = await FixAdvisor(tools: silent, home: home).assess(f) else { Issue.record("offered"); return }
         #expect(why.hasPrefix("Not offered: the app could not read what depends on starlette"))
+    }
+}
+
+// MARK: - The research's rules for the fix engine
+
+/// A site-packages folder written from (name, version, requires, requested, editable) tuples.
+func site(_ dists: [(String, String, [String], Bool, Bool)], in dir: URL = temporaryDirectory()) -> URL {
+    for (name, version, requires, requested, editable) in dists {
+        let d = dir.appendingPathComponent("\(name.replacingOccurrences(of: "-", with: "_"))-\(version).dist-info")
+        write("Metadata-Version: 2.1\nName: \(name)\nVersion: \(version)\n" + requires.map { "Requires-Dist: \($0)\n" }.joined(), to: d.appendingPathComponent("METADATA"))
+        if requested { write("", to: d.appendingPathComponent("REQUESTED")) }
+        if editable { write(#"{"url": "file:///Users/ana/code/blooper", "dir_info": {"editable": true}}"#, to: d.appendingPathComponent("direct_url.json")) }
+    }
+    return dir
+}
+
+@Suite struct FixEngineRuleTests {
+    static let markers = PythonDependentsTests.markers
+    func pip(_ name: String, _ target: String, installed: String = "") -> FixPlan.Pip {
+        FixPlan.Pip(python: "/x/python", requirement: "\(name)==\(target)", user: false, name: name, target: target, installed: installed)
+    }
+
+    /// A-R1, B-R6, B-R14: every installed dependent's specifier gates, including requirements behind extras that are
+    /// in use: asked for by another package (`uvicorn[standard]`), or of an editable project (its `[dev]`).
+    @Test func extrasInUseGateToo() {
+        let dir = site([("blooper-backend", "0.1.0", ["fastapi>=0.110", "anyio>=4.3.0; extra == \"dev\""], true, true),
+                        ("fastapi", "0.120.0", ["uvicorn[standard]>=0.12.0"], true, false),
+                        ("uvicorn", "0.38.0", ["python-dotenv>=0.13; extra == \"standard\"", "watchfiles>=0.13; extra == \"reload\""], false, false),
+                        ("anyio", "4.11.0", [], false, false), ("python-dotenv", "1.0.1", [], false, false), ("watchfiles", "1.0.0", [], false, false)])
+        let s = PythonSite(folders: [dir.path], markers: Self.markers)
+        #expect(s.activeExtras()["uvicorn"] == ["standard"] && s.activeExtras()["blooper-backend"] == ["dev"])
+        #expect(s.conflicts(["anyio": "4.0.0"]).map(\.line) == ["blooper-backend 0.1.0 needs anyio >= 4.3.0"])          // the [dev] edge
+        #expect(s.conflicts(["python-dotenv": "0.12"]).map(\.line) == ["uvicorn 0.38.0 needs python-dotenv >= 0.13"])    // the [standard] edge
+        #expect(s.conflicts(["watchfiles": "0.1"]).isEmpty)                                                              // [reload]: nobody asked
+        guard case let .blocked(line, _) = PipGuard.verdict(s, pip: pip("anyio", "4.0.0")) else { Issue.record("not blocked"); return }
+        #expect(line == "blooper-backend 0.1.0 needs anyio >= 4.3.0 — it is a project installed for development: raise its anyio range there")
+    }
+
+    /// A-R3, A-R11, B-R17: packages that pin it exactly move with it, in one pinned command, or not at all.
+    @Test func lockstepFamiliesMoveTogether() async throws {
+        let dir = site([("torch", "2.7.0", [], true, false), ("torchaudio", "2.7.0", ["torch==2.7.0"], true, false),
+                        ("opentelemetry-sdk", "1.41.1", ["opentelemetry-api==1.41.1"], false, false), ("opentelemetry-api", "1.41.1", [], false, false),
+                        ("exporter", "1.41.1", ["opentelemetry-sdk~=1.41.1"], true, false)])
+        let s = PythonSite(folders: [dir.path], markers: Self.markers)
+        #expect(PipGuard.verdict(s, pip: pip("torch", "2.8.0")) == .companions(["torchaudio"], s))
+        guard case .clear = PipGuard.verdict(s, pip: pip("torch", "2.8.0"), also: ["torch": "2.8.0", "torchaudio": "2.8.0"]) else { Issue.record("not clear"); return }
+        // a dry run that leaves a pinning package behind is blocked, not run
+        guard case .blocked = PipGuard.verdict(s, pip: pip("opentelemetry-api", "1.45.2"), also: ["opentelemetry-api": "1.45.2"]) else { Issue.record("ran alone"); return }
+        // the advisor: the dry run names the companions' versions, and they are pinned on the command line
+        let py = Fixture.pythonOrg.executable
+        let siteJSON = #"{"path":["\#(dir.path)"],"markers":{"python_version":"3.13","sys_platform":"darwin"}}"#
+        func ok(_ text: String) -> CommandResult { CommandResult(status: 0, stdout: Data(text.utf8), stderr: Data()) }
+        let tools = ToolEnvironment(home: URL(fileURLWithPath: home), base: [:], runner: SwitchableRunner([
+            "\(py) -c \(PythonSite.script)": ok(siteJSON),
+            "\(py) -m pip --version": ok("pip 24.0 from /x (python 3.13)\n"),
+            "\(py) -m pip install --dry-run --only-binary=:all: --upgrade --disable-pip-version-check --no-input torch==2.8.0 torchaudio":
+                ok("Would install torch-2.8.0 torchaudio-2.8.0\n"),
+        ]), isExecutable: { _ in true })
+        let f = fixable(.pip(python: Fixture.pythonOrg, user: false, formula: nil), "torch", .pypi, installed: "2.7.0", fixed: "2.8.0")
+        let advisor = FixAdvisor(tools: tools, home: home)
+        guard case let .offer(offer) = await advisor.assess(f) else { Issue.record("no offer"); return }
+        #expect(offer.companions == ["torchaudio"])
+        let preview = await advisor.preview(offer)
+        #expect(preview.blocked == nil && preview.pins == ["torchaudio==2.8.0"])
+        #expect(offer.plan.invocation.arguments + preview.pins == ["-m", "pip", "install", "--upgrade", "torch==2.8.0", "torchaudio==2.8.0"])
+    }
+
+    /// A-R4: nothing runs without pip's dry run.
+    @Test func noDryRunNoRun() async throws {
+        let dir = site([("six", "1.16.0", [], false, false)])
+        let py = Fixture.pythonOrg.executable
+        let tools = ToolEnvironment(home: URL(fileURLWithPath: home), base: [:], runner: SwitchableRunner([
+            "\(py) -c \(PythonSite.script)": CommandResult(status: 0, stdout: Data(#"{"path":["\#(dir.path)"],"markers":{}}"#.utf8), stderr: Data()),
+            "\(py) -m pip --version": CommandResult(status: 0, stdout: Data("pip 21.2.4 from /x (python 3.13)\n".utf8), stderr: Data()),
+        ]), isExecutable: { _ in true })
+        let f = fixable(.pip(python: Fixture.pythonOrg, user: false, formula: nil), "six", .pypi, installed: "1.16.0", fixed: "1.17.0")
+        let preview = await FixAdvisor(tools: tools, home: home).preview(try ok(plan(f, tools: tools)))
+        #expect(preview.blocked == "nothing runs without pip's dry run, which could not say what would change")
+    }
+
+    /// A-R6, B-R5: REQUESTED marks are evidence; the ones a fix's command left are removed afterwards.
+    @Test func theMarksAFixLeftAreRemoved() {
+        let before = site([("starlette", "0.48.0", [], false, false), ("fastapi", "0.120.0", [], true, false)])
+        let after = site([("starlette", "1.3.1", [], true, false), ("fastapi", "0.120.0", [], true, false), ("anyio", "5.0.0", [], true, false)])
+        let b = PythonSite(folders: [before.path], markers: [:]), a = PythonSite(folders: [after.path], markers: [:])
+        #expect(PipGuard.marksToClear(before: b, after: a) == ["starlette", "anyio"])
+        #expect(Set(a.clearRequested(PipGuard.marksToClear(before: b, after: a))) == ["starlette", "anyio"])
+        let now = PythonSite.scan(folders: [after.path])
+        #expect(now.filter(\.requested).map(\.key) == ["fastapi"])                    // what the person asked for stays
+        // a link named REQUESTED is not followed
+        let linked = site([("x", "1.0", [], false, false)])
+        let file = linked.appendingPathComponent("x-1.0.dist-info/REQUESTED")
+        let elsewhere = temporaryDirectory().appendingPathComponent("keep")
+        write("keep", to: elsewhere)
+        try? FileManager.default.createSymbolicLink(at: file, withDestinationURL: elsewhere)
+        var s = PythonSite(folders: [linked.path], markers: [:])
+        s.distributions[0].requested = true
+        #expect(s.clearRequested(["x"]).isEmpty && FileManager.default.fileExists(atPath: elsewhere.path))
+    }
+
+    /// B-R1, B-R2, B-R3: a finding is a file. The live copy is the first on sys.path; two records of one project in
+    /// one folder are stale metadata, never a reason to run `pip uninstall`.
+    @Test func aFindingIsAFile() {
+        let user = site([("six", "1.17.0", [], false, false)]), system = site([("six", "1.16.0", [], false, false)])
+        let s = PythonSite(folders: [user.path, system.path], markers: [:])
+        #expect(s.live("six")?.version == "1.17.0" && s.copies.count == 2)
+        guard case let .blocked(line, _) = PipGuard.verdict(s, pip: pip("six", "1.17.0", installed: "1.16.0")) else { Issue.record("shadowed copy"); return }
+        #expect(line.hasPrefix("Python loads six 1.17.0 from ") && line.hasSuffix(", not this 1.16.0"))
+        let stale = site([("pip", "25.0.1", [], false, false), ("pip", "26.2.2", [], false, false)])
+        let t = PythonSite(folders: [stale.path], markers: [:])
+        #expect(t.staleRecords("pip") == [stale.path])
+        guard case let .blocked(why, _) = PipGuard.verdict(t, pip: pip("pip", "26.3", installed: "25.0.1")) else { Issue.record("stale records"); return }
+        #expect(why.contains("stale metadata") && why.contains("pip would delete the live files"))
+    }
+
+    /// C-Rule 4: never a no-op as the fix. A formula that is already Homebrew's newest, or disabled, gets no button.
+    @Test func noNoOpUpgrades() {
+        let formula = FixPlan.Homebrew(brew: "/opt/homebrew/bin/brew", name: "python@3.14", cask: false, versionIsTheFix: true, label: "python@3.14")
+        #expect(HomebrewAvailability.decide(HomebrewInfo(name: "python@3.14", stable: "3.14.10", installed: "3.14.10"), for: formula, fixedVersion: "3.14.10")
+            == .unavailable("3.14.10 is already Homebrew's newest python@3.14: brew upgrade would change nothing."))
+        #expect(HomebrewAvailability.decide(HomebrewInfo(name: "python@3.14", stable: "3.14.10", installed: "3.14.10"), for: formula, fixedVersion: "3.14.11")
+            == .unavailable("Homebrew still ships 3.14.10; the fix is 3.14.11 upstream."))
+        guard case .unavailable = HomebrewAvailability.decide(HomebrewInfo(name: "python@3.9", stable: "3.9.25", installed: "3.9.24", disabled: true),
+                                                               for: formula, fixedVersion: "3.9.25") else { Issue.record("disabled offered"); return }
     }
 }
 

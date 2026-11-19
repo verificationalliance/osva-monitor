@@ -216,7 +216,7 @@ import Testing
         #expect(a("go.sum", "golang.org/x/net", .go, direct: false, target: "v0.33.0").command == "cd /p && go get golang.org/x/net@v0.33.0")
         #expect(a("Gemfile.lock", "rack", .rubygems, direct: false).command == "cd /p && bundle update --conservative rack")
         #expect(a("composer.lock", "guzzlehttp/guzzle", .packagist, direct: true).command == "cd /p && composer require 'guzzlehttp/guzzle:^2.0.0'")
-        #expect(a("requirements.txt", "django", .pypi, direct: true).command == "cd /p && python3 -m pip install 'django>=2.0.0'")
+        #expect(a("requirements.txt", "django", .pypi, direct: true).command == "cd /p && python3 -m pip install django==2.0.0")
         #expect(a("package-lock.json", "lodash", .npm, direct: nil).command == "cd /p && npm install 'lodash@^2.0.0'")   // unknown: as direct
     }
 }

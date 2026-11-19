@@ -110,8 +110,15 @@ public enum PreviewData {
                                           origins: [.pip(python: python311, user: false, formula: nil)],
                                           page: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), ecosystem: .pypi)
 
-    /// The findings the fix scenes draw from: the fixtures, and starlette.
-    public static var fixFindings: [Finding] { findings + [starlette] }
+    /// torch in python.org's Python, where torchaudio pins it: they move together.
+    public static let pythonOrg = PythonEnvironment(executable: "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3", version: "3.13.9",
+                                                    kind: .pythonOrg, externallyManaged: false, userSite: nil, formula: nil)
+    public static let torch = finding("pkg|PyPI|torch|2.7.0|py3.13.9", .criticalHigh, .package(ecosystem: .pypi, name: "torch"), "torch", "2.7.0", "2.8.0",
+                                      .high, flaws: 6, origins: [.pip(python: pythonOrg, user: false, formula: nil)],
+                                      page: SiteURL.packagePage(.pypi, "torch", version: "2.7.0"), ecosystem: .pypi)
+
+    /// The findings the fix scenes draw from: the fixtures, starlette and torch.
+    public static var fixFindings: [Finding] { findings + [starlette, torch] }
 
     static func fixFinding(_ id: String) -> Finding { fixFindings.first { $0.id == id }! }
 
@@ -145,9 +152,9 @@ public enum PreviewData {
     }
 
     /// The plan a fixture finding gets, made by FixPlan as the app makes it.
-    public static func offer(_ id: String, homebrew: String? = nil) -> FixOffer {
+    public static func offer(_ id: String, homebrew: String? = nil, companions: [String] = []) -> FixOffer {
         guard case let .success(plan) = FixPlan.make(for: fixFinding(id), tools: fixtureTools) else { preconditionFailure("no fix for \(id)") }
-        return FixOffer(plan: plan, homebrew: homebrew)
+        return FixOffer(plan: plan, homebrew: homebrew, companions: companions)
     }
 
     /// What FixPlan decides for a fixture finding: its plan, or the refusal the row shows (a pip or lockfile upgrade
@@ -163,7 +170,7 @@ public enum PreviewData {
         public static let axios = "pkg|npm|axios|1.14.1", openssh = "brew|openssh|10.6p1", openmtp = "app|/Applications/OpenMTP.app|18.3.15"
         public static let nginx = "brew|nginx|1.30.2", nokogiri = "pkg|RubyGems|nokogiri|1.13.8", cpython = "brew|python@3.12|3.12.16"
         public static let setuptools = "pkg|PyPI|setuptools|58.0.4|py3.9.6", vscode = "app|/Applications/Visual Studio Code.app|42.10.0"
-        public static let hacl = "pkg|npm|hacl-wasm|1.4.0", starlette = "pkg|PyPI|starlette|0.48.0|py3.11.14"
+        public static let hacl = "pkg|npm|hacl-wasm|1.4.0", starlette = "pkg|PyPI|starlette|0.48.0|py3.11.14", torch = "pkg|PyPI|torch|2.7.0|py3.13.9"
     }
 
     /// Rows opened: Remove, Update to a version, Update the app that carries the flaw; none because something depends
@@ -176,7 +183,7 @@ public enum PreviewData {
          FixID.cpython: FixRowState(availability: .withheld("Homebrew still ships 3.12.17; the fix is 3.14.11 upstream."))]
     }
 
-    /// The review open: a `brew upgrade` with its dry run, a pip upgrade across a major version, a removal.
+    /// The review open: a `brew upgrade` with its dry run, a pip upgrade whose pinning companion moves with it, a removal.
     public static var fixConfirmations: [String: FixRowState] {
         [FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7.")),
                                   preview: .ready(FixPreview(source: "brew upgrade --dry-run",
@@ -185,9 +192,10 @@ public enum PreviewData {
                                                                  openssl@3 3.6.1 -> 3.6.2
                                                                  nginx 1.30.2 -> 1.30.7
                                                                  """)))),
-         FixID.setuptools: FixRowState(availability: .offered(offer(FixID.setuptools)),
-                                       preview: .ready(FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)",
-                                                                  lines: ["Would install setuptools 78.1.1"], installs: ["setuptools": "78.1.1"]))),
+         FixID.torch: FixRowState(availability: .offered(offer(FixID.torch, companions: ["torchaudio"])),
+                                  preview: .ready(FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)",
+                                                             lines: ["Would install torch 2.8.0, torchaudio 2.8.0"],
+                                                             installs: ["torch": "2.8.0", "torchaudio": "2.8.0"], pins: ["torchaudio==2.8.0"]))),
          FixID.axios: FixRowState(availability: .offered(offer(FixID.axios)),
                                   preview: .ready(.none("npm has no dry run the app uses: the log shows what changes.")))]
     }
@@ -240,13 +248,13 @@ public enum PreviewData {
                                                                      "sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper",
                                                                      "sudo: a password is required"]),
                                                         command: "brew upgrade --cask openmtp")),
-            FixID.setuptools: FixRowState(availability: .offered(offer(FixID.setuptools)), progress: .finished(.exitedWithError(1)),
-                                          run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-21), endedAt: now.addingTimeInterval(-5),
-                                                           log: FixLog(["Collecting setuptools==78.1.1",
-                                                                        "WARNING: Retrying (Retry(total=0)) after connection broken by 'NewConnectionError': /simple/setuptools/",
-                                                                        "ERROR: Could not find a version that satisfies the requirement setuptools==78.1.1 (from versions: none)",
-                                                                        "ERROR: No matching distribution found for setuptools==78.1.1"]),
-                                                           command: finding(FixID.setuptools).upgradeCommand!)),
+            FixID.torch: FixRowState(availability: .offered(offer(FixID.torch, companions: ["torchaudio"])), progress: .finished(.exitedWithError(1)),
+                                     run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-21), endedAt: now.addingTimeInterval(-5),
+                                                      log: FixLog(["Collecting torch==2.8.0",
+                                                                   "WARNING: Retrying (Retry(total=0)) after connection broken by 'NewConnectionError': /simple/torch/",
+                                                                   "ERROR: Could not find a version that satisfies the requirement torch==2.8.0 (from versions: none)",
+                                                                   "ERROR: No matching distribution found for torch==2.8.0"]),
+                                                      command: torch.upgradeCommand! + " torchaudio==2.8.0")),
         ]
     }
 

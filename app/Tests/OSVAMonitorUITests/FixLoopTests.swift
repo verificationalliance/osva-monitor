@@ -284,8 +284,9 @@ import OSVAKit
 
     // MARK: pip
 
-    /// A Python in a temporary home whose pip installs into `site/` as METADATA files: an upgrade of starlette also
-    /// brings anyio 5, which httpx (which needs anyio < 5) then lacks; `--no-deps` puts versions back.
+    /// A Python in a temporary home whose pip installs into `site/` as METADATA files, and marks what its command line
+    /// names REQUESTED, as pip does. Its dry run names starlette alone (or, with `reveal`, anyio 5 too); the real
+    /// install also brings anyio 5, which httpx (which needs anyio < 5) then lacks; `--no-deps` puts versions back.
     func setUpPip(withFastapi: Bool = false) throws -> (AppModel, Finding, URL) {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("osva-fixloop-pip-\(UUID().uuidString)", isDirectory: true)
         let bin = home.appendingPathComponent("bin", isDirectory: true), site = home.appendingPathComponent("site", isDirectory: true)
@@ -310,16 +311,20 @@ import OSVAKit
         [ "$1" = "-m" ] && [ "$2" = "pip" ] || exit 2
         shift 2
         case "$1" in
-          --version) echo "pip 21.0 from $here (python 3.11)" ;;
+          --version) echo "pip 24.0 from $here (python 3.11)" ;;
           check) if [ -f "$here/broken" ]; then echo "httpx 0.27.0 has requirement anyio<5, but you have anyio 5.0.0."; exit 1; fi
                  echo "No broken requirements found." ;;
           install)
+            case " $* " in
+              *" --dry-run "*) if [ -f "$here/reveal" ]; then echo "Would install anyio-5.0.0 starlette-1.3.1"; else echo "Would install starlette-1.3.1"; fi
+                               exit 0 ;;
+            esac
             for a in "$@"; do printf '%s\0' "$a"; done >> "$here/installs"; echo >> "$here/installs"
             case " $* " in
-              *" --no-deps "*) for a in "$@"; do case "$a" in *==*) put "${a%%==*}" "${a#*==}" ;; esac; done; rm -f "$here/broken"
-                               echo "Successfully installed (put back)" ;;
-              *) echo "Collecting starlette==1.3.1"; put starlette 1.3.1 "anyio>=5"; put anyio 5.0.0; touch "$here/broken"
-                 echo "Successfully installed anyio-5.0.0 starlette-1.3.1" ;;
+              *" --no-deps "*) for a in "$@"; do case "$a" in *==*) put "${a%%==*}" "${a#*==}"; touch "$site/${a%%==*}-${a#*==}.dist-info/REQUESTED" ;; esac; done
+                               rm -f "$here/broken"; echo "Successfully installed (put back)" ;;
+              *) echo "Collecting starlette==1.3.1"; put starlette 1.3.1 "anyio>=5"; touch "$site/starlette-1.3.1.dist-info/REQUESTED"; put anyio 5.0.0
+                 touch "$here/broken"; echo "Successfully installed anyio-5.0.0 starlette-1.3.1" ;;
             esac ;;
           *) exit 2 ;;
         esac
@@ -360,8 +365,25 @@ import OSVAKit
         model.assessFix(finding)
         #expect(model.fixes[finding.id]?.availability == .checking)
         try await waitUntil { model.fixes[finding.id]?.availability != .checking }
-        #expect(model.fixes[finding.id]?.availability == .withheld("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first."))
+        // nothing else needs fastapi and nobody asked for it, so the line says what would clear the way
+        #expect(model.fixes[finding.id]?.availability
+            == .withheld("fastapi 0.120.0 needs starlette < 0.49.0 — nothing installed needs fastapi: removing it would clear the way."))
         model.beginFix(finding); model.runFix(finding)
+        #expect(installs(bin).isEmpty && model.fixes[finding.id]?.progress == nil)
+    }
+
+    /// Rule A-R4: the dry run comes first, and what it would also install is checked like the package itself.
+    @Test func whatTheDryRunRevealsBlocksTheRun() async throws {
+        let (model, finding, bin) = try setUpPip()
+        try Data().write(to: bin.appendingPathComponent("reveal"))
+        model.assessFix(finding)
+        try await waitUntil { model.fixes[finding.id]?.availability != .checking }
+        model.beginFix(finding)
+        try await waitUntil { model.fixes[finding.id]?.preview != .loading }
+        guard case let .ready(p)? = model.fixes[finding.id]?.preview else { Issue.record("no review"); return }
+        #expect(p.installs == ["starlette": "1.3.1", "anyio": "5.0.0"])
+        #expect(p.blocked == "httpx 0.27.0 needs anyio < 5 — nothing installed needs httpx: removing it would clear the way" && p.pins.isEmpty)
+        model.runFix(finding)                                                      // Update is not there: nothing runs
         #expect(installs(bin).isEmpty && model.fixes[finding.id]?.progress == nil)
     }
 
@@ -380,6 +402,9 @@ import OSVAKit
 
         #expect(model.fixes[finding.id]?.outcome == .broke("httpx 0.27.0"))
         #expect(model.fixes[finding.id]?.isResolved == false)
+        // pip marked starlette REQUESTED; it was not before, so the mark is gone (rule A-R6)
+        let siteDir = bin.deletingLastPathComponent().appendingPathComponent("site")
+        #expect(!FileManager.default.fileExists(atPath: siteDir.appendingPathComponent("starlette-1.3.1.dist-info/REQUESTED").path))
         let undo = try #require(model.fixes[finding.id]?.run?.undo)
         #expect(undo.invocation.arguments == ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check", "anyio==4.0.0", "starlette==0.48.0"])
         #expect(installs(bin) == [["install", "--upgrade", "starlette==1.3.1"]])
@@ -390,8 +415,9 @@ import OSVAKit
         try await waitUntil { finished(model, finding.id) }
         #expect(model.fixes[finding.id]?.outcome == .undone("anyio 4.0.0, starlette 0.48.0"))
         #expect(installs(bin).last == ["install", "--no-deps", "--disable-pip-version-check", "anyio==4.0.0", "starlette==0.48.0"])
-        let site = PythonSite.read(folders: [bin.deletingLastPathComponent().appendingPathComponent("site").path])
+        let site = PythonSite.scan(folders: [siteDir.path])
         #expect(Dictionary(uniqueKeysWithValues: site.map { ($0.key, $0.version) }) == ["starlette": "0.48.0", "anyio": "4.0.0", "httpx": "0.27.0"])
+        #expect(site.allSatisfy { !$0.requested })                                    // and the undo's marks too
     }
 }
 

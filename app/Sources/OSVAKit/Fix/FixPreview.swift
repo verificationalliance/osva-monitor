@@ -14,9 +14,13 @@ public struct FixPreview: Equatable, Sendable {
     public var installs: [String: String]
     /// Something installed depends on a version the dry run would replace: the line that says so. Nothing runs.
     public var blocked: String?
+    /// For pip: every other package the dry run would install, pinned ("torchaudio==2.8.0"). They go on the command
+    /// line after the fix's own pin, so the run installs exactly what the review showed.
+    public var pins: [String] = []
 
-    public init(source: String?, lines: [String], unavailable: String? = nil, installs: [String: String] = [:], blocked: String? = nil) {
-        self.source = source; self.lines = lines; self.unavailable = unavailable; self.installs = installs; self.blocked = blocked
+    public init(source: String?, lines: [String], unavailable: String? = nil, installs: [String: String] = [:], blocked: String? = nil,
+                pins: [String] = []) {
+        self.source = source; self.lines = lines; self.unavailable = unavailable; self.installs = installs; self.blocked = blocked; self.pins = pins
     }
 
     /// The other packages it would change, by name: "openssl@3" for a `brew upgrade nginx` that also upgrades it.
@@ -38,9 +42,9 @@ public struct FixPreviewer: Sendable {
     let tools: ToolEnvironment
     public init(tools: ToolEnvironment) { self.tools = tools }
 
-    public func preview(_ plan: FixPlan) async -> FixPreview {
+    public func preview(_ plan: FixPlan, companions: [String] = []) async -> FixPreview {
         if let brew = plan.homebrew, plan.action == .upgrade { return await homebrew(brew) }
-        if let pip = plan.pip { return await self.pip(pip) }
+        if let pip = plan.pip { return await self.pip(pip, companions: companions.filter(FixSafety.isSafeName)) }
         if plan.action == .removal, plan.toolName == "pip" {
             return .none("pip has no dry run for a removal: the log shows what it removes.")
         }
@@ -93,7 +97,7 @@ public struct FixPreviewer: Sendable {
 
     // MARK: pip
 
-    func pip(_ pip: FixPlan.Pip) async -> FixPreview {
+    func pip(_ pip: FixPlan.Pip, companions: [String] = []) async -> FixPreview {
         let version: String
         do {
             let r = try await tools.run(pip.python, ["-m", "pip", "--version"], timeout: 30)
@@ -109,7 +113,7 @@ public struct FixPreviewer: Sendable {
         }
         // --only-binary: working out what a source release needs would run its build code, which a preview must not do.
         let args = ["-m", "pip", "install", "--dry-run", "--only-binary=:all:", "--upgrade", "--disable-pip-version-check", "--no-input"]
-            + (pip.user ? ["--user"] : []) + [pip.requirement]
+            + (pip.user ? ["--user"] : []) + [pip.requirement] + companions
         do {
             let r = try await tools.run(pip.python, args, timeout: 60)
             if r.status == 0 {

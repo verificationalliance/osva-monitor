@@ -29,6 +29,9 @@ enum Fixture {
 
     static let applePython = PythonEnvironment(executable: "/usr/bin/python3", version: "3.9.6", kind: .apple, externallyManaged: false,
                                                userSite: "/Users/ana/Library/Python/3.9/lib/python/site-packages", formula: nil)
+    static let pythonOrg = PythonEnvironment(executable: "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3", version: "3.13.1",
+                                             kind: .pythonOrg, externallyManaged: false, userSite: "/Users/ana/Library/Python/3.13/lib/python/site-packages",
+                                             formula: nil)
     static let homebrewPython = PythonEnvironment(executable: "/opt/homebrew/bin/python3", version: "3.15.2", kind: .homebrew, externallyManaged: true,
                                                   userSite: "/Users/ana/Library/Python/3.15/lib/python/site-packages", formula: "python@3.15")
 }

@@ -177,7 +177,7 @@ public struct FixConfirmation: View {
             case let .ready(p):
                 if let blocked = p.blocked {
                     FixNotice(symbol: "exclamationmark.triangle.fill", text: blocked.prefix(1).uppercased() + blocked.dropFirst() + ".", strong: true)
-                } else if let also = Self.also(p, plan: plan) {
+                } else if let also = Self.also(p, plan: plan, companions: offer.companions) {
                     Text(also).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -204,10 +204,15 @@ public struct FixConfirmation: View {
         .accessibilityLabel("Review the fix")
     }
 
-    /// "Also updates openssl@3.", "Also installs idna and 2 more."; nil when nothing else changes.
-    static func also(_ p: FixPreview, plan: FixPlan) -> String? {
+    /// "Also updates openssl@3.", "Also installs idna and 2 more.", "Also updates torchaudio, which moves with it.";
+    /// nil when nothing else changes.
+    static func also(_ p: FixPreview, plan: FixPlan, companions: [String] = []) -> String? {
         let others = p.others(than: plan.pip?.name ?? plan.homebrew?.name ?? plan.title)
         guard let first = others.first else { return nil }
+        let moving = Set(companions.map(PythonNames.normal))
+        if !moving.isEmpty, others.allSatisfy({ moving.contains(PythonNames.normal($0)) }) {
+            return "Also updates \(others.joined(separator: " and ")), which " + (others.count == 1 ? "moves" : "move") + " with it."
+        }
         let verb = plan.pip != nil ? "installs" : "updates"
         return "Also \(verb) \(first)" + (others.count > 1 ? " and \(others.count - 1) more." : ".")
     }
@@ -224,7 +229,7 @@ struct FixDetails: View {
         VStack(alignment: .leading, spacing: 7) {
             fact("Runs") {
                 WrapAtSpaces(spacing: 4, lineSpacing: 4) {
-                    ForEach(Array(plan.invocation.argv.enumerated()), id: \.offset) { i, arg in
+                    ForEach(Array((plan.invocation.argv + (preview?.pins ?? [])).enumerated()), id: \.offset) { i, arg in
                         Text(i == 0 ? Paths.abbreviatingHome(arg) : arg)
                             .font(Typeface.code).foregroundStyle(.primary)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)

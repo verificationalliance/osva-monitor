@@ -266,7 +266,7 @@ public final class AppModel {
         fixes[finding.id]?.preview = .loading
         let advisor = self.advisor
         Task { [weak self] in
-            let preview = await advisor.preview(offer.plan)
+            let preview = await advisor.preview(offer)
             guard let self, self.fixes[finding.id]?.preview == .loading else { return }
             self.fixes[finding.id]?.preview = .ready(preview)
         }
@@ -282,7 +282,7 @@ public final class AppModel {
         guard !isShowingFixtures, let state = fixes[finding.id], case let .offered(offer)? = state.availability,
               case let .ready(preview)? = state.preview, preview.blocked == nil, !state.isBusy, busyTitle == nil else { return }
         guard let current = currentPlan(finding, matching: offer.plan) else { return }
-        start(current.finding, plan: current.plan, also: preview.installs)
+        start(current.finding, plan: current.plan, also: preview.installs, pins: preview.pins)
     }
 
     /// Retry: the same command again, after it did not finish, without the review (it was reviewed, and the plan is
@@ -290,9 +290,10 @@ public final class AppModel {
     public func retryFix(_ finding: Finding) {
         guard !isShowingFixtures, let state = fixes[finding.id], case let .offered(offer)? = state.availability, !state.isBusy,
               busyTitle == nil, state.outcome?.isProblem == true else { return }
-        guard offer.plan == lastPlans[finding.id] else { beginFix(finding); return }
+        // a pip upgrade is never run again without a fresh dry run: Retry opens its review
+        guard offer.plan == lastPlans[finding.id], offer.plan.pip == nil else { beginFix(finding); return }
         guard let current = currentPlan(finding, matching: offer.plan) else { return }
-        start(current.finding, plan: current.plan, also: [:])
+        start(current.finding, plan: current.plan, also: [:], pins: [])
     }
 
     /// The finding as the report has it now, and its plan made again, if that is still `plan`. Otherwise the row is
@@ -322,9 +323,13 @@ public final class AppModel {
         launch(finding, plan: plan, invocation: undo.invocation, doing: "Undoing", command: undo.command, undo: undo, pip: nil)
     }
 
-    private func start(_ finding: Finding, plan: FixPlan, also: [String: String]) {
+    /// `pins`: for pip, every other package its dry run would install, pinned, after the fix's own pin.
+    private func start(_ finding: Finding, plan: FixPlan, also: [String: String], pins: [String]) {
         lastPlans[finding.id] = plan
-        launch(finding, plan: plan, invocation: plan.invocation, doing: plan.doing, command: plan.command, undo: nil,
+        var invocation = plan.invocation
+        invocation.arguments += pins
+        let command = pins.isEmpty ? plan.command : invocation.argv.map(UpgradeCommand.quote).joined(separator: " ")
+        launch(finding, plan: plan, invocation: invocation, doing: plan.doing, command: command, undo: nil,
                pip: plan.action == .upgrade ? plan.pip.map { ($0, also) } : nil)
     }
 
@@ -349,6 +354,9 @@ public final class AppModel {
                 switch await guardian.check(pip, also: also) {
                 case let .blocked(line, _), let .unknown(line):
                     self?.endBeforeRunning(finding, plan: plan, outcome: .blocked(line))
+                    return
+                case .companions:
+                    self?.endBeforeRunning(finding, plan: plan, outcome: .blocked("what pins \(pip.name) would not move with it"))
                     return
                 case let .clear(site):
                     guard let problems = await guardian.problems(pip) else {
@@ -441,6 +449,7 @@ public final class AppModel {
         isRechecking = true
         let scanner = makeScanner()
         let advisor = self.advisor
+        let guardian = PipGuard(tools: tools)
         Task { [weak self] in
             let (updated, recheck) = await scanner.recheck(run.finding, in: report)
             let outcome: FixOutcome
@@ -449,8 +458,9 @@ public final class AppModel {
                 var homebrew: HomebrewAvailability?
                 if case .stillAffected = recheck, status == 0 { homebrew = await advisor.homebrew(run.plan) }
                 outcome = FixOutcome.make(status: status, before: run.finding, recheck: recheck, homebrew: homebrew)
-            case let .app(ending, after) where run.undo != nil:
-                _ = after
+            case let .app(ending, _) where run.undo != nil:
+                // pip marked what the undo named REQUESTED; the marks that were not there before the fix go
+                _ = await guardian.afterUndo(run.undo!)
                 outcome = ending.succeeded ? .undone(run.undo!.restores.joined(separator: ", ")) : .undoFailed
             case let .app(ending, after):
                 var homebrew: HomebrewAvailability?

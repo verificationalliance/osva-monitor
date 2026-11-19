@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // What else in a Python environment depends on a package, read from the installed distributions' own metadata, so an
@@ -10,16 +11,35 @@ import Foundation
 //   - after: the environment's own `pip check` runs again, and any conflict it did not have before makes the outcome
 //     "Updated, but it broke …", with an Undo that puts back the exact versions that changed.
 
-/// One installed distribution, as its METADATA says.
+/// One installed distribution, as its metadata folder says. A finding is a file: this is one folder, and the same
+/// project can have others further down sys.path (shadowed) or beside it (stale records).
 public struct PythonDistribution: Hashable, Sendable {
     public var name: String
     public var version: String
     /// Its Requires-Dist lines, as written.
     public var requires: [String]
-    public init(name: String, version: String, requires: [String]) { self.name = name; self.version = version; self.requires = requires }
+    /// Its metadata folder (".../site-packages/starlette-0.48.0.dist-info"); "" when made in code.
+    public var path: String
+    /// It has a REQUESTED file: some pip command named it. Evidence, not the person's intent: pip marks every name
+    /// on its command line, the app's own fixes and undos included.
+    public var requested: Bool
+    /// Installed editable (direct_url.json): a project someone works on.
+    public var editable: Bool
+
+    public init(name: String, version: String, requires: [String], path: String = "", requested: Bool = false, editable: Bool = false) {
+        self.name = name; self.version = version; self.requires = requires; self.path = path; self.requested = requested; self.editable = editable
+    }
 
     /// PEP 503's normal form: lowercase, runs of `-_.` as one "-".
     public var key: String { PythonNames.normal(name) }
+
+    /// The folder on sys.path it is in.
+    public var folder: String { (path as NSString).deletingLastPathComponent }
+
+    /// The extras its requirements name (`extra == "dev"`).
+    public var extras: Set<String> {
+        Set(requires.compactMap { PythonRequirement($0)?.marker }.flatMap(PythonMarker.extrasNamed))
+    }
 }
 
 public enum PythonNames {
@@ -134,6 +154,8 @@ public struct PythonSpecifier: Hashable, Sendable {
 /// "httpx @ https://…".
 public struct PythonRequirement: Hashable, Sendable {
     public var name: String
+    /// The extras it asks of the package ("standard" in `uvicorn[standard]`).
+    public var extras: Set<String> = []
     public var specifiers: [PythonSpecifier]
     public var marker: String?
     /// A direct reference ("name @ url"): the app cannot tell which versions it takes.
@@ -154,11 +176,14 @@ public struct PythonRequirement: Hashable, Sendable {
         let name = String(scalars[..<nameEnd]).trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return nil }
         var rest = String(scalars[nameEnd...]).trimmingCharacters(in: .whitespaces)
+        var extras = Set<String>()
         if rest.hasPrefix("[") {                                                   // extras the dependent asks for
             guard let close = rest.firstIndex(of: "]") else { return nil }
+            extras = Set(rest[rest.index(after: rest.startIndex)..<close].split(separator: ",")
+                .map { PythonNames.normal($0.trimmingCharacters(in: .whitespaces)) }.filter { !$0.isEmpty })
             rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespaces)
         }
-        self.name = name; self.marker = marker; self.url = false; self.unreadable = false; self.specifiers = []
+        self.name = name; self.extras = extras; self.marker = marker; self.url = false; self.unreadable = false; self.specifiers = []
         if rest.hasPrefix("@") { url = true; return }
         if rest.hasPrefix("(") && rest.hasSuffix(")") { rest = String(rest.dropFirst().dropLast()) }
         for part in rest.split(separator: ",") where !part.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -175,14 +200,27 @@ public struct PythonRequirement: Hashable, Sendable {
     }
 }
 
-/// PEP 508 environment markers, evaluated as `pip check` does: with no extra selected, so a requirement only an extra
-/// brings in does not count. Nil when the app cannot read the marker; the callers then treat the requirement as
-/// applying.
+/// PEP 508 environment markers, evaluated for this interpreter and platform, with the extras that are active for the
+/// distribution whose requirement it is (`PythonSite.activeExtras`): a requirement behind an extra nobody asked for does
+/// not count, one behind an active extra does. Nil when the app cannot read the marker; the callers then treat the
+/// requirement as applying.
 public enum PythonMarker {
-    public static func evaluate(_ marker: String, environment env: [String: String]) -> Bool? {
-        var p = Parser(tokens: tokenize(marker), env: env)
+    public static func evaluate(_ marker: String, environment env: [String: String], extras: Set<String> = []) -> Bool? {
+        var p = Parser(tokens: tokenize(marker), env: env, extras: extras)
         guard let tokens = p.tokens, let value = p.or(), p.at == tokens.count else { return nil }
         return value
+    }
+
+    /// The extras a marker names (`extra == "dev"` is "dev").
+    public static func extrasNamed(_ marker: String) -> [String] {
+        guard let tokens = tokenize(marker) else { return [] }
+        var out: [String] = []
+        for (i, t) in tokens.enumerated() where t == .word("extra") {
+            for j in [i + 2, i - 2] where j >= 0 && j < tokens.count {
+                if case let .string(s) = tokens[j] { out.append(PythonNames.normal(s)) }
+            }
+        }
+        return out
     }
 
     enum Token: Equatable { case word(String), string(String), op(String), open, close }
@@ -214,8 +252,9 @@ public enum PythonMarker {
     struct Parser {
         var tokens: [Token]?
         var env: [String: String]
+        var extras: Set<String>
         var at = 0
-        init(tokens: [Token]?, env: [String: String]) { self.tokens = tokens; self.env = env }
+        init(tokens: [Token]?, env: [String: String], extras: Set<String>) { self.tokens = tokens; self.env = env; self.extras = extras }
 
         mutating func next() -> Token? { guard let t = tokens, at < t.count else { return nil }; defer { at += 1 }; return t[at] }
         func peek() -> Token? { guard let t = tokens, at < t.count else { return nil }; return t[at] }
@@ -248,7 +287,10 @@ public enum PythonMarker {
             }
             guard let (rhs, rhsName) = value() else { return nil }
             let variable = lhsName ?? rhsName
-            if variable == "extra" { return op == "==" ? false : op == "!=" ? true : nil }   // no extra is selected
+            if variable == "extra" {
+                let named = PythonNames.normal(lhsName == "extra" ? rhs : lhs)
+                return op == "==" ? extras.contains(named) : op == "!=" ? !extras.contains(named) : nil
+            }
             switch op {
             case "in": return rhs.contains(lhs)
             case "not in": return !rhs.contains(lhs)
@@ -289,6 +331,8 @@ public struct DependencyConflict: Hashable, Sendable {
     public var package: String
     /// What the dependent needs, as its specifiers say: "< 0.49.0", or ">= 2, < 3".
     public var needs: String
+    /// It pins the package (`==`, `~=` on a patch series): they move together, in one command, or not at all.
+    public var exact: Bool = false
 
     /// "fastapi 0.120.0 needs starlette < 0.49.0".
     public var line: String { "\(dependent) \(dependentVersion) needs \(package) \(needs)" }
@@ -296,10 +340,55 @@ public struct DependencyConflict: Hashable, Sendable {
 
 /// The distributions of one Python, read from the folders on its sys.path, and the values its markers are read with.
 public struct PythonSite: Equatable, Sendable {
+    /// The live copy of each project: the first on sys.path, which is the one Python imports.
     public var distributions: [PythonDistribution]
     public var markers: [String: String]
+    /// Every metadata folder found, live or not, in sys.path order.
+    public var copies: [PythonDistribution]
 
-    public init(distributions: [PythonDistribution], markers: [String: String]) { self.distributions = distributions; self.markers = markers }
+    public init(distributions: [PythonDistribution], markers: [String: String], copies: [PythonDistribution]? = nil) {
+        self.distributions = distributions; self.markers = markers; self.copies = copies ?? distributions
+    }
+
+    /// Read from these folders (sys.path order).
+    public init(folders: [String], markers: [String: String]) {
+        let all = Self.scan(folders: folders)
+        var seen = Set<String>()
+        self.init(distributions: all.filter { seen.insert($0.key).inserted }, markers: markers, copies: all)
+    }
+
+    /// The live copy of a project, if it is installed.
+    public func live(_ name: String) -> PythonDistribution? { distributions.first { $0.key == PythonNames.normal(name) } }
+
+    /// More than one metadata folder for the project in one folder: stale records of an earlier install, not a second
+    /// copy. Their RECORDs list the same files, so `pip uninstall` of either deletes the live code. The folders.
+    public func staleRecords(_ name: String) -> [String] {
+        let key = PythonNames.normal(name)
+        let byFolder = Dictionary(grouping: copies.filter { $0.key == key }, by: \.folder)
+        return byFolder.filter { $0.value.count > 1 }.keys.sorted()
+    }
+
+    /// The extras in use, by project: those some installed distribution asks for (`uvicorn[standard]`), under the
+    /// extras active for it in turn, and every extra of an editable project (a developer installs those with their
+    /// `[dev]`, which leaves no trace). A requirement behind an active extra gates an upgrade like any other.
+    public func activeExtras() -> [String: Set<String>] {
+        var active: [String: Set<String>] = [:]
+        for d in distributions where d.editable { active[d.key] = d.extras }
+        var changed = true
+        while changed {
+            changed = false
+            for d in distributions {
+                for line in d.requires {
+                    guard let r = PythonRequirement(line), !r.extras.isEmpty else { continue }
+                    if let m = r.marker, PythonMarker.evaluate(m, environment: markers, extras: active[d.key] ?? []) == false { continue }
+                    let before = active[r.key, default: []]
+                    let after = before.union(r.extras)
+                    if after != before { active[r.key] = after; changed = true }
+                }
+            }
+        }
+        return active
+    }
 
     /// Each distribution's version, by normal name.
     public var versions: [String: String] { Dictionary(distributions.map { ($0.key, $0.version) }, uniquingKeysWith: { a, _ in a }) }
@@ -309,26 +398,38 @@ public struct PythonSite: Equatable, Sendable {
     /// their new releases bring their own requirements, which pip resolves.
     public func conflicts(_ changes: [String: String]) -> [DependencyConflict] {
         var out: [DependencyConflict] = []
+        let extras = activeExtras()
         for d in distributions where changes[d.key] == nil {
             for line in d.requires {
                 guard let r = PythonRequirement(line), let new = changes[r.key] else { continue }
-                if let m = r.marker, PythonMarker.evaluate(m, environment: markers) == false { continue }
+                if let m = r.marker, PythonMarker.evaluate(m, environment: markers, extras: extras[d.key] ?? []) == false { continue }
                 let refused = r.refuses(new)
                 if !refused.isEmpty {
                     let name = distributions.first { $0.key == r.key }?.name ?? r.name
-                    out.append(DependencyConflict(dependent: d.name, dependentVersion: d.version, package: name, needs: refused.joined(separator: ", ")))
+                    out.append(DependencyConflict(dependent: d.name, dependentVersion: d.version, package: name, needs: refused.joined(separator: ", "),
+                                                  exact: r.specifiers.contains { $0.op == .equal || $0.op == .arbitrary || ($0.op == .compatible && Self.patchLevel($0.version)) }))
                 }
             }
         }
         return out.sorted { ($0.dependent.lowercased(), $0.package) < ($1.dependent.lowercased(), $1.package) }
     }
 
+    /// `~= 2.2.1` (three release numbers or more) pins a patch series: a lockstep pin, like `==`.
+    static func patchLevel(_ v: String) -> Bool { PythonSpecifier.release(PythonSpecifier.plain(v)).count >= 3 }
+
     // MARK: Reading
 
     /// Every distribution in these folders, the first of each name winning (sys.path order is import order):
     /// `*.dist-info/METADATA`, and the older `*.egg-info/PKG-INFO` with its `requires.txt`.
     public static func read(folders: [String]) -> [PythonDistribution] {
-        var seen = Set<String>(), out: [PythonDistribution] = []
+        var seen = Set<String>()
+        return scan(folders: folders).filter { seen.insert($0.key).inserted }
+    }
+
+    /// Every metadata folder in these folders, in order, with where it is, whether pip marked it REQUESTED, and
+    /// whether it is an editable install.
+    public static func scan(folders: [String]) -> [PythonDistribution] {
+        var out: [PythonDistribution] = []
         let fm = FileManager.default
         for folder in folders {
             for entry in ((try? fm.contentsOfDirectory(atPath: folder)) ?? []).sorted() {
@@ -336,16 +437,37 @@ public struct PythonSite: Equatable, Sendable {
                 var d: PythonDistribution?
                 if entry.hasSuffix(".dist-info") {
                     d = readText((dir as NSString).appendingPathComponent("METADATA")).flatMap(parseMetadata)
+                    d?.requested = fm.fileExists(atPath: (dir as NSString).appendingPathComponent("REQUESTED"))
+                    if let direct = readText((dir as NSString).appendingPathComponent("direct_url.json")).map({ Data($0.utf8) }),
+                       let json = try? JSONSerialization.jsonObject(with: direct) as? [String: Any],
+                       (json["dir_info"] as? [String: Any])?["editable"] as? Bool == true {
+                        d?.editable = true
+                    }
                 } else if entry.hasSuffix(".egg-info") {
                     d = readText((dir as NSString).appendingPathComponent("PKG-INFO")).flatMap(parseMetadata)
                     if d != nil, let reqs = readText((dir as NSString).appendingPathComponent("requires.txt")) {
                         d!.requires += parseRequiresTxt(reqs)
                     }
                 }
-                if let d, seen.insert(d.key).inserted { out.append(d) }
+                if var d { d.path = dir; out.append(d) }
             }
         }
         return out
+    }
+
+    /// Removes the REQUESTED marks pip left on these projects' live copies, so the app's own command does not read
+    /// later as the person having asked for them. Only a regular file named REQUESTED, of this user's, inside a
+    /// `*.dist-info` folder the site was read from. The projects whose mark it removed.
+    @discardableResult
+    public func clearRequested(_ keys: Set<String>) -> [String] {
+        var cleared: [String] = []
+        for d in distributions where keys.contains(d.key) && d.requested && d.path.hasSuffix(".dist-info") {
+            let file = (d.path as NSString).appendingPathComponent("REQUESTED")
+            var st = stat()
+            guard lstat(file, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_uid == getuid() else { continue }
+            if unlink(file) == 0 { cleared.append(d.name) }
+        }
+        return cleared
     }
 
     /// At most the first 512 KB: the headers come first, the long description after them.
@@ -422,7 +544,7 @@ public struct PythonSite: Equatable, Sendable {
                 return .failure(PythonSiteError(message: r.errorText.isEmpty ? "python exited with \(r.status)" : String(r.errorText.prefix(160))))
             }
             let markers = (json["markers"] as? [String: String]) ?? [:]
-            return .success(PythonSite(distributions: read(folders: path), markers: markers))
+            return .success(PythonSite(folders: path, markers: markers))
         } catch {
             return .failure(PythonSiteError(message: error.localizedDescription))
         }
@@ -460,7 +582,12 @@ public struct PipUndo: Hashable, Sendable {
     /// "starlette 0.48.0", one per distribution put back.
     public var restores: [String]
 
-    public init(invocation: FixInvocation, restores: [String]) { self.invocation = invocation; self.restores = restores }
+    /// The projects it puts back that were not marked REQUESTED before the fix: their marks are removed afterwards.
+    public var unmarked: Set<String> = []
+
+    public init(invocation: FixInvocation, restores: [String], unmarked: Set<String> = []) {
+        self.invocation = invocation; self.restores = restores; self.unmarked = unmarked
+    }
 
     /// The undo, or nil if nothing changed or a name or version is not one the app puts in a command (`FixSafety`).
     public static func make(python: String, user: Bool, before: PythonSite, after: PythonSite) -> PipUndo? {
@@ -470,7 +597,8 @@ public struct PipUndo: Hashable, Sendable {
         guard !changed.isEmpty, changed.allSatisfy({ FixSafety.isSafeName($0.name) && FixSafety.isSafeVersion($0.version) }) else { return nil }
         let args = ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check"] + (user ? ["--user"] : [])
             + changed.map { "\($0.name)==\($0.version)" }
-        return PipUndo(invocation: FixInvocation(executable: python, arguments: args), restores: changed.map { "\($0.name) \($0.version)" })
+        return PipUndo(invocation: FixInvocation(executable: python, arguments: args), restores: changed.map { "\($0.name) \($0.version)" },
+                       unmarked: Set(changed.filter { !$0.requested }.map(\.key)))
     }
 
     /// The command, as a person would type it.
@@ -486,7 +614,10 @@ public struct PipGuard: Sendable {
     public enum Verdict: Equatable, Sendable {
         /// Nothing installed excludes the new versions: the site as it is now.
         case clear(PythonSite)
-        /// Something does: the line to show ("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first").
+        /// Only packages that pin it exactly (torchaudio's `torch==`, OpenTelemetry's sdk and api) stand in the way:
+        /// they move with it, in one pinned command, which pip's dry run works out at the review.
+        case companions([String], PythonSite)
+        /// It may not run: the line to show ("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first").
         case blocked(String, [DependencyConflict])
         /// The interpreter did not answer, so nothing was checked: not run ("could not read what depends on starlette").
         case unknown(String)
@@ -503,16 +634,48 @@ public struct PipGuard: Sendable {
         }
     }
 
+    /// In order: which file the finding is (rules of identity), then what depends on it (every installed dependent's
+    /// specifier, extras in use included), then whether what stands in the way can move with it.
     public static func verdict(_ site: PythonSite, pip: FixPlan.Pip, also: [String: String] = [:]) -> Verdict {
+        // A finding is a file: the copy Python loads, once, in one folder.
+        if let folder = site.staleRecords(pip.name).first {
+            return .blocked("\(pip.name) has two records in \(Paths.abbreviatingHome(folder)): stale metadata, not a second copy. "
+                            + "Remove the old record by hand; pip would delete the live files", [])
+        }
+        guard let live = site.live(pip.name) else { return .blocked("\(pip.name) is not installed in this Python any more", []) }
+        if !pip.installed.isEmpty, PythonSpecifier.readable(PythonSpecifier.plain(live.version)), PythonSpecifier.readable(PythonSpecifier.plain(pip.installed)),
+           PythonSpecifier.compare(PythonSpecifier.plain(live.version), PythonSpecifier.plain(pip.installed)) != 0 {
+            return .blocked("Python loads \(live.name) \(live.version) from \(Paths.abbreviatingHome(live.folder)), not this \(pip.installed)", [])
+        }
         var changes = also
         changes[PythonNames.normal(pip.name)] = pip.target
         let conflicts = site.conflicts(changes)
         guard let first = conflicts.first else { return .clear(site) }
-        let dependents = Set(conflicts.map(\.dependent))
+        // they pin it exactly, and nothing else stands in the way: they can move with it (only before the dry run)
+        if also.isEmpty, conflicts.allSatisfy(\.exact) {
+            return .companions(Array(Set(conflicts.map(\.dependent))).sorted(), site)
+        }
+        let dependents = Array(Set(conflicts.map(\.dependent))).sorted()
         let line = dependents.count == 1
-            ? "\(first.line) — update \(first.dependent) first"
+            ? "\(first.line) — \(route(first.dependent, site: site, package: pip.name))"
             : "\(first.line), and \(dependents.count - 1) more — update them first"
         return .blocked(line, conflicts)
+    }
+
+    /// What to do about one package that stands in the way, as far as the installed metadata tells: nothing needs it
+    /// (remove it), it is the person's own project (change its range there), or update it.
+    static func route(_ blocker: String, site: PythonSite, package: String) -> String {
+        guard let b = site.live(blocker) else { return "update \(blocker) first" }
+        if b.editable { return "it is a project installed for development: raise its \(package) range there" }
+        let extras = site.activeExtras()
+        let needed = site.distributions.contains { d in
+            d.key != b.key && d.requires.contains { line in
+                guard let r = PythonRequirement(line), r.key == b.key else { return false }
+                return r.marker.map { PythonMarker.evaluate($0, environment: site.markers, extras: extras[d.key] ?? []) != false } ?? true
+            }
+        }
+        if !needed && !b.requested { return "nothing installed needs \(b.name): removing it would clear the way" }
+        return "update \(b.name) first"
     }
 
     /// What `pip check` says, before or after a run.
@@ -526,21 +689,39 @@ public struct PipGuard: Sendable {
         public var undo: PipUndo?
         /// Why the app could not check, if it could not.
         public var uncheckable: String?
+        /// The REQUESTED marks pip left that were not there before, removed.
+        public var unmarked: [String] = []
     }
 
     /// Compares the environment with how it was before the run: new `pip check` problems, and an undo of every
-    /// version that changed.
+    /// version that changed. pip marked every name on the command line REQUESTED; the marks that were not there before
+    /// are removed, so a later look does not take the app's command for the person's wish.
     public func after(_ pip: FixPlan.Pip, before: PythonSite, problemsBefore: Set<String>) async -> After {
         let site = await PythonSite.read(python: pip.python, tools: tools)
         let problems = await self.problems(pip)
         var out = After()
-        if case let .success(now) = site { out.undo = PipUndo.make(python: pip.python, user: pip.user, before: before, after: now) }
+        if case let .success(now) = site {
+            out.undo = PipUndo.make(python: pip.python, user: pip.user, before: before, after: now)
+            out.unmarked = now.clearRequested(Self.marksToClear(before: before, after: now))
+        }
         guard let problems else {
             out.uncheckable = "pip check did not answer, so the app cannot tell whether anything that depends on \(pip.name) broke"
             return out
         }
         out.broke = Self.brokenLine(problems.subtracting(problemsBefore))
         return out
+    }
+
+    /// The projects marked REQUESTED now that were not before (new, or changed and unmarked before).
+    static func marksToClear(before: PythonSite, after: PythonSite) -> Set<String> {
+        let was = Dictionary(before.distributions.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        return Set(after.distributions.filter { d in d.requested && !(was[d.key]?.requested ?? false) }.map(\.key))
+    }
+
+    /// After an undo: the marks on what it put back, where the projects were not marked before the fix.
+    public func afterUndo(_ undo: PipUndo) async -> [String] {
+        guard case let .success(now) = await PythonSite.read(python: undo.invocation.executable, tools: tools) else { return [] }
+        return now.clearRequested(undo.unmarked)
     }
 
     /// "fastapi 0.120.0", "fastapi 0.120.0 and 1 more", or nil for no new problems.

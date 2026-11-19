@@ -3,10 +3,12 @@ import Testing
 import OSVAKit
 @testable import OSVAMonitorUI
 
-/// A real fix, through the app's own loop, on this Mac: Apple's Python, a real `pip install --user --upgrade` from
-/// PyPI, with the user site moved to a throwaway folder (PYTHONUSERBASE) so nothing of the person's changes. Off by
-/// default (it needs the network and Apple's Python); `OSVA_REAL_FIX=1 swift test --filter RealFixTests` runs it and
-/// prints each state the row goes through, with the log as it streams.
+/// A real fix, through the app's own loop, on this Mac: Homebrew's Python 3.11 (not externally managed, like the one
+/// on the owner's Mac), a real `pip install --user --upgrade six==1.17.0` from PyPI after its real dry run, `pip check`
+/// before and after, with the user site moved to a throwaway folder (PYTHONUSERBASE) so nothing of anyone's changes.
+/// Off by default (it needs the network and that Python); `OSVA_REAL_FIX=1 swift test --filter RealFixTests` runs it
+/// and prints each state the row goes through, with the log as it streams. (Apple's Python is not used: the app
+/// leaves it to macOS.)
 @MainActor @Suite(.enabled(if: ProcessInfo.processInfo.environment["OSVA_REAL_FIX"] != nil)) struct RealFixTests {
     final class Site: HTTPTransport, @unchecked Sendable {
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -30,9 +32,11 @@ import OSVAKit
         func post(_ findings: [Finding]) async {}
     }
 
+    static let python3 = "/opt/homebrew/bin/python3.11"
+
     func python(_ args: [String], env: [String: String]) throws -> String {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        p.executableURL = URL(fileURLWithPath: Self.python3)
         p.arguments = args
         p.environment = env
         let out = Pipe()
@@ -55,9 +59,11 @@ import OSVAKit
         print("user site:", userSite)
 
         let tools = ToolEnvironment(base: env)
-        let apple = PythonEnvironment(executable: "/usr/bin/python3", version: "3.9.6", kind: .apple, externallyManaged: false, userSite: userSite, formula: nil)
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: apple, user: true, formula: nil), name: "six", ecosystem: .pypi, target: "1.17.0", malicious: false)
-        let finding = Finding(id: "pkg|PyPI|six|1.16.0|py3.9.6", group: .criticalHigh, subject: .package(ecosystem: .pypi, name: "six"), title: "six",
+        let version = try python(["-c", "import platform; print(platform.python_version())"], env: env).trimmingCharacters(in: .whitespacesAndNewlines)
+        let brewPython = PythonEnvironment(executable: Self.python3, version: version, kind: .homebrew, externallyManaged: false, userSite: userSite,
+                                           formula: "python@3.11")
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: brewPython, user: true, formula: nil), name: "six", ecosystem: .pypi, target: "1.17.0", malicious: false)
+        let finding = Finding(id: "pkg|PyPI|six|1.16.0|py\(version)", group: .criticalHigh, subject: .package(ecosystem: .pypi, name: "six"), title: "six",
                               installedVersion: "1.16.0", fixedVersion: "1.17.0", severity: .high, advisoryIDs: ["TEST-1"], flawCount: 1, exploited: false,
                               malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(.pypi, "six", version: "1.16.0"),
                               upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
@@ -79,7 +85,10 @@ import OSVAKit
         print("offer:", offer.plan.actionTitle, "| argv:", offer.plan.invocation.argv)
         model.beginFix(finding)
         try await wait("the review") { state()?.preview != .loading }
-        if case let .ready(p)? = state()?.preview { print("review:", offer.plan.summary, "| dry run:", p.unavailable ?? p.lines.joined(separator: "; ")) }
+        guard case let .ready(p)? = state()?.preview else { Issue.record("no review"); return }
+        print("review:", offer.plan.summary, "| dry run:", p.unavailable ?? p.lines.joined(separator: "; "), "| blocked:", p.blocked ?? "no",
+              "| pins:", p.pins)
+        #expect(p.blocked == nil && p.installs == ["six": "1.17.0"])
 
         model.runFix(finding)
         let start = Date()

@@ -62,6 +62,8 @@ public struct FixPlan: Hashable, Sendable {
         /// The package and the version it goes to, for the check of what depends on it.
         public var name: String
         public var target: String
+        /// The version the finding is about: the copy Python loads must be this one.
+        public var installed: String = ""
     }
 
     /// Why a finding gets no Fix button.
@@ -82,12 +84,15 @@ public struct FixPlan: Hashable, Sendable {
         case sharedEnvironment(String)
         /// The command is not one the app can run as an argument list (`ShellWords` does not read it).
         case notRunnable
+        /// Part of macOS or its developer tools (Apple's Ruby and its gems, Xcode's Python): only a macOS or Xcode
+        /// update changes it, and a copy in the user's own folders would only hide it.
+        case systemComponent(String)
 
         /// What the row says, when it says anything: most refusals only mean the command is there to read and copy.
         public var explanation: String? {
             switch self {
             case let .toolNotFound(tool): return "\(tool) was not found on this Mac, so the app cannot run this for you."
-            case let .sharedEnvironment(why): return why
+            case let .sharedEnvironment(why), let .systemComponent(why): return why
             default: return nil
             }
         }
@@ -150,13 +155,19 @@ public struct FixPlan: Hashable, Sendable {
                 if action == .upgrade { plan.homebrew = Homebrew(brew: b, name: f, cask: false, versionIsTheFix: false, label: f) }
             } else {
                 guard tools.isExecutable(python.executable) else { return .failure(.toolNotFound(python.label)) }
+                if python.kind == .apple && action == .upgrade {
+                    return .failure(.systemComponent(user
+                        ? "In the user site of Apple's Python \(python.version), which gets no fixes: move what uses it to a current Python rather than upgrade it here."
+                        : "Part of Apple's developer tools: only an Xcode or macOS update changes it. A copy in your user site would only hide it."))
+                }
                 // An upgrade is offered only after what depends on the package is checked (FixAdvisor, PipGuard), and
                 // checked again before and after it runs (AppModel): 0.2.0 broke fastapi this way, 0.2.1 refused them all.
                 plan.use(tool: python.executable, name: "pip", pathFirst: false)
                 let toUser = command.contains(" --user ")
                 plan.place = python.label + (toUser || user ? ", your user site" : "")
                 if action == .upgrade, let t = inputs.target {
-                    plan.pip = Pip(python: python.executable, requirement: "\(inputs.name)==\(t)", user: toUser, name: inputs.name, target: t)
+                    plan.pip = Pip(python: python.executable, requirement: "\(inputs.name)==\(t)", user: toUser, name: inputs.name, target: t,
+                                   installed: finding.installedVersion)
                 }
             }
 
@@ -174,6 +185,9 @@ public struct FixPlan: Hashable, Sendable {
 
         case let .gem(gem):
             guard FixSafety.isSafePath(gem), tools.isExecutable(gem) else { return .failure(.toolNotFound("gem")) }
+            if gem == "/usr/bin/gem" {
+                return .failure(.systemComponent("Part of macOS: only a macOS update changes Apple's Ruby and its gems."))
+            }
             if action == .upgrade {
                 return .failure(.sharedEnvironment("Not run for you: other gems may depend on this one, and upgrading it alone can break them."))
             }

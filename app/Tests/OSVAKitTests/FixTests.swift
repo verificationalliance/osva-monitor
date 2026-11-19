@@ -26,7 +26,8 @@ func mac(_ executables: Set<String>, outputs: [String: CommandResult] = [:]) -> 
 }
 
 let everyTool: Set<String> = ["/opt/homebrew/bin/brew", "/opt/homebrew/bin/npm", "/usr/bin/python3", "/usr/bin/gem", "/opt/homebrew/bin/yarn",
-                              "/opt/homebrew/bin/cargo", "/Users/ana/.cargo/bin/cargo", "/opt/homebrew/bin/python3.13"]
+                              "/opt/homebrew/bin/cargo", "/Users/ana/.cargo/bin/cargo", "/opt/homebrew/bin/python3.13",
+                              "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3"]
 
 func plan(_ f: Finding, tools: ToolEnvironment = mac(everyTool)) -> Result<FixPlan, FixPlan.Refusal> {
     FixPlan.make(for: f, tools: tools, home: home)
@@ -108,18 +109,36 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
 
     /// Exactly the fixed version (`==`, not `>=`, which let pip take starlette 1.10 over 1.3.1); the plan carries what
     /// the check of its dependents needs (PythonDependentsTests).
-    @Test func pipInApplesPythonAcrossAMajorVersion() throws {
-        let f = fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")
-        let p = try ok(plan(f))
-        #expect(p.command == "/usr/bin/python3 -m pip install --user --upgrade setuptools==78.1.1")
-        #expect(p.pip == FixPlan.Pip(python: "/usr/bin/python3", requirement: "setuptools==78.1.1", user: true, name: "setuptools", target: "78.1.1"))
-        #expect(p.pathFirst == nil && p.place == "Apple's Python 3.9.6 (part of Xcode), your user site")
+    @Test func pipInAPythonOrgPythonAcrossAMajorVersion() throws {
+        let f = fixable(.pip(python: Fixture.pythonOrg, user: true, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")
+        let p = try ok(plan(f, tools: mac(everyTool.union([Fixture.pythonOrg.executable]))))
+        #expect(p.command == "\(Fixture.pythonOrg.executable) -m pip install --user --upgrade setuptools==78.1.1")
+        #expect(p.pip == FixPlan.Pip(python: Fixture.pythonOrg.executable, requirement: "setuptools==78.1.1", user: true, name: "setuptools",
+                                     target: "78.1.1", installed: "58.0.4"))
+        #expect(p.pathFirst == nil && p.place == "Python 3.13.1 (python.org), your user site")
         #expect(p.majorUpgrade == "Major version 58 → 78: check what uses setuptools afterwards.")
     }
 
+    /// Rules C-3, B-7: Apple's Python (Xcode's, the Command Line Tools') and Apple's Ruby are accept-system: no
+    /// user-level "fix", which would only hide the system copy. A malicious package in the user site can still go.
+    @Test func applesPythonAndRubyAreLeftToMacOS() throws {
+        for user in [false, true] {
+            let r = plan(fixable(.pip(python: Fixture.applePython, user: user, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1"))
+            guard case let .failure(.systemComponent(why)) = r else { Issue.record("Apple's Python, user \(user): \(r)"); continue }
+            #expect(why.contains(user ? "user site of Apple's Python" : "only an Xcode or macOS update"))
+        }
+        let removal = try ok(plan(fixable(.pip(python: Fixture.applePython, user: true, formula: nil), "evil", .pypi, malicious: true)))
+        #expect(removal.invocation.arguments == ["-m", "pip", "uninstall", "-y", "evil"])
+        for malicious in [false, true] {
+            let r = plan(fixable(.gem(gem: "/usr/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5", malicious: malicious))
+            guard case let .failure(.systemComponent(why)) = r else { Issue.record("Apple's Ruby: \(r)"); continue }
+            #expect(why == "Part of macOS: only a macOS update changes Apple's Ruby and its gems.")
+        }
+    }
+
     @Test func gemUpgradesAreNotRunForYou() throws {
-        let f = fixable(.gem(gem: "/usr/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5")
-        let r = plan(f, tools: mac(everyTool))
+        let f = fixable(.gem(gem: "/opt/homebrew/opt/ruby/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5")
+        let r = plan(f, tools: mac(everyTool.union(["/opt/homebrew/opt/ruby/bin/gem"])))
         guard case .failure(.sharedEnvironment) = r else { Issue.record("gem upgrade: \(r)"); return }
     }
 
@@ -322,8 +341,9 @@ final class ArgvRecorder: CommandRunner, @unchecked Sendable {
     }
 
     @Test func pipWithoutADryRunSaysSo() async throws {
-        let tools = mac(everyTool, outputs: ["/usr/bin/python3 -m pip --version": CommandResult(status: 0, stdout: Data("pip 21.2.4 from /x (python 3.9)\n".utf8), stderr: Data())])
-        let p = try ok(plan(fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "six", .pypi), tools: tools))
+        let py = Fixture.pythonOrg.executable
+        let tools = mac(everyTool.union([py]), outputs: ["\(py) -m pip --version": CommandResult(status: 0, stdout: Data("pip 21.2.4 from /x (python 3.13)\n".utf8), stderr: Data())])
+        let p = try ok(plan(fixable(.pip(python: Fixture.pythonOrg, user: false, formula: nil), "six", .pypi), tools: tools))
         let preview = await FixPreviewer(tools: tools).preview(p)
         #expect(preview.unavailable == "This pip (21.2.4) has no dry run: pip 22.2 added it." && preview.lines.isEmpty)
     }

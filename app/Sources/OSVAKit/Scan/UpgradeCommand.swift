@@ -158,7 +158,7 @@ public enum UpgradeCommand {
                 : Advice(command: "composer update \(n) --with-dependencies")
         default:
             guard ecosystem == .pypi, !malicious, let target else { return Advice(command: nil) }      // requirements*.txt
-            return Advice(command: "python3 -m pip install \(quote("\(name)>=\(target)"))",
+            return Advice(command: "python3 -m pip install \(quote("\(name)==\(target)"))",
                           note: "Run it in the project's environment, then pin \(name)==\(target) in \(lockfile).")
         }
     }
