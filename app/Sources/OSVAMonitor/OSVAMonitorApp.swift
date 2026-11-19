@@ -71,14 +71,15 @@ struct PopoverScene: View {
                 NSPasteboard.general.setString(command, forType: .string)
             },
             fix: FixActions(assess: { model.assessFix($0) }, begin: { model.beginFix($0) }, cancel: { model.cancelFix($0) },
-                            run: { model.runFix($0) }),
+                            run: { model.runFix($0) }, stop: { model.stopFix($0) }, retry: { model.retryFix($0) },
+                            undo: { model.undoFix($0) }, runInTerminal: { model.runFixInTerminal($0) }),
             checkForUpdates: { updater.checkForUpdates() },
             openList: { list in
                 model.shownList = list
                 NSApp.activate(ignoringOtherApps: true)        // a menu-bar app is not frontmost by itself
                 openWindow(id: NameListView.windowID)
             }),
-            fixes: model.fixes,
+            fixes: model.rowFixes,
             updates: updater.state,
             expanded: model.initiallyExpanded)
         .onAppear { CaptureMode.openSettings = openSettings }

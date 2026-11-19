@@ -93,7 +93,9 @@ public enum UpgradeCommand {
     ///   - in a virtual environment or python.org's Python: pip in place.
     static func pip(python: PythonEnvironment, user: Bool, formula: String?, name: String, target: String?, malicious: Bool) -> Advice {
         let py = quote(python.executable)
-        let requirement = quote(target.map { "\(name)>=\($0)" } ?? name)
+        // Exactly the fixed version: ">=" let pip take the newest release, which broke a package that needed an older
+        // one (starlette 1.10 under fastapi 0.120, 0.2.0).
+        let requirement = quote(target.map { "\(name)==\($0)" } ?? name)
         let appleNote = "For development, a current Python (python.org or Homebrew) is better than Apple's, which is part of Xcode."
         if let formula {
             if malicious { return Advice(command: formula.isEmpty ? nil : "brew uninstall \(quote(formula))") }
@@ -109,7 +111,7 @@ public enum UpgradeCommand {
             return Advice(command: nil, note: "\(python.label) is externally managed (PEP 668): pip will not change it. "
                           + "Install what you need in a virtual environment (python3 -m venv), or a command-line tool with pipx.")
         }
-        if malicious { return Advice(command: "\(py) -m pip uninstall \(quote(name))") }
+        if malicious { return Advice(command: "\(py) -m pip uninstall -y \(quote(name))") }      // -y: pip asks otherwise
         guard target != nil else { return Advice(command: nil) }
         switch (python.kind, user) {
         case (.apple, false):
@@ -166,7 +168,7 @@ public enum UpgradeCommand {
                 : Advice(command: "composer update \(n) --with-dependencies")
         default:
             guard ecosystem == .pypi, !malicious, let target else { return Advice(command: nil) }      // requirements*.txt
-            return Advice(command: "python3 -m pip install \(quote("\(name)>=\(target)"))",
+            return Advice(command: "python3 -m pip install \(quote("\(name)==\(target)"))",
                           note: "Run it in the project's environment, then pin \(name)==\(target) in \(lockfile).")
         }
     }

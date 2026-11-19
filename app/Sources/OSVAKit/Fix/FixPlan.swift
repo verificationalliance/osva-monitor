@@ -1,11 +1,12 @@
 import Foundation
 
-/// A command the app offers to run in a Terminal window, and what the confirmation says about it.
+/// A command the app offers to run for the person, and what the review says about it.
 ///
 /// The command is never taken from the report as text: it is made again by `UpgradeCommand` from the inputs the
-/// finding recorded, and offered only if that gives exactly the command shown. So what runs is what the person read,
-/// it comes from `UpgradeCommand`'s tools only, and every name, version and path in it went through its quoting and
-/// through `FixSafety`.
+/// finding recorded, and offered only if that gives exactly the command shown. What runs is `invocation`: that
+/// command's own words (read by `ShellWords`, which accepts only the quoting `UpgradeCommand` writes) given to the tool
+/// the plan found, as an argument list, with no shell. So what runs is what the person read, it comes from
+/// `UpgradeCommand`'s tools only, and every name, version and path in it went through its quoting and `FixSafety`.
 public struct FixPlan: Hashable, Sendable {
     public enum Action: String, Hashable, Sendable { case upgrade, removal }
 
@@ -28,6 +29,8 @@ public struct FixPlan: Hashable, Sendable {
     public var title: String
     /// Exactly the command shown in the row.
     public var command: String
+    /// What runs: the command's words as one argument list for `toolPath`, in the project folder if there is one.
+    public var invocation: FixInvocation
     public var action: Action
     /// The tool the command starts, as found on this Mac ("/opt/homebrew/bin/brew", "/usr/bin/python3").
     public var toolPath: String
@@ -53,8 +56,14 @@ public struct FixPlan: Hashable, Sendable {
 
     public struct Pip: Hashable, Sendable {
         public var python: String
+        /// "starlette==1.3.1": exactly the fixed version.
         public var requirement: String
         public var user: Bool
+        /// The package and the version it goes to, for the check of what depends on it.
+        public var name: String
+        public var target: String
+        /// The version the finding is about: the copy Python loads must be this one.
+        public var installed: String = ""
     }
 
     /// Why a finding gets no Fix button.
@@ -70,15 +79,20 @@ public struct FixPlan: Hashable, Sendable {
         /// requirements.txt: pip must run in the project's own environment, which a new Terminal window does not have.
         case needsProjectEnvironment
         case toolNotFound(String)
-        /// Upgrading one package where others depend on it (a Python's site-packages, a Ruby's gems, a project's
-        /// lockfile) can break them: pip only warns, after installing. Not run until the app checks those dependents.
+        /// Upgrading one package where others depend on it (a Ruby's gems, a project's lockfile) can break them, and
+        /// the app cannot check those dependents yet. (A Python's packages are checked: `PythonSite`.)
         case sharedEnvironment(String)
+        /// The command is not one the app can run as an argument list (`ShellWords` does not read it).
+        case notRunnable
+        /// Part of macOS or its developer tools (Apple's Ruby and its gems, Xcode's Python): only a macOS or Xcode
+        /// update changes it, and a copy in the user's own folders would only hide it.
+        case systemComponent(String)
 
         /// What the row says, when it says anything: most refusals only mean the command is there to read and copy.
         public var explanation: String? {
             switch self {
             case let .toolNotFound(tool): return "\(tool) was not found on this Mac, so the app cannot run this for you."
-            case let .sharedEnvironment(why): return why
+            case let .sharedEnvironment(why), let .systemComponent(why): return why
             default: return nil
             }
         }
@@ -96,8 +110,10 @@ public struct FixPlan: Hashable, Sendable {
         guard FixSafety.isSafeName(inputs.name) else { return .failure(.unsafeName) }
 
         let action: Action = inputs.malicious ? .removal : .upgrade
-        var plan = FixPlan(findingID: finding.id, title: finding.title, command: command, action: action, toolPath: "", toolName: "",
-                           place: "", inProjectFolder: false, installed: finding.installedLabel, target: finding.malicious ? nil : finding.fixedVersion)
+        var plan = FixPlan(findingID: finding.id, title: finding.title, command: command, invocation: FixInvocation(executable: "", arguments: []),
+                           action: action, toolPath: "", toolName: "", place: "", inProjectFolder: false, installed: finding.installedLabel,
+                           target: finding.malicious ? nil : finding.fixedVersion)
+        var folder: String?
         let brew = { tools.firstExecutable(HomebrewSource.brewCandidates) }
         func homebrewPlace(_ path: String) -> String {
             "Homebrew in " + (path as NSString).deletingLastPathComponent.replacingOccurrences(of: "/bin", with: "", options: .anchored.union(.backwards))
@@ -139,14 +155,19 @@ public struct FixPlan: Hashable, Sendable {
                 if action == .upgrade { plan.homebrew = Homebrew(brew: b, name: f, cask: false, versionIsTheFix: false, label: f) }
             } else {
                 guard tools.isExecutable(python.executable) else { return .failure(.toolNotFound(python.label)) }
-                if action == .upgrade {
-                    return .failure(.sharedEnvironment("Not run for you: other packages in \(python.label) may depend on this one, and pip upgrades it even when that breaks them. Update it where it is used, then check that still works."))
+                if python.kind == .apple && action == .upgrade {
+                    return .failure(.systemComponent(user
+                        ? "In the user site of Apple's Python \(python.version), which gets no fixes: move what uses it to a current Python rather than upgrade it here."
+                        : "Part of Apple's developer tools: only an Xcode or macOS update changes it. A copy in your user site would only hide it."))
                 }
+                // An upgrade is offered only after what depends on the package is checked (FixAdvisor, PipGuard), and
+                // checked again before and after it runs (AppModel): 0.2.0 broke fastapi this way, 0.2.1 refused them all.
                 plan.use(tool: python.executable, name: "pip", pathFirst: false)
                 let toUser = command.contains(" --user ")
                 plan.place = python.label + (toUser || user ? ", your user site" : "")
                 if action == .upgrade, let t = inputs.target {
-                    plan.pip = Pip(python: python.executable, requirement: "\(inputs.name)>=\(t)", user: toUser)
+                    plan.pip = Pip(python: python.executable, requirement: "\(inputs.name)==\(t)", user: toUser, name: inputs.name, target: t,
+                                   installed: finding.installedVersion)
                 }
             }
 
@@ -182,6 +203,9 @@ public struct FixPlan: Hashable, Sendable {
 
         case let .gem(gem):
             guard FixSafety.isSafePath(gem), tools.isExecutable(gem) else { return .failure(.toolNotFound("gem")) }
+            if gem == "/usr/bin/gem" {
+                return .failure(.systemComponent("Part of macOS: only a macOS update changes Apple's Ruby and its gems."))
+            }
             if action == .upgrade {
                 return .failure(.sharedEnvironment("Not run for you: other gems may depend on this one, and upgrading it alone can break them."))
             }
@@ -197,8 +221,9 @@ public struct FixPlan: Hashable, Sendable {
                 return .failure(.sharedEnvironment("Not run for you: it changes the project's dependencies. Run it in the project, then run its tests."))
             }
             plan.use(tool: path, name: tool, pathFirst: false)
-            let folder = (lockfile as NSString).deletingLastPathComponent
-            plan.place = Paths.abbreviatingHome(folder.isEmpty ? root : folder, home: home)
+            let dir = (lockfile as NSString).deletingLastPathComponent
+            folder = dir.isEmpty ? root : dir
+            plan.place = Paths.abbreviatingHome(folder!, home: home)
             plan.inProjectFolder = true
             plan.lockfileNote = "The project's \(file) changes. Run its tests before you commit it."
         }
@@ -206,6 +231,9 @@ public struct FixPlan: Hashable, Sendable {
         if action == .upgrade, let target = plan.target, plan.homebrew?.versionIsTheFix ?? true, finding.component == nil {
             plan.majorUpgrade = majorUpgrade(from: finding.installedVersion, to: target, name: finding.title)
         }
+        guard let invocation = FixInvocation.make(command: command, toolPath: plan.toolPath, folder: folder, home: home),
+              invocation.argv.allSatisfy(FixSafety.isPrintable) else { return .failure(.notRunnable) }
+        plan.invocation = invocation
         return .success(plan)
     }
 
@@ -222,8 +250,7 @@ public struct FixPlan: Hashable, Sendable {
         "composer.lock": "composer",
     ]
 
-    /// Where installers put a project tool. The Terminal window uses the one the person's shell finds first, as when
-    /// the command is pasted; this only checks that one exists on this Mac.
+    /// Where installers put a project tool: the first one found is the one that runs (the review names it).
     static func projectToolLocations(_ tool: String, tools: ToolEnvironment) -> [String] {
         var dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "~/.volta/bin", "~/.cargo/bin", "~/.local/bin", "~/go/bin",
                     "/usr/local/go/bin", "~/.bun/bin", "~/Library/pnpm", "~/.yarn/bin", "~/.composer/vendor/bin",
@@ -244,6 +271,40 @@ public struct FixPlan: Hashable, Sendable {
     /// Said when the first number of the version changes, which for most projects means behaviour may change.
     static func majorUpgrade(from installed: String, to target: String, name: String) -> String? {
         guard let a = major(installed), let b = major(target), a != b else { return nil }
-        return "A major version, \(a) to \(b): it may change how \(name) behaves. Check what uses it afterwards."
+        return "Major version \(a) → \(b): check what uses \(name) afterwards."
+    }
+}
+
+// MARK: - What the row says about it
+
+extension FixPlan {
+    /// The tool as the person knows it: "Homebrew", "npm", "pip".
+    public var toolLabel: String { toolName == "brew" ? "Homebrew" : toolName }
+
+    /// What a Homebrew upgrade updates when the fixed version is not its own: "OpenMTP" (the cask that carries
+    /// Electron), "jupyterlab" (the formula that brings a Python package).
+    private var carrier: String? {
+        guard let h = homebrew, !h.versionIsTheFix else { return nil }
+        return h.label
+    }
+
+    /// The button: "Update to 1.30.7", "Update OpenMTP", "Remove axios".
+    public var actionTitle: String {
+        if action == .removal { return "Remove \(title)" }
+        if let carrier { return "Update \(carrier)" }
+        return target.map { "Update to \($0)" } ?? "Update \(title)"
+    }
+
+    /// The review's own button: "Update", "Remove".
+    public var verb: String { action == .removal ? "Remove" : "Update" }
+
+    /// The step while the tool runs: "Updating", "Removing".
+    public var doing: String { action == .removal ? "Removing" : "Updating" }
+
+    /// The review, in one sentence: "Homebrew updates nginx to 1.30.7.", "npm removes axios from ~/code/storefront."
+    public var summary: String {
+        if action == .removal { return "\(toolLabel) removes \(title)" + (inProjectFolder ? " from \(place)." : ".") }
+        if let carrier { return "Homebrew updates \(carrier)." }
+        return "\(toolLabel) updates \(title)" + (target.map { " to \($0)." } ?? ".")
     }
 }

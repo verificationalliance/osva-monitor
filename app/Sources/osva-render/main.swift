@@ -112,6 +112,47 @@ struct ComponentSheet: View {
     }
 }
 
+/// Rows with the pointer over the middle one (findings, Not checked), and the site link: hover may only raise contrast.
+struct HoverSheet: View {
+    var body: some View {
+        let ids = [PreviewData.FixID.nginx, PreviewData.FixID.openssh, PreviewData.FixID.cpython]
+        let rows = PreviewData.findings.filter { ids.contains($0.id) }
+        VStack(alignment: .leading, spacing: 14) {
+            GroupContainer(.criticalHigh, count: rows.count) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { i, f in
+                    if i > 0 { Divider().padding(.leading, 12) }
+                    FindingRow(finding: f, expanded: false, actions: .none) {}.environment(\.showsHover, i == 1)
+                }
+            }
+            GroupContainer(.notChecked, count: 8) {
+                ListDisclosureRow(NameList(title: "Homebrew packages with no graded project", explanation: "", count: 2,
+                                           sections: [.init(title: nil, items: ["abseil 20260817.0", "ack 3.10.0"])], style: .code))
+                Divider().padding(.leading, 12)
+                ListDisclosureRow(NameList(title: "Apps that do not bundle Electron", explanation: "", count: 2,
+                                           sections: [.init(title: nil, items: ["Firefox", "Xcode"])], style: .names))
+                    .environment(\.showsHover, true)
+            }
+            SiteLink("Open on verificationalliance.org", url: URL(string: "https://verificationalliance.org/")!) { _ in }
+        }
+        .padding(14)
+    }
+}
+
+/// A run's three steps, and the review with its details open, one under another, at a row's width.
+struct FixStepSheet: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(PreviewData.runSteps().enumerated()), id: \.offset) { _, run in FixRunCard(run: run) {} }
+            if case let .offered(offer)? = PreviewData.fixConfirmations[PreviewData.FixID.nginx]?.availability,
+               let preview = PreviewData.fixConfirmations[PreviewData.FixID.nginx]?.preview {
+                FixConfirmation(offer: offer, preview: preview, details: true, cancel: {}, run: {})
+            }
+        }
+        .frame(width: 348)
+        .padding(.horizontal, 26).padding(.vertical, 14)
+    }
+}
+
 @MainActor
 func main() throws {
     var out = URL(fileURLWithPath: "shots", isDirectory: true), reportPath: String?, scale: CGFloat = 2, prefixes: [String] = [], thisMacsApps = false
@@ -171,13 +212,6 @@ func main() throws {
                 ("list-no-record-search", AnyView(NameListView(list: noRecord, scanned: scanned, query: "micro")), .window),
                 ("list-app-store", AnyView(NameListView(list: appStore, scanned: scanned)), .window)]
     }
-    // The fix button, its confirmation, and how runs ended, each on the findings it applies to.
-    typealias F = PreviewData.FixID
-    func only(_ ids: [String]) -> ScanReport { PreviewData.report(findings: PreviewData.findings.filter { ids.contains($0.id) }) }
-    let offerIDs = [F.axios, F.nginx, F.cpython], confirmIDs = [F.nginx, F.setuptools, F.hacl]
-    let resultIDs = [F.axios, F.openssh, F.openmtp, F.nginx, F.nokogiri, F.vscode]
-    let resolved = PreviewData.findings.filter { PreviewData.fixResolved.contains($0.id) }
-    let afterRuns = PreviewData.report(findings: PreviewData.findings.filter { resultIDs.contains($0.id) && !PreviewData.fixResolved.contains($0.id) })
     var views: [(String, AnyView, Method)] = [
         ("popover", AnyView(popover(full, expanded: open)), .imageRenderer),
         ("popover-scanning", AnyView(popover(full, scanning: true, progress: "Checking 27 package versions…")), .imageRenderer),
@@ -199,9 +233,9 @@ func main() throws {
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,
                                                                      launchAtLogin: false, launchAtLoginAvailable: false, lastReport: nil), actions: .none)), .hostingView),
         ("components", AnyView(ComponentSheet()), .imageRenderer),
-        ("fix-offer", AnyView(popover(only(offerIDs), expanded: Set(offerIDs), fixes: PreviewData.fixOffers)), .imageRenderer),
-        ("fix-confirm", AnyView(popover(only(confirmIDs), expanded: Set(confirmIDs), fixes: PreviewData.fixConfirmations)), .imageRenderer),
-        ("fix-results", AnyView(popover(afterRuns, expanded: [F.nginx, F.openmtp], fixes: PreviewData.fixResults, resolved: resolved)), .imageRenderer),
+        // the in-app fix: a run's steps and the review's details, rows under the pointer, then each state on its findings
+        ("fix-steps", AnyView(FixStepSheet()), .imageRenderer),
+        ("fix-hover", AnyView(HoverSheet()), .imageRenderer),
         // apps, the libraries they bundle, and extensions
         ("popover-bundles", AnyView(popover(PreviewData.bundlesReport(), expanded: PreviewData.bundlesOpen)), .imageRenderer),
         ("popover-bundles-closed", AnyView(popover(PreviewData.bundlesReport())), .imageRenderer),
@@ -209,7 +243,10 @@ func main() throws {
         // what could not be vouched for: one name per line, long lists in a window of their own
         ("popover-coverage", AnyView(popover(PreviewData.coverageReport(), coverageOpen: ["Bundled libraries with no readable version", "updatedElsewhere",
                                                                                   AppCoverage.webApps("Edge")])), .imageRenderer),
-    ] + sheets(full, prefix: "sent") + sheets(PreviewData.bundlesReport(), prefix: "sent-bundles") + coverageLists()
+    ] + PreviewData.fixSceneNames.map { name in
+        let scene = PreviewData.fixScene(name)!
+        return ("fix-\(name)", AnyView(popover(scene.report(), expanded: scene.open, fixes: scene.fixes, resolved: scene.resolvedFindings)), Method.imageRenderer)
+    } + sheets(full, prefix: "sent") + sheets(PreviewData.bundlesReport(), prefix: "sent-bundles") + coverageLists()
     // Where each copy is and why: rows open, then one with its details open; on the window background and on a mid-grey
     // like the glass of the owner's panel over their desktop (sampled from their screenshot: rgb 122).
     let explained = PreviewData.report(findings: PreviewData.provenanceFindings, coverage: Coverage())

@@ -48,12 +48,12 @@ struct UpdateWaitingRow: View {
                 Image(systemName: "arrow.down.circle.fill").symbolRenderingMode(.palette).foregroundStyle(.white, .tint)
                 Text("OSVA Monitor \(version) is available").foregroundStyle(.primary)
                 Spacer(minLength: 8)
-                Text("Install…").foregroundStyle(.tint)
+                Text("Install…").fontWeight(.semibold).foregroundStyle(.primary)   // accent text on grey glass does not read
             }
             .font(Typeface.small)
             .padding(.horizontal, 12).padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quinary, in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+            .background(Surface.card.color, in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

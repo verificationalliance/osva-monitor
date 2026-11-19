@@ -26,7 +26,8 @@ func mac(_ executables: Set<String>, outputs: [String: CommandResult] = [:]) -> 
 }
 
 let everyTool: Set<String> = ["/opt/homebrew/bin/brew", "/opt/homebrew/bin/npm", "/usr/bin/python3", "/usr/bin/gem", "/opt/homebrew/bin/yarn",
-                              "/opt/homebrew/bin/cargo", "/Users/ana/.cargo/bin/cargo", "/opt/homebrew/bin/python3.13"]
+                              "/opt/homebrew/bin/cargo", "/Users/ana/.cargo/bin/cargo", "/opt/homebrew/bin/python3.13",
+                              "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3"]
 
 func plan(_ f: Finding, tools: ToolEnvironment = mac(everyTool)) -> Result<FixPlan, FixPlan.Refusal> {
     FixPlan.make(for: f, tools: tools, home: home)
@@ -106,17 +107,38 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         #expect(p.installed == "Electron 28.1.0")
     }
 
-    /// 0.2.1: upgrading one package in a shared environment broke others on a real Mac (starlette 1.10 under fastapi
-    /// 0.120, which needs < 0.49; pip warned and exited 0). Not run until the app checks the dependents.
-    @Test func pipUpgradesAreNotRunForYou() throws {
-        let f = fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")
-        guard case let .failure(.sharedEnvironment(why)) = plan(f) else { Issue.record("a pip upgrade was planned"); return }
-        #expect(why.contains("depend on this one"))
+    /// Exactly the fixed version (`==`, not `>=`, which let pip take starlette 1.10 over 1.3.1); the plan carries what
+    /// the check of its dependents needs (PythonDependentsTests).
+    @Test func pipInAPythonOrgPythonAcrossAMajorVersion() throws {
+        let f = fixable(.pip(python: Fixture.pythonOrg, user: true, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")
+        let p = try ok(plan(f, tools: mac(everyTool.union([Fixture.pythonOrg.executable]))))
+        #expect(p.command == "\(Fixture.pythonOrg.executable) -m pip install --user --upgrade setuptools==78.1.1")
+        #expect(p.pip == FixPlan.Pip(python: Fixture.pythonOrg.executable, requirement: "setuptools==78.1.1", user: true, name: "setuptools",
+                                     target: "78.1.1", installed: "58.0.4"))
+        #expect(p.pathFirst == nil && p.place == "Python 3.13.1 (python.org), your user site")
+        #expect(p.majorUpgrade == "Major version 58 → 78: check what uses setuptools afterwards.")
+    }
+
+    /// Rules C-3, B-7: Apple's Python (Xcode's, the Command Line Tools') and Apple's Ruby are accept-system: no
+    /// user-level "fix", which would only hide the system copy. A malicious package in the user site can still go.
+    @Test func applesPythonAndRubyAreLeftToMacOS() throws {
+        for user in [false, true] {
+            let r = plan(fixable(.pip(python: Fixture.applePython, user: user, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1"))
+            guard case let .failure(.systemComponent(why)) = r else { Issue.record("Apple's Python, user \(user): \(r)"); continue }
+            #expect(why.contains(user ? "user site of Apple's Python" : "only an Xcode or macOS update"))
+        }
+        let removal = try ok(plan(fixable(.pip(python: Fixture.applePython, user: true, formula: nil), "evil", .pypi, malicious: true)))
+        #expect(removal.invocation.arguments == ["-m", "pip", "uninstall", "-y", "evil"])
+        for malicious in [false, true] {
+            let r = plan(fixable(.gem(gem: "/usr/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5", malicious: malicious))
+            guard case let .failure(.systemComponent(why)) = r else { Issue.record("Apple's Ruby: \(r)"); continue }
+            #expect(why == "Part of macOS: only a macOS update changes Apple's Ruby and its gems.")
+        }
     }
 
     @Test func gemUpgradesAreNotRunForYou() throws {
-        let f = fixable(.gem(gem: "/usr/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5")
-        let r = plan(f, tools: mac(everyTool))
+        let f = fixable(.gem(gem: "/opt/homebrew/opt/ruby/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5")
+        let r = plan(f, tools: mac(everyTool.union(["/opt/homebrew/opt/ruby/bin/gem"])))
         guard case .failure(.sharedEnvironment) = r else { Issue.record("gem upgrade: \(r)"); return }
     }
 
@@ -318,16 +340,15 @@ final class ArgvRecorder: CommandRunner, @unchecked Sendable {
         #expect(recorder.calls.map(\.argv) == [["/opt/homebrew/bin/brew", "upgrade", "--dry-run", "nginx"]])
     }
 
-    @Test(.disabled("0.2.1 runs no pip upgrades; back with dependency-aware fixes"))
-    func pipWithoutADryRunSaysSo() async throws {
-        let tools = mac(everyTool, outputs: ["/usr/bin/python3 -m pip --version": CommandResult(status: 0, stdout: Data("pip 21.2.4 from /x (python 3.9)\n".utf8), stderr: Data())])
-        let p = try ok(plan(fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "six", .pypi), tools: tools))
+    @Test func pipWithoutADryRunSaysSo() async throws {
+        let py = Fixture.pythonOrg.executable
+        let tools = mac(everyTool.union([py]), outputs: ["\(py) -m pip --version": CommandResult(status: 0, stdout: Data("pip 21.2.4 from /x (python 3.13)\n".utf8), stderr: Data())])
+        let p = try ok(plan(fixable(.pip(python: Fixture.pythonOrg, user: false, formula: nil), "six", .pypi), tools: tools))
         let preview = await FixPreviewer(tools: tools).preview(p)
         #expect(preview.unavailable == "This pip (21.2.4) has no dry run: pip 22.2 added it." && preview.lines.isEmpty)
     }
 
-    @Test(.disabled("0.2.1 runs no pip upgrades; back with dependency-aware fixes"))
-    func pipsDryRunNeverBuildsFromSource() async throws {
+    @Test func pipsDryRunNeverBuildsFromSource() async throws {
         let recorder = ArgvRecorder(output: CommandResult(status: 0, stdout: Data("pip 24.0 from /x (python 3.13)\nWould install six-1.17.0\n".utf8), stderr: Data()))
         let tools = ToolEnvironment(home: URL(fileURLWithPath: home), base: [:], runner: recorder, isExecutable: { _ in true })
         let python = PythonEnvironment(executable: "/opt/homebrew/bin/python3.13", version: "3.13.1", kind: .virtualEnv, externallyManaged: false,
@@ -335,12 +356,12 @@ final class ArgvRecorder: CommandRunner, @unchecked Sendable {
         let p = try ok(plan(fixable(.pip(python: python, user: false, formula: nil), "six", .pypi, fixed: "1.17.0"), tools: tools))
         _ = await FixPreviewer(tools: tools).preview(p)
         #expect(recorder.calls.last?.argv == ["/opt/homebrew/bin/python3.13", "-m", "pip", "install", "--dry-run", "--only-binary=:all:", "--upgrade",
-                                              "--disable-pip-version-check", "--no-input", "six>=1.17.0"])
+                                              "--disable-pip-version-check", "--no-input", "six==1.17.0"])
     }
 
     @Test func otherToolsHaveNone() async throws {
         let p = try ok(plan(fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "eslint")))
-        #expect(await FixPreviewer(tools: mac(everyTool)).preview(p).unavailable == "npm has no dry run the app uses: the Terminal window shows what changes.")
+        #expect(await FixPreviewer(tools: mac(everyTool)).preview(p).unavailable == "npm has no dry run the app uses: the log shows what changes.")
     }
 }
 
@@ -361,8 +382,8 @@ func runScript(_ url: URL, path: String = "/usr/bin:/bin") throws -> (status: In
 
 /// A plan as FixPlan makes them, for any command (the script's tests run harmless ones).
 func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title: String = "left-pad", pathFirst: String? = nil) -> FixPlan {
-    FixPlan(findingID: id, title: title, command: command, action: .upgrade, toolPath: "/bin/echo", toolName: "echo", place: "here",
-            inProjectFolder: false, installed: "1.0.0", target: "2.0.0", pathFirst: pathFirst)
+    FixPlan(findingID: id, title: title, command: command, invocation: FixInvocation(executable: "/bin/echo", arguments: []), action: .upgrade,
+            toolPath: "/bin/echo", toolName: "echo", place: "here", inProjectFolder: false, installed: "1.0.0", target: "2.0.0", pathFirst: pathFirst)
 }
 
 @Suite struct FixScriptTests {
@@ -446,8 +467,8 @@ func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title:
             let cases: [(Origin, String, String?, [String])] = [
                 (.npmGlobal(npm: "/opt/homebrew/bin/npm"), evil, "2.0.0", ["install", "-g", evil + "@2.0.0"]),
                 (.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", evil, ["install", "-g", "lodash@" + evil]),
-                (.pip(python: python, user: false, formula: nil), evil, "2.0.0", ["-m", "pip", "install", "--upgrade", evil + ">=2.0.0"]),
-                (.pip(python: python, user: false, formula: nil), "six", evil, ["-m", "pip", "install", "--upgrade", "six>=" + evil]),
+                (.pip(python: python, user: false, formula: nil), evil, "2.0.0", ["-m", "pip", "install", "--upgrade", evil + "==2.0.0"]),
+                (.pip(python: python, user: false, formula: nil), "six", evil, ["-m", "pip", "install", "--upgrade", "six==" + evil]),
                 (.homebrewFormula(name: evil), evil, nil, ["upgrade", evil]),
                 (.homebrewCask(token: evil), evil, nil, ["upgrade", "--cask", evil]),
                 (.cargoInstall, evil, "2.0.0", ["install", evil + "@2.0.0"]),
@@ -464,6 +485,8 @@ func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title:
                 #expect(!FileManager.default.fileExists(atPath: canary), "\(evil.debugDescription) ran something via \(command)")
                 let got = (try? Data(contentsOf: argvFile)).map { String(decoding: $0, as: UTF8.self).split(separator: "\0", omittingEmptySubsequences: false).dropLast().map(String.init) }
                 #expect(got == expected, "\(command)\n\(output)")
+                // what the app runs without a shell is the same words: ShellWords reads them as zsh did
+                #expect(ShellWords.read(command, home: home).map { Array($0.words.dropFirst()) } == expected, "\(command)")
                 // the result still names the finding exactly, however it is spelled
                 #expect(FixResults.collect(in: dirs.results, pending: [run: id]) == [FixResult(run: run, findingID: id, status: 0)], "\(output)")
                 checked += 1

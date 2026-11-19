@@ -59,6 +59,10 @@ public enum HomebrewAvailability: Equatable, Sendable {
             if core.compareVersions(stable, fixed) < 0 {
                 return .unavailable("Homebrew still ships \(stable); the fix is \(fixed) upstream.")
             }
+            // never a no-op as the fix: brew upgrade of what is already Homebrew's newest changes nothing
+            if let installed = info.installed, core.compareVersions(stable, installed) <= 0 {
+                return .unavailable("\(installed) is already Homebrew's newest \(what): brew upgrade would change nothing.")
+            }
             return .available(line: "Has \(stable).")
         }
         // A cask or formula that carries the vulnerable thing: Homebrew can only tell whether there is a newer one.

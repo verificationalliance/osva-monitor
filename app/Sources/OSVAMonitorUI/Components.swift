@@ -163,8 +163,8 @@ extension Finding.Group {
     public var heading: String { title }
 }
 
-/// A group: a title-case heading (glyph, name, count), then its rows in one content container on `.quinary`,
-/// separated by dividers. The malicious group is the one container with a clay wash and hairline.
+/// A group: a title-case heading (glyph, name, count), then its rows in one content container on `Surface.card` with a
+/// hairline edge, separated by dividers. The malicious group is the one container with a clay wash and hairline.
 public struct GroupContainer<Content: View>: View {
     public enum Heading: Equatable, Sendable {
         case findings(Finding.Group)
@@ -189,7 +189,7 @@ public struct GroupContainer<Content: View>: View {
             HStack(spacing: 6) {
                 glyph.font(.system(size: 12, weight: .semibold))
                 Text(title).font(Typeface.groupTitle).foregroundStyle(.primary)
-                Text(count.formatted()).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary)
+                if let n = Self.countText(count) { Text(n).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary) }
             }
             .padding(.leading, 4)
             .accessibilityElement(children: .combine)
@@ -204,6 +204,10 @@ public struct GroupContainer<Content: View>: View {
         switch heading { case let .findings(g): return g.heading; case .notChecked: return "Not checked" }
     }
 
+    /// The number beside the heading: what still needs action. None when every row it shows was fixed or removed and
+    /// stays only until the next scan ("Malicious 0" above a removed row reads as a contradiction).
+    static func countText(_ count: Int) -> String? { count > 0 ? count.formatted() : nil }
+
     private var shape: some Shape { ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true) }
 
     @ViewBuilder private var surface: some View {
@@ -211,7 +215,7 @@ public struct GroupContainer<Content: View>: View {
             // a 2 pt stroke, half of it clipped away by the container's own shape: a 1 pt hairline inside the edge
             shape.fill(Tokens.Malicious.wash.color).overlay(shape.stroke(Tokens.Malicious.hairline.color, lineWidth: 2))
         } else {
-            shape.fill(.quinary)
+            shape.fill(Surface.card.color).overlay(shape.stroke(Surface.edge.color, lineWidth: 2))
         }
     }
 
@@ -272,6 +276,7 @@ public struct ListDisclosureRow: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .rowHover()
         .contentShape(Rectangle())
         .onTapGesture {
             if opensWindow { openList(list) } else { withAnimation(.smooth(duration: 0.25)) { open.toggle() } }
@@ -339,7 +344,7 @@ public enum CoverageLists {
     }
 }
 
-/// An upgrade command on a `.quaternary` block, in monospaced `.primary`. It wraps only at spaces, never inside a
+/// An upgrade command in a `Surface.well`, in monospaced `.primary`. It wraps only at spaces, never inside a
 /// word or a path; a single word wider than the block scrolls sideways instead.
 public struct CommandBlock: View {
     public var command: String
@@ -357,7 +362,7 @@ public struct CommandBlock: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 8).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .well()
         .help(command)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(command)
@@ -408,6 +413,70 @@ struct WrapAtSpaces: Layout {
         }
         if !line.items.isEmpty { lines.append(line) }
         return lines
+    }
+}
+
+/// The one hover of the panel's rows (findings, Not checked, the not-in-index lists): the row takes a little more of
+/// `Surface.hover`, which raises its text's contrast in either appearance and never lowers it. `hovering` lets the row
+/// brighten its own chevron too.
+struct RowHover: ViewModifier {
+    var hovering: Binding<Bool>?
+    @State private var hover = false
+    @Environment(\.showsHover) private var showsHover
+
+    func body(content: Content) -> some View {
+        content
+            .background { if hover || showsHover { Rectangle().fill(Surface.hover.color) } }
+            .onHover { h in hover = h; hovering?.wrappedValue = h }
+    }
+}
+
+extension EnvironmentValues {
+    /// Draws rows as if the pointer were over them (osva-render's hover sheet: off-screen there is no pointer).
+    @Entry public var showsHover = false
+}
+
+extension View {
+    func rowHover(_ hovering: Binding<Bool>? = nil) -> some View { modifier(RowHover(hovering: hovering)) }
+
+    /// A well set into its surface (a command, a log, a fix's card): `Surface.well` with a hairline, so it keeps its
+    /// edge where the well and what is around it are both near white.
+    func well(cornerRadius: CGFloat = 7) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return background { shape.fill(Surface.well.color).overlay(shape.strokeBorder(Surface.edge.color, lineWidth: 1)) }
+    }
+}
+
+/// A link out of the app, readable on any glass: `.primary` text and a small accent-coloured arrow on a
+/// `Surface.control` capsule with a hairline edge. Never system-blue text straight on the glass, which measured 1.7:1
+/// on the owner's grey glass.
+public struct SiteLink: View {
+    public var title: String
+    public var url: URL
+    public var open: (URL) -> Void
+    @State private var hover = false
+
+    public init(_ title: String, url: URL, open: @escaping (URL) -> Void) { self.title = title; self.url = url; self.open = open }
+
+    public var body: some View {
+        Button { open(url) } label: {
+            HStack(spacing: 5) {
+                Text(title).foregroundStyle(.primary)
+                Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.accentColor)
+            }
+            .font(Typeface.small.weight(.medium))
+            .padding(.horizontal, 10).padding(.vertical, 4.5)
+            .background {
+                Capsule().fill(Surface.control.color)
+                if hover { Capsule().fill(Surface.hover.color) }
+            }
+            .overlay(Capsule().strokeBorder(Surface.edge.color, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(url.absoluteString)
+        .accessibilityAddTraits(.isLink)
     }
 }
 

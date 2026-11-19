@@ -1,0 +1,7 @@
+six
+
+[test]
+pytest
+
+[:sys_platform == "darwin"]
+starlette!=0.47.0

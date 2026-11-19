@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import OSVAKit
+import SwiftUI
 @testable import OSVAMonitorUI
 
 @Suite struct PopoverContentTests {
@@ -112,6 +113,29 @@ import OSVAKit
         // once a scan finds it again, it is listed once
         let again = PopoverContent(report: PreviewData.report(), isScanning: false, now: now, resolved: [nginx])
         #expect(again.sections.flatMap(\.findings).filter { $0.id == nginx.id }.count == 1 && again.heroCount == 9)
+    }
+
+    /// A section whose rows were all fixed or removed keeps them until the next scan, with no "0" beside its heading.
+    @Test func aSectionWithOnlyFixedRowsShowsNoZero() {
+        let axios = PreviewData.findings.first { $0.id == PreviewData.FixID.axios }!
+        let rest = PreviewData.findings.filter { $0.id != axios.id }
+        let c = PopoverContent(report: PreviewData.report(findings: rest), isScanning: false, now: now, resolved: [axios])
+        let malicious = c.sections.first { $0.group == .malicious }!
+        #expect(malicious.findings.map(\.id) == [axios.id] && malicious.count == 0)
+        #expect(GroupContainer<EmptyView>.countText(malicious.count) == nil && GroupContainer<EmptyView>.countText(3) == "3")
+    }
+
+    /// The results scene (it can end up on the website) shows only what the app does now: no Terminal outcomes, no run
+    /// on a system component, one fix at a time.
+    @Test func theResultsSceneFollowsTheRules() {
+        let scene = PreviewData.fixScene("results")!
+        let outcomes = scene.fixes.values.compactMap(\.outcome)
+        #expect(!outcomes.contains { if case .failed = $0 { true } else { false } })
+        #expect(!scene.fixes.values.contains { $0.progress == .running && $0.run == nil })            // "Running in Terminal…"
+        #expect(scene.fixes.values.filter(\.isBusy).count == 1)
+        #expect(!scene.shown.contains(PreviewData.FixID.nokogiri))                                     // Apple's Ruby: accept-system
+        #expect(scene.fixes[PreviewData.FixID.openssh]?.run?.step == .running)
+        #expect(outcomes.contains { if case .fixedCheck = $0 { true } else { false } })
     }
 
     @Test func everyFixtureCommandIsOneTheAppWouldRun() {

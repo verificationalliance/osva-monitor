@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: sse-starlette
+Version: 3.0.2
+Requires-Dist: anyio>=4.7.0
+Requires-Dist: starlette>=0.41.3; sys_platform == "win32" and extra == "examples"

@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: anyio
+Version: 4.11.0
+Requires-Dist: idna>=2.8
+Requires-Dist: sniffio>=1.1

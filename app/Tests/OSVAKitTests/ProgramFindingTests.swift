@@ -91,7 +91,7 @@ import Testing
         #expect(f.title == "black" && f.component == nil && f.shownVersions == "24.1.0 → 26.10.1" && f.severity == .critical)
         #expect(f.note == "black 24.1.0 has 4 known flaws — fixed in 26.10.1 · uses requests 2.25.0 — fixed in 2.33.0."
                 + " pip upgrades them together with black, within the versions it allows; if they conflict, pip changes nothing.")
-        #expect(f.upgradeCommand == "pipx runpip black install --upgrade 'black>=26.10.1' 'requests>=2.33.0'")
+        #expect(f.upgradeCommand == "pipx runpip black install --upgrade black==26.10.1 requests==2.33.0")
         #expect(f.originSummary == "pipx · Python 3.12.4")
         var uv = Self.black; uv.manager = .uv; uv.venv = "/Users/ana/.local/share/uv/tools/black"
         let u = try #require(findings(installed.map { InstalledPackage(ecosystem: $0.ecosystem, name: $0.name, version: $0.version, origin: .pythonTool(uv)) }).first)
@@ -159,7 +159,7 @@ import Testing
         #expect(UpgradeCommand.program(program(.homebrew, formula: "-rf"), rebuildOnly: true, malicious: false).command == "brew upgrade '-rf'")
         let tool = PythonTool(manager: .pipx, name: "my tool", mainPackage: "my-tool", version: nil, venv: "/v", python: nil)
         #expect(UpgradeCommand.pythonTool(tool, upgrades: [("it's", "2.0")], malicious: false).command
-                == "pipx runpip 'my tool' install --upgrade my-tool 'it'\\''s>=2.0'")
+                == "pipx runpip 'my tool' install --upgrade my-tool 'it'\\''s==2.0'")
         #expect(UpgradeCommand.macports("a;b").command == "sudo port upgrade 'a;b'")
     }
 

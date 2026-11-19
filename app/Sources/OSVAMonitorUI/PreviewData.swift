@@ -102,10 +102,59 @@ public enum PreviewData {
 
     static func finding(_ id: String) -> Finding { findings.first { $0.id == id }! }
 
+    /// A package some project's framework needs held back: the starlette under fastapi 0.120.0 that 0.2.0 broke.
+    public static let python311 = PythonEnvironment(executable: "/opt/homebrew/bin/python3.11", version: "3.11.14", kind: .homebrew,
+                                                    externallyManaged: false, userSite: nil, formula: "python@3.11")
+    public static let starlette = finding("pkg|PyPI|starlette|0.48.0|py3.11.14", .exploited, .package(ecosystem: .pypi, name: "starlette"),
+                                          "starlette", "0.48.0", "1.3.1", .high, flaws: 6, exploited: true,
+                                          origins: [.pip(python: python311, user: false, formula: nil)],
+                                          page: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), ecosystem: .pypi)
+
+    /// torch in python.org's Python, where torchaudio pins it: they move together.
+    public static let pythonOrg = PythonEnvironment(executable: "/usr/local/bin/python3.13", version: "3.13.9",
+                                                    kind: .pythonOrg, externallyManaged: false, userSite: nil, formula: nil)
+    public static let torch = finding("pkg|PyPI|torch|2.7.0|py3.13.9", .criticalHigh, .package(ecosystem: .pypi, name: "torch"), "torch", "2.7.0", "2.8.0",
+                                      .high, flaws: 6, origins: [.pip(python: pythonOrg, user: false, formula: nil)],
+                                      page: SiteURL.packagePage(.pypi, "torch", version: "2.7.0"), ecosystem: .pypi)
+
+    /// The findings the fix scenes draw from: the fixtures, starlette and torch.
+    public static var fixFindings: [Finding] { findings + [starlette, torch] }
+
+    static func fixFinding(_ id: String) -> Finding { fixFindings.first { $0.id == id }! }
+
+    /// What each in-app state looks like, on the findings it applies to (osva-render, CaptureMode's --fix-states).
+    public struct FixScene: Sendable {
+        public var fixes: [String: FixRowState]
+        /// Rows kept after their finding left the report (fixed, removed, or fixed but broke something).
+        public var resolved: [String]
+        public var open: Set<String>
+        /// The findings shown; the resolved ones are left out of the report and come back through `resolved`.
+        public var shown: [String]
+
+        public func report() -> ScanReport { PreviewData.report(findings: PreviewData.fixFindings.filter { shown.contains($0.id) && !resolved.contains($0.id) }) }
+        public var resolvedFindings: [Finding] { PreviewData.fixFindings.filter { resolved.contains($0.id) } }
+    }
+
+    public static let fixSceneNames = ["offer", "confirm", "running", "done", "problems", "results"]
+
+    public static func fixScene(_ name: String) -> FixScene? {
+        typealias F = FixID
+        switch name {
+        case "offer": return FixScene(fixes: fixOffers, resolved: [], open: Set(fixOffers.keys), shown: Array(fixOffers.keys))
+        case "confirm": return FixScene(fixes: fixConfirmations, resolved: [], open: Set(fixConfirmations.keys), shown: Array(fixConfirmations.keys))
+        case "running": return FixScene(fixes: fixRunning, resolved: [], open: [F.nginx, F.axios], shown: [F.nginx, F.axios, F.vscode])
+        case "done": return FixScene(fixes: fixDone, resolved: [F.nginx, F.axios, F.torch], open: [F.nginx, F.torch], shown: [F.nginx, F.axios, F.torch])
+        case "problems": return FixScene(fixes: fixProblems, resolved: [F.starlette], open: Set(fixProblems.keys), shown: Array(fixProblems.keys))
+        case "results": return FixScene(fixes: fixResults, resolved: fixResolved, open: [F.openssh, F.torch],
+                                        shown: [F.axios, F.openssh, F.openmtp, F.nginx, F.torch])
+        default: return nil
+        }
+    }
+
     /// The plan a fixture finding gets, made by FixPlan as the app makes it.
-    public static func offer(_ id: String, homebrew: String? = nil) -> FixOffer {
-        guard case let .success(plan) = FixPlan.make(for: finding(id), tools: fixtureTools) else { preconditionFailure("no fix for \(id)") }
-        return FixOffer(plan: plan, homebrew: homebrew)
+    public static func offer(_ id: String, homebrew: String? = nil, companions: [String] = []) -> FixOffer {
+        guard case let .success(plan) = FixPlan.make(for: fixFinding(id), tools: fixtureTools) else { preconditionFailure("no fix for \(id)") }
+        return FixOffer(plan: plan, homebrew: homebrew, companions: companions)
     }
 
     /// What FixPlan decides for a fixture finding: its plan, or the refusal the row shows (a pip or lockfile upgrade
@@ -121,17 +170,20 @@ public enum PreviewData {
         public static let axios = "pkg|npm|axios|1.14.1", openssh = "brew|openssh|10.6p1", openmtp = "app|/Applications/OpenMTP.app|18.3.15"
         public static let nginx = "brew|nginx|1.30.2", nokogiri = "pkg|RubyGems|nokogiri|1.13.8", cpython = "brew|python@3.12|3.12.16"
         public static let setuptools = "pkg|PyPI|setuptools|58.0.4|py3.9.6", vscode = "app|/Applications/Visual Studio Code.app|42.10.0"
-        public static let hacl = "pkg|npm|hacl-wasm|1.4.0"
+        public static let hacl = "pkg|npm|hacl-wasm|1.4.0", starlette = "pkg|PyPI|starlette|0.48.0|py3.11.14", torch = "pkg|PyPI|torch|2.7.0|py3.13.9"
     }
 
-    /// Rows opened: a Remove button, a Fix button, and none because Homebrew does not have the fix yet.
+    /// Rows opened: Remove, Update to a version, Update the app that carries the flaw; none because something depends
+    /// on the version there now, and none because Homebrew does not have the fix yet.
     public static var fixOffers: [String: FixRowState] {
         [FixID.axios: FixRowState(availability: .offered(offer(FixID.axios))),
          FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7."))),
+         FixID.openmtp: FixRowState(availability: .offered(offer(FixID.openmtp, homebrew: "Has OpenMTP 3.2.25; 3.2.24 is installed."))),
+         FixID.starlette: FixRowState(availability: .withheld("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first.")),
          FixID.cpython: FixRowState(availability: .withheld("Homebrew still ships 3.12.17; the fix is 3.14.11 upstream."))]
     }
 
-    /// The confirmation open: a `brew upgrade` with its dry run, a pip upgrade across a major version, a lockfile.
+    /// The review open: a `brew upgrade` with its dry run, a pip upgrade whose pinning companion moves with it, a removal.
     public static var fixConfirmations: [String: FixRowState] {
         [FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7.")),
                                   preview: .ready(FixPreview(source: "brew upgrade --dry-run",
@@ -140,20 +192,95 @@ public enum PreviewData {
                                                                  openssl@3 3.6.1 -> 3.6.2
                                                                  nginx 1.30.2 -> 1.30.7
                                                                  """)))),
-         FixID.setuptools: FixRowState(availability: availability(FixID.setuptools)),
-         FixID.hacl: FixRowState(availability: availability(FixID.hacl))]
+         FixID.torch: FixRowState(availability: .offered(offer(FixID.torch, companions: ["torchaudio"])),
+                                  preview: .ready(FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)",
+                                                             lines: ["Would install torch 2.8.0, torchaudio 2.8.0"],
+                                                             installs: ["torch": "2.8.0", "torchaudio": "2.8.0"], pins: ["torchaudio==2.8.0"],
+                                                             usedBy: ["pyannote.audio", "whisperx"]))),
+         FixID.axios: FixRowState(availability: .offered(offer(FixID.axios)),
+                                  preview: .ready(.none("npm has no dry run the app uses: the log shows what changes.")))]
     }
 
-    /// After runs: one under way, one being checked, two fixed (kept in place, not counted), one still affected, one failed.
-    public static let fixResults: [String: FixRowState] = [
-        FixID.axios: FixRowState(progress: .finished(.removed)),
-        FixID.openssh: FixRowState(progress: .running),
-        FixID.openmtp: FixRowState(progress: .finished(.stillAffected("now Electron 41.0.2; the fix is 42.11.16"))),
-        FixID.nginx: FixRowState(progress: .finished(.fixed(now: "1.30.7"))),
-        FixID.nokogiri: FixRowState(progress: .finished(.failed(1))),
-        FixID.vscode: FixRowState(progress: .rechecking),
-    ]
-    public static let fixResolved = [FixID.axios, FixID.nginx]
+    static let brewLog = FixLog(["==> Auto-updating Homebrew...", "==> Fetching downloads for: nginx", "==> Upgrading nginx", "  1.30.2 -> 1.30.7"],
+                                partial: "==> Pouring nginx--1.30.7.arm64_tahoe.bottle.tar.gz")
+
+    /// nginx updating (a minute in, its log streaming); the next row's button waits for it.
+    public static var fixRunning: [String: FixRowState] {
+        [FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7.")), progress: .running,
+                                  run: FixRunState(step: .running, doing: "Updating", startedAt: Date().addingTimeInterval(-63), log: brewLog,
+                                                   command: "brew upgrade nginx")),
+         FixID.axios: FixRowState(availability: .offered(offer(FixID.axios)), waitingFor: "nginx"),
+         FixID.vscode: FixRowState(availability: .offered(offer(FixID.vscode)), waitingFor: "nginx")]
+    }
+
+    /// The three steps of one run, for the component sheet.
+    public static func runSteps() -> [FixRunState] {
+        [FixRunState(step: .preparing, doing: "Updating", startedAt: Date().addingTimeInterval(-1), command: "brew upgrade nginx"),
+         FixRunState(step: .running, doing: "Updating", startedAt: Date().addingTimeInterval(-63), log: brewLog, command: "brew upgrade nginx"),
+         FixRunState(step: .checking, doing: "Updating", startedAt: Date().addingTimeInterval(-81), endedAt: Date().addingTimeInterval(-2),
+                     log: FixLog(brewLog.lines + ["==> Pouring nginx--1.30.7.arm64_tahoe.bottle.tar.gz", "🍺  /opt/homebrew/Cellar/nginx/1.30.7: 27 files, 2.6MB"]),
+                     command: "brew upgrade nginx")]
+    }
+
+    /// Fixed (its version rolled over), removed, and fixed beyond a patch of something others use (who to check, and Undo).
+    public static var fixDone: [String: FixRowState] {
+        let undo = PipUndo(invocation: FixInvocation(executable: pythonOrg.executable,
+                                                     arguments: ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check", "torch==2.7.0", "torchaudio==2.7.0"]),
+                           restores: ["torch 2.7.0", "torchaudio 2.7.0"])
+        return [FixID.nginx: FixRowState(progress: .finished(.fixed(now: "1.30.7")),
+                                         run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-81), endedAt: now.addingTimeInterval(-2),
+                                                          log: brewLog, command: "brew upgrade nginx")),
+                FixID.axios: FixRowState(progress: .finished(.removed)),
+                FixID.torch: FixRowState(progress: .finished(.fixedCheck(now: "2.8.0", users: "whisperx")),
+                                         run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-95), endedAt: now.addingTimeInterval(-3),
+                                                          log: FixLog(["Successfully installed torch-2.8.0 torchaudio-2.8.0"]),
+                                                          command: torch.upgradeCommand! + " torchaudio==2.8.0", undo: undo))]
+    }
+
+    /// How a run can end badly: it broke what depends on it (Undo), it needs a password (Terminal), it failed (Retry).
+    public static var fixProblems: [String: FixRowState] {
+        let undo = PipUndo(invocation: FixInvocation(executable: python311.executable,
+                                                     arguments: ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check", "starlette==0.48.0"]),
+                           restores: ["starlette 0.48.0"])
+        return [
+            FixID.starlette: FixRowState(progress: .finished(.broke("fastapi 0.120.0")),
+                                         run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-14), endedAt: now.addingTimeInterval(-6),
+                                                          log: FixLog(["Collecting starlette==1.3.1", "Installing collected packages: starlette",
+                                                                       "Successfully installed starlette-1.3.1",
+                                                                       "ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.",
+                                                                       "fastapi 0.120.0 requires starlette<0.49.0,>=0.40.0, but you have starlette 1.3.1 which is incompatible."]),
+                                                          command: starlette.upgradeCommand!, undo: undo)),
+            FixID.openmtp: FixRowState(availability: .offered(offer(FixID.openmtp)), progress: .finished(.needsPassword),
+                                       run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-38), endedAt: now.addingTimeInterval(-9),
+                                                        log: FixLog(["==> Upgrading openmtp", "==> Running installer for openmtp with sudo; the password may be necessary.",
+                                                                     "sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper",
+                                                                     "sudo: a password is required"]),
+                                                        command: "brew upgrade --cask openmtp")),
+            FixID.torch: FixRowState(availability: .offered(offer(FixID.torch, companions: ["torchaudio"])), progress: .finished(.exitedWithError(1)),
+                                     run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-21), endedAt: now.addingTimeInterval(-5),
+                                                      log: FixLog(["Collecting torch==2.8.0",
+                                                                   "WARNING: Retrying (Retry(total=0)) after connection broken by 'NewConnectionError': /simple/torch/",
+                                                                   "ERROR: Could not find a version that satisfies the requirement torch==2.8.0 (from versions: none)",
+                                                                   "ERROR: No matching distribution found for torch==2.8.0"]),
+                                                      command: torch.upgradeCommand! + " torchaudio==2.8.0")),
+        ]
+    }
+
+    /// After runs, as a panel shows them later: one updating in the app now, one removed, two fixed (kept in place, not
+    /// counted; torch beyond a patch, so it says who to check and keeps Undo), one still affected. (The Terminal
+    /// outcomes, kept for the password fallback, are not shown here.)
+    public static var fixResults: [String: FixRowState] {
+        var results = fixDone
+        results[FixID.openssh] = FixRowState(availability: .offered(offer(FixID.openssh, homebrew: "Has 10.6p2.")), progress: .running,
+                                             run: FixRunState(step: .running, doing: "Updating", startedAt: Date().addingTimeInterval(-41),
+                                                              log: FixLog(["==> Auto-updating Homebrew...", "==> Fetching downloads for: openssh",
+                                                                           "==> Upgrading openssh", "  10.6p1 -> 10.6p2"],
+                                                                          partial: "==> Pouring openssh--10.6p2.arm64_tahoe.bottle.tar.gz"),
+                                                              command: "brew upgrade openssh"))
+        results[FixID.openmtp] = FixRowState(progress: .finished(.stillAffected("now Electron 41.0.2; the fix is 42.11.16")))
+        return results
+    }
+    public static let fixResolved = [FixID.axios, FixID.nginx, FixID.torch]
 
     public static let inventoryReports: [SourceReport] = [
         SourceReport(kind: .homebrew, available: true, count: 407, detail: "338 formulae, 69 casks"),
