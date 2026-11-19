@@ -50,8 +50,11 @@ public struct FindingBuilder: Sendable {
                 : (severityHere ?? .low) >= .high ? .criticalHigh : .other
             let target = malicious ? nil : verdict.plan?.target
             let unresolved = (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
-                UnresolvedFlaw(id: r.id, severity: Severity(api: flaws.first { $0.id == r.id }?.severity), fixedIn: r.fixedIn,
-                               reason: Self.reason(r.reason), detail: r.detail, python: package.python, onThisMac: onThisMac)
+                // The API lists at most 40 flaws per package: a remaining one may have no entry, and is then named by its id.
+                let flaw = flaws.first { $0.id == r.id }
+                return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: r.fixedIn,
+                                      reason: Self.reason(r.reason), detail: r.detail, python: package.python, onThisMac: onThisMac,
+                                      summary: Self.shortSummary(flaw?.summary))
             }
             let page = SiteURL.packagePage(package.ecosystem, package.name, version: package.version)
 
@@ -83,6 +86,13 @@ public struct FindingBuilder: Sendable {
             }
         }
         return out
+    }
+
+    /// An advisory summary short enough for one or two lines in the panel.
+    static func shortSummary(_ s: String?) -> String? {
+        guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
+        let line = s.components(separatedBy: .newlines).joined(separator: " ")
+        return line.count <= 110 ? line : String(line.prefix(108)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     static func reason(_ r: BatchResponse.Plan.Remaining.Reason) -> UnresolvedFlaw.Reason {

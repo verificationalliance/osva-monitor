@@ -53,11 +53,19 @@ public struct UnresolvedFlaw: Hashable, Codable, Sendable {
     public var python: String?
     /// Whether the package runs on this Mac (installed software), rather than being a project's dependency.
     public var onThisMac: Bool
+    /// The advisory's one-line summary ("ChromaDB has a code injection vulnerability"), so that two flaws with the same
+    /// reason ("Windows only") are not read as one listed twice. Nil when the answer has none (the API sends at most
+    /// 40 flaws per package); the row then names the flaw by its id.
+    public var summary: String?
 
-    public init(id: String, severity: Severity?, fixedIn: String?, reason: Reason, detail: String?, python: String? = nil, onThisMac: Bool = true) {
+    public init(id: String, severity: Severity?, fixedIn: String?, reason: Reason, detail: String?, python: String? = nil, onThisMac: Bool = true,
+                summary: String? = nil) {
         self.id = id; self.severity = severity; self.fixedIn = fixedIn; self.reason = reason; self.detail = detail
-        self.python = python; self.onThisMac = onThisMac
+        self.python = python; self.onThisMac = onThisMac; self.summary = summary
     }
+
+    /// The flaw's name for its line: the summary, else the id.
+    public var name: String { summary ?? id }
 
     /// "Fixed in 83.0.0, which needs Python ≥3.10; this Python is 3.9.6", "Windows only, does not affect this Mac",
     /// "No fixed release yet".

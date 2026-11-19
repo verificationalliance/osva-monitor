@@ -91,10 +91,14 @@ public struct FindingRow: View {
                 Text("\(target) fixes \(fixes == 1 ? "1 flaw" : "\(fixes) flaws") here.").font(Typeface.small).foregroundStyle(.primary)
             }
             ForEach(finding.unresolved, id: \.id) { u in
-                // Information, not a failure: what this upgrade cannot fix here, and why.
+                // Information, not a failure: what this upgrade cannot fix here, and why. The flaw is named (by its
+                // summary, else its id) so that two flaws with the same reason do not read as one listed twice.
                 Label {
-                    Text((u.severity.map { "\($0.label) · " } ?? "") + u.explanation).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text((u.severity.map { "\($0.label) · " } ?? "") + u.name).foregroundStyle(.secondary)
+                        Text(u.explanation).foregroundStyle(.tertiary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: u.affectsThisMac ? "info.circle" : "minus.circle").foregroundStyle(.secondary)
                 }
