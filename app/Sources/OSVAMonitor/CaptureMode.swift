@@ -20,7 +20,7 @@ struct CaptureMode {
     let waitSeconds: Int
     /// Finding ids to keep, opened (`--only`); empty keeps them all with the malicious one opened.
     let only: [String]
-    /// A solid colour per appearance to put behind the panel (`--backdrop light=#f6f5f1,dark=#141413`), so the glass
+    /// A solid colour per appearance to put behind the panel (`--backdrop light=<hex>,dark=<hex>`, the colours of the page the screenshots go on), so the glass
     /// samples the colour of the page the screenshot will sit on instead of whatever is on this Mac's desktop.
     let backdrop: [String: NSColor]
     /// `--fix-states offer|confirm|results`: which fixture fix states to show.
