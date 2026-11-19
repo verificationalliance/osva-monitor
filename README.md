@@ -52,6 +52,12 @@ command for that place, whether it is Homebrew, a project folder, a global npm i
 
 - **Homebrew** formulae and casks.
 - **Apps that bundle Electron**, checked by the Electron version inside them.
+- **Apps** in /Applications: their own version, for the apps the site has a record of, and the libraries they bundle
+  (Sparkle, Qt, OpenSSL, FFmpeg, CEF, a Java runtime, Python), read from each framework's Info.plist or the library
+  itself.
+- **Editor and browser extensions**: VS Code, Cursor, VSCodium and Windsurf; Chrome, Brave, Edge, Arc and Vivaldi;
+  Firefox. Each is checked on the Mac against the list of extensions known to be malicious, and the npm packages an
+  editor extension bundles are checked like any other.
 - **Global packages** from npm, cargo and RubyGems, and **every Python** on the Mac (Apple's, Homebrew's,
   python.org's) with what is installed into it.
 - **Go programs** and **Rust programs** on the PATH and in Homebrew's Cellar, by what they were built with: the
@@ -68,15 +74,31 @@ command for that place, whether it is Homebrew, a project folder, a global npm i
 <img src="docs/screenshots/popover-clean-dark.png" width="340" align="right" alt="Nothing needs action, with what could not be checked and what is not in the index">
 
 Very little. The app downloads the site's public index, every package that has ever had an advisory or a malware
-report (about 256,000 names), and matches your packages against it on the Mac. Only the matches are sent, as
-ecosystem, name and version. No file paths, no app names, no list of what else you have. Settings shows exactly what
-the last scan sent.
+report (about 256,000 names), and matches your packages against it on the Mac. Only the matches are sent: packages as
+ecosystem, name and version, and apps and bundled libraries by the index's own name for them. Extensions are checked on
+the Mac only. No file paths, no bundle identifiers, no extension IDs, no list of what else you have. Settings shows
+exactly what the last scan sent.
 
 Packages that are not in the index are listed as *not in the index: no known problems, not proof of safety*. Things
 the app cannot check at all are listed as *not checked*. It never calls something safe because it did not recognise
 it.
 
 <br clear="right">
+
+## Updates
+
+The app updates itself with [Sparkle](https://sparkle-project.org/). Once a day it downloads a short feed,
+`verificationalliance.org/app/appcast.xml`, that names the latest version. The request tells the site nothing about
+your Mac but the app's version. Settings has the switch for the daily check and a button to check now.
+
+Each release is signed with the project's update key, whose public half is built into the app: the zip on GitHub, and
+the feed itself. The app takes a new version only if both signatures check. It checks the zip before unpacking any of
+it, and it accepts only a zipped app, never an installer package. Someone who could change the web site still could not
+make the app install anything else, or put other words in its update window. The zip is also signed with the Developer
+ID and notarized by Apple, as before.
+
+`scripts/release.sh` signs a notarized zip and writes the feed. `scripts/test-update.sh` runs a whole update on a Mac,
+with a throwaway key and a feed served from the Mac itself, and checks that a changed zip or feed is refused.
 
 ## Proved, not only tested
 
@@ -146,7 +168,7 @@ waits for you to click the menu-bar shield, because macOS does not let an app op
 |---|---|
 | `core/` | The Lean core (`OSVACore/*.lean`), its C header and the C bridge |
 | `app/` | The Swift package: `OSVAKit` (scanning, the API), `OSVAMonitorUI`, the app, tests |
-| `scripts/` | `check-core.sh`, `build-app.sh` |
+| `scripts/` | `check-core.sh`, `build-app.sh`, `release.sh` (the update feed), `test-update.sh` |
 
 ## Where the data comes from
 

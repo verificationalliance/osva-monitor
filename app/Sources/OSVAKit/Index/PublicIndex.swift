@@ -11,6 +11,7 @@ import Foundation
 ///     K  <ecosystem>  <name>             a package (PyPI names normalised, others as OSV writes them)
 ///     R  <manager>  <package>  <slug>    a system package manager's package that is a graded project's software
 ///                                        (manager: "macports", "nix" or "conda"); matched on the Mac, never sent
+///     M, A, C                            extensions, apps and bundled libraries (see ProductIndex)
 public struct PublicIndex: Sendable {
     public struct Project: Hashable, Sendable {
         public var slug: String
@@ -25,6 +26,8 @@ public struct PublicIndex: Sendable {
     public let packageCount: Int
     /// Every package's and every project's key, laid out for `osva_select`.
     public let keys: KeyList
+    /// Malicious extensions, apps and bundled libraries (the `M`, `A` and `C` lines).
+    public let products: ProductIndex
 
     private let projectsBySlug: [String: Project]
     private let projectsByRepo: [String: Project]
@@ -32,13 +35,16 @@ public struct PublicIndex: Sendable {
     private let managedProjects: [String: String]
 
     /// For tests and previews: an index of these packages and projects.
-    public init(generatedAt: String, packages: [(Ecosystem, String)], projects: [Project], managed: [(manager: String, package: String, slug: String)] = []) {
-        self.init(generatedAt: generatedAt, packageKeys: KeyList(packages.map { PackageNames.key($0.0, $0.1) }), packageCount: packages.count, projects: projects,
+    public init(generatedAt: String, packages: [(Ecosystem, String)], projects: [Project], products: ProductIndex = ProductIndex(),
+                managed: [(manager: String, package: String, slug: String)] = []) {
+        self.init(generatedAt: generatedAt, packageKeys: KeyList(packages.map { PackageNames.key($0.0, $0.1) }), packageCount: packages.count,
+                  projects: projects, products: products,
                   managed: Dictionary(managed.map { ($0.manager + "\u{1F}" + $0.package, $0.slug) }, uniquingKeysWith: { a, _ in a }))
     }
 
-    init(generatedAt: String, packageKeys: KeyList, packageCount: Int, projects: [Project], managed: [String: String] = [:]) {
-        self.generatedAt = generatedAt; self.projects = projects; self.packageCount = packageCount
+    init(generatedAt: String, packageKeys: KeyList, packageCount: Int, projects: [Project], products: ProductIndex = ProductIndex(),
+         managed: [String: String] = [:]) {
+        self.generatedAt = generatedAt; self.projects = projects; self.packageCount = packageCount; self.products = products
         managedProjects = managed
         projectsBySlug = Dictionary(projects.map { ($0.slug, $0) }, uniquingKeysWith: { a, _ in a })
         projectsByRepo = Dictionary(projects.filter { !$0.repo.isEmpty }.map { ($0.repo.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
@@ -66,6 +72,7 @@ public struct PublicIndex: Sendable {
         var keyBytes: [UInt8] = [], offsets: [Int] = [], lengths: [Int] = []
         keyBytes.reserveCapacity(data.count)
         var projects: [Project] = [], managed: [String: String] = [:], generatedAt = "", formatOK = false
+        var products = ProductIndex()
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             let bytes = raw.bindMemory(to: UInt8.self)
             var start = 0
@@ -89,7 +96,7 @@ public struct PublicIndex: Sendable {
                             keyBytes.append(contentsOf: bytes[(tab + 1)..<nameEnd])
                             lengths.append(keyBytes.count - offsets[offsets.count - 1])
                         }
-                    } else if first == UInt8(ascii: "P") || first == UInt8(ascii: "#") || first == UInt8(ascii: "R") {
+                    } else if first == UInt8(ascii: "P") || first == UInt8(ascii: "#") || first == UInt8(ascii: "R") || ProductIndex.isRecord(first) {
                         let fields = String(decoding: UnsafeBufferPointer(rebasing: bytes[start..<lineEnd]), as: UTF8.self)
                             .split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
                         if fields[0] == "R", fields.count >= 4, !fields[1].isEmpty, !fields[2].isEmpty, !fields[3].isEmpty {
@@ -99,6 +106,8 @@ public struct PublicIndex: Sendable {
                         } else if fields[0] == "#osva-app-index", fields.count >= 3 {
                             formatOK = fields[1] == "1"
                             generatedAt = fields[2]
+                        } else {
+                            products.add(fields)
                         }
                     }
                 }
@@ -106,7 +115,8 @@ public struct PublicIndex: Sendable {
             }
         }
         guard formatOK else { throw DecodeError.notAnIndex("app-index.tsv is not format 1") }
+        products.finish()
         return PublicIndex(generatedAt: generatedAt, packageKeys: KeyList(bytes: keyBytes, offsets: offsets, lengths: lengths),
-                           packageCount: offsets.count, projects: projects, managed: managed)
+                           packageCount: offsets.count, projects: projects, products: products, managed: managed)
     }
 }

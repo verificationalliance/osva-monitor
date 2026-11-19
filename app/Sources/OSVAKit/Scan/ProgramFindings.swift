@@ -91,7 +91,8 @@ extension FindingBuilder {
         // The API lists at most 40 flaws; the ones it leaves out are counted as affecting this Mac too.
         let unlisted = max(verdict.distinctFlaws - flaws.count, 0)
         let count = flaws.isEmpty ? max(verdict.distinctFlaws, malicious ? 0 : 1) : onlyElsewhere ? flaws.count : here.count + unlisted
-        let target = (malicious || onlyElsewhere ? nil : verdict.plan?.target).flatMap { PackageNames.isPlausibleVersion($0) ? $0 : nil }
+        // A version from the server goes into a sentence or a command only if it reads as a version (FixSafety).
+        let target = (malicious || onlyElsewhere ? nil : verdict.plan?.target).flatMap { FixSafety.isSafeVersion($0) ? $0 : nil }
         let unresolved = (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
             UnresolvedFlaw(id: r.id, severity: Severity(api: flaws.first { $0.id == r.id }?.severity), fixedIn: r.fixedIn,
                            reason: Self.reason(r.reason), detail: r.detail, python: package.python, onThisMac: true)
@@ -178,6 +179,7 @@ extension FindingBuilder {
             for u in parts.flatMap(\.unresolved) where u.affectsThisMac && seenFlaws.insert(u.id).inserted { unresolved.append(u) }
             unresolved = Array(unresolved.sorted { ($0.severity ?? .low, $1.id) > ($1.severity ?? .low, $0.id) }.prefix(3))
             let allElsewhere = parts.allSatisfy { $0.group == .other && $0.target == nil && !$0.malicious }
+            let command = allElsewhere || (!fixable && !malicious) ? nil : advice.command
             findings.append(Finding(
                 id: id, group: group, subject: .package(ecosystem: worst.package.ecosystem, name: worst.package.name), title: title,
                 component: Component.rowLabel(worst.label, installed: Component.shown(worst.package.version), fixed: worst.target.map(Component.shown)),
@@ -186,9 +188,42 @@ extension FindingBuilder {
                 flawCount: flaws, exploited: exploited, malicious: malicious,
                 note: [sentence, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil, origins: g.origins,
                 pageURL: SiteURL.packagePage(worst.package.ecosystem, worst.package.name, version: worst.package.version),
-                upgradeCommand: allElsewhere || (!fixable && !malicious) ? nil : advice.command,
-                verification: .none, grade: nil, fixesCount: parts.count == 1 ? worst.fixes : nil, unresolved: unresolved))
+                upgradeCommand: command, verification: .none, grade: nil, fixesCount: parts.count == 1 ? worst.fixes : nil,
+                unresolved: unresolved, commandInputs: command == nil ? nil : Self.inputs(origin: g.origins[0], malicious: malicious)))
         }
+    }
+
+    /// The programs an app ships, when the app is already a finding of its own (its product record, a library it
+    /// bundles): one finding for the app, with its programs' flaws in it, as for a Homebrew formula's project finding.
+    public static func foldingProgramsIntoApps(_ findings: [Finding]) -> [Finding] {
+        var out = findings
+        var folded = Set<String>()
+        for f in findings {
+            let apps = f.origins.compactMap { o -> String? in if case let .program(p) = o, p.place == .app { return p.app }; return nil }
+            guard let app = apps.first, apps.count == f.origins.count,
+                  let i = out.firstIndex(where: { a in
+                      a.id != f.id && !folded.contains(a.id) && a.origins.contains { o in
+                          if case let .application(_, bundlePath, _) = o { return (bundlePath as NSString).lastPathComponent == app + ".app" }
+                          return false
+                      }
+                  }) else { continue }
+            // Its sentence, without the advice: the app's own finding already says how the app is updated.
+            out[i].note = [out[i].note, f.note.map(Self.firstSentence)].compactMap { $0 }.joined(separator: " ")
+            out[i].advisoryIDs += f.advisoryIDs.filter { !out[i].advisoryIDs.contains($0) }
+            out[i].flawCount += f.flawCount
+            out[i].exploited = out[i].exploited || f.exploited
+            out[i].malicious = out[i].malicious || f.malicious
+            if f.group < out[i].group { out[i].group = f.group }
+            if let s = f.severity, out[i].severity.map({ s > $0 }) ?? true { out[i].severity = s }
+            folded.insert(f.id)
+        }
+        return out.filter { !folded.contains($0.id) }
+    }
+
+    /// "Docker’s 6 programs were built with … known flaws." out of the note that follows it with advice.
+    static func firstSentence(_ note: String) -> String {
+        guard let end = note.range(of: ". ") else { return note }
+        return String(note[..<end.lowerBound]) + "."
     }
 
     /// Worst first: malicious, exploited, critical and high, by severity, then by how many flaws; the standard
@@ -260,6 +295,13 @@ extension FindingBuilder {
 
     static func list(_ names: [String]) -> String {
         names.count <= 2 ? names.joined(separator: " and ") : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
+
+    /// What the Fix button makes the command again from: only a Homebrew formula's program has one it may run
+    /// (FixPlan); for the others the command is there to read and copy.
+    static func inputs(origin: Origin, malicious: Bool) -> UpgradeCommand.Inputs? {
+        guard case let .program(p) = origin, p.place == .homebrew, let formula = p.formula else { return nil }
+        return UpgradeCommand.Inputs(origin: origin, name: formula, ecosystem: nil, target: nil, malicious: malicious)
     }
 
     /// The program's or tool's command.

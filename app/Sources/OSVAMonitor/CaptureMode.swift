@@ -8,7 +8,8 @@ import SwiftUI
 /// appearance, writes `<view>-<appearance>.png` into <dir>, and quits.
 ///
 /// With --fixtures it shows the render fixtures instead of the last scan; --only <id>[,<id>…] keeps just those findings,
-/// opened (for a close-up of one fix plan). Either way it does not scan, send anything,
+/// opened (for a close-up of one fix plan); --fix-states offer|confirm|results shows the Fix buttons, the confirmations
+/// or the outcomes of runs on the fixtures (with --fixtures). Either way it does not scan, run, send anything,
 /// ask for notification permission, or write anything but the PNGs. It captures only its own windows, which macOS
 /// allows without Screen Recording permission.
 @MainActor
@@ -19,6 +20,11 @@ struct CaptureMode {
     let waitSeconds: Int
     /// Finding ids to keep, opened (`--only`); empty keeps them all with the malicious one opened.
     let only: [String]
+    /// A solid colour per appearance to put behind the panel (`--backdrop light=<hex>,dark=<hex>`, the colours of the page the screenshots go on), so the glass
+    /// samples the colour of the page the screenshot will sit on instead of whatever is on this Mac's desktop.
+    let backdrop: [String: NSColor]
+    /// `--fix-states offer|confirm|results`: which fixture fix states to show.
+    let fixStates: String?
 
     /// The popover's openSettings action, registered when the popover appears.
     static var openSettings: OpenSettingsAction?
@@ -37,15 +43,47 @@ struct CaptureMode {
         } else {
             only = []
         }
+        var colours: [String: NSColor] = [:]
+        if let b = arguments.firstIndex(of: "--backdrop"), b + 1 < arguments.count {
+            for pair in arguments[b + 1].split(separator: ",") {
+                let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                if kv.count == 2, let c = Self.colour(hex: kv[1]) { colours[kv[0]] = c }
+            }
+        }
+        backdrop = colours
+        if let f = arguments.firstIndex(of: "--fix-states"), f + 1 < arguments.count { fixStates = arguments[f + 1] } else { fixStates = nil }
+    }
+
+    /// The fixture fix states (PreviewData), and the findings they open.
+    private var fixtureFixes: (fixes: [String: FixRowState], resolved: [Finding], open: Set<String>)? {
+        guard fixtures else { return nil }
+        let resolved = PreviewData.findings.filter { PreviewData.fixResolved.contains($0.id) }
+        switch fixStates {
+        case "offer": return (PreviewData.fixOffers, [], Set(PreviewData.fixOffers.keys))
+        case "confirm": return (PreviewData.fixConfirmations, [], Set(PreviewData.fixConfirmations.keys))
+        case "results": return (PreviewData.fixResults, resolved, [PreviewData.FixID.nginx, PreviewData.FixID.openmtp])
+        default: return nil
+        }
     }
 
     func run(model: AppModel) {
         var full = fixtures ? PreviewData.report() : model.report
-        if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; return c } }
+        // A close-up shows only those findings: no "not checked" or "not in the index" rows half cut off at the bottom.
+        if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; c.coverage = Coverage(); return c } }
         let clean = fixtures ? PreviewData.report(findings: []) : model.report.map { r in var c = r; c.findings = []; return c }
         let fixtureSettings = fixtures ? MonitorSettings(watchedFolders: PreviewData.settings().folders) : model.settings
-        model.showFixtures(full, settings: fixtureSettings)
-        model.initiallyExpanded = only.isEmpty ? ["pkg|npm|axios|1.14.1"] : Set(only)
+        if fixtureFixes != nil, fixStates == "results" {
+            // what a scan would show after the runs: the fixed findings are no longer in it
+            full = full.map { r in var c = r; c.findings = r.findings.filter { !PreviewData.fixResolved.contains($0.id) }; return c }
+        }
+        let fixes = fixtureFixes
+        /// The findings with their fix states, or the clean panel with none.
+        func show(_ report: ScanReport?, withFixes: Bool) {
+            model.showFixtures(report, settings: fixtureSettings)
+            model.showFixtureFixes(withFixes ? fixes?.fixes ?? [:] : [:], resolved: withFixes ? fixes?.resolved ?? [] : [])
+        }
+        show(full, withFixes: true)
+        model.initiallyExpanded = only.isEmpty ? (fixes?.open ?? ["pkg|npm|axios|1.14.1"]) : Set(only)
         Task { @MainActor in
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -53,16 +91,18 @@ struct CaptureMode {
 
                 // The panel, open once and kept open while the appearance changes (it closes when focus moves).
                 NSApp.appearance = NSAppearance(named: .aqua)
+                showBackdrop("light")
                 var (panel, isReplica) = try await openPanel()
                 let prefix = isReplica ? "replica-" : ""
                 for (name, appearance) in appearances {
                     NSApp.appearance = NSAppearance(named: appearance)
-                    model.showFixtures(full, settings: fixtureSettings)
+                    showBackdrop(name)
+                    show(full, withFixes: true)
                     try await settle()
                     if isReplica { try await Self.fitReplica() } else { panel = try await reopenIfClosed(panel) }
                     try capture(panel, "\(prefix)popover-\(name)")
                     if let bar = statusBarWindow(), bar.windowNumber > 0 { try? capture(bar, "menubar-\(name)") }
-                    model.showFixtures(clean, settings: fixtureSettings)
+                    show(clean, withFixes: false)
                     try await settle()
                     if isReplica { try await Self.fitReplica() } else { panel = try await reopenIfClosed(panel) }
                     try capture(panel, "\(prefix)popover-clean-\(name)")
@@ -71,12 +111,13 @@ struct CaptureMode {
 
                 for (name, appearance) in appearances {
                     NSApp.appearance = NSAppearance(named: appearance)
-                    model.showFixtures(full, settings: fixtureSettings)
+                    showBackdrop(name)
+                    show(full, withFixes: true)
                     NSApp.activate(ignoringOtherApps: true)
                     Self.openSettings?()
                     try await settle(seconds: 1.5)
                     // the one visible window that is neither the status item nor the panel
-                    if let settings = NSApp.windows.first(where: { $0.isVisible && $0 !== panel && !isStatusBar($0) }) {
+                    if let settings = NSApp.windows.first(where: { $0.isVisible && $0 !== panel && $0 !== Self.backdropWindow && !isStatusBar($0) }) {
                         settings.makeKeyAndOrderFront(nil)
                         try await settle(seconds: 0.5)
                         try capture(settings, "settings-\(name)")
@@ -144,6 +185,33 @@ struct CaptureMode {
             }
         }
         throw CaptureError("the menu-bar panel closed and was not opened again")
+    }
+
+    private static var backdropWindow: NSWindow?
+
+    /// A borderless window of one solid colour over the whole screen, under the menu bar and the panel, that ignores
+    /// clicks (the shield in the menu bar stays clickable). Nothing if no colour was given for this appearance.
+    private func showBackdrop(_ appearance: String) {
+        guard let colour = backdrop[appearance], let screen = NSScreen.main else { Self.backdropWindow?.orderOut(nil); return }
+        let w = Self.backdropWindow ?? {
+            let w = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            w.level = .normal
+            w.ignoresMouseEvents = true
+            w.hasShadow = false
+            w.isReleasedWhenClosed = false
+            w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            Self.backdropWindow = w
+            return w
+        }()
+        w.setFrame(screen.frame, display: false)
+        w.backgroundColor = colour
+        w.orderFrontRegardless()
+    }
+
+    static func colour(hex: String) -> NSColor? {
+        let h = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        return NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
     }
 
     /// The panel's own content in a borderless window whose content view is macOS 26's NSGlassEffectView, under the

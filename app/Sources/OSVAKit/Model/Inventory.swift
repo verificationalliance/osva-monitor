@@ -70,6 +70,11 @@ public enum Origin: Hashable, Codable, Sendable {
     case macports(port: String)
     /// A package in a Nix profile; `element` is what its upgrade command names.
     case nix(profile: NixProfile, element: String)
+    /// An app checked by its own product record or by a library bundled inside it. `caskToken` is set when Homebrew
+    /// installed the app.
+    case application(name: String, bundlePath: String, caskToken: String?)
+    /// An editor or browser extension, or a package bundled inside one.
+    case addOn(host: ExtensionHost, id: String, name: String, profile: String?, path: String)
 
     /// A short human description: "Homebrew", "Slack", "global npm", "~/code/site/package-lock.json".
     public var label: String {
@@ -93,6 +98,8 @@ public enum Origin: Hashable, Codable, Sendable {
             return place + (env.python.map { " · Python \($0)" } ?? "")
         case let .macports(port): return "MacPorts \(port)"
         case let .nix(profile, element): return "Nix \(element) · \(Paths.abbreviatingHome(profile.path))"
+        case let .application(name, _, _): return name
+        case let .addOn(host, _, name, _, _): return "\(name) (\(host.title))"
         }
     }
 
@@ -103,6 +110,13 @@ public enum Origin: Hashable, Codable, Sendable {
             let folder = Paths.abbreviatingHome((path as NSString).deletingLastPathComponent)
             return "App in \(folder)" + (cask != nil ? " · Homebrew cask" : "")
         }
+        if case let .application(_, path, cask) = self {
+            let folder = Paths.abbreviatingHome((path as NSString).deletingLastPathComponent)
+            return "App in \(folder)" + (cask != nil ? " · Homebrew cask" : "")
+        }
+        if case let .addOn(host, id, _, profile, _) = self {
+            return "\(host.title) extension · " + (host.isEditor ? id : (profile ?? "default profile"))
+        }
         return label
     }
 
@@ -112,6 +126,22 @@ public enum Origin: Hashable, Codable, Sendable {
         if case let .pythonTool(tool) = self { return tool.python }
         if case let .conda(env) = self { return env.python }
         return nil
+    }
+
+    /// Whether two origins are the same place, as a fix sees it: the same Python (an upgrade with --user moves a
+    /// package from Apple's read-only site to the user site), the same lockfile, the same app bundle; otherwise equal.
+    public func samePlace(as other: Origin) -> Bool {
+        switch (self, other) {
+        case let (.pip(a, _, _), .pip(b, _, _)): return a.executable == b.executable
+        case let (.folder(_, a, _), .folder(_, b, _)): return a == b
+        case let (.electronApp(_, a, _), .electronApp(_, b, _)): return a == b
+        // A program is the same file, or the same formula's program of that name after an upgrade moved its keg.
+        case let (.program(a), .program(b)): return a.path == b.path || (a.formula != nil && a.formula == b.formula && a.name == b.name)
+        case let (.pythonTool(a), .pythonTool(b)): return a.venv == b.venv
+        case let (.conda(a), .conda(b)): return a.prefix == b.prefix
+        case let (.nix(a, _), .nix(b, _)): return a.path == b.path
+        default: return self == other
+        }
     }
 
     public var kind: SourceKind {
@@ -128,18 +158,22 @@ public enum Origin: Hashable, Codable, Sendable {
         case .conda: return .conda
         case .macports: return .macports
         case .nix: return .nix
+        case .application: return .apps
+        case .addOn: return .extensions
         }
     }
 }
 
 /// The places OSVA Monitor looks.
 public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
-    case homebrew, macports, nix, electron, go, rust, npm, pip, pipx, uv, conda, cargo, gem, folders
+    case homebrew, macports, nix, electron, apps, extensions, go, rust, npm, pip, pipx, uv, conda, cargo, gem, folders
 
     public var title: String {
         switch self {
         case .homebrew: return "Homebrew"
         case .electron: return "Electron apps"
+        case .apps: return "Apps"
+        case .extensions: return "Extensions"
         case .npm: return "npm"
         case .pip: return "pip"
         case .cargo: return "cargo"
@@ -166,9 +200,12 @@ public struct InstalledPackage: Hashable, Codable, Sendable {
     public var name: String
     public var version: String
     public var origin: Origin
+    /// Where it is and why, as far as its source could tell cheaply (pip: the site-packages directory pip reported).
+    /// Stays on this Mac; `ProvenanceExplainer` completes it for the copies behind findings.
+    public var provenance: Provenance?
 
-    public init(ecosystem: Ecosystem, name: String, version: String, origin: Origin) {
-        self.ecosystem = ecosystem; self.name = name; self.version = version; self.origin = origin
+    public init(ecosystem: Ecosystem, name: String, version: String, origin: Origin, provenance: Provenance? = nil) {
+        self.ecosystem = ecosystem; self.name = name; self.version = version; self.origin = origin; self.provenance = provenance
     }
 }
 
@@ -219,9 +256,15 @@ public struct Inventory: Codable, Sendable, Hashable {
     public var managed: [ManagedPackage] = []
     /// What the sources found and could not check at all.
     public var unchecked: [UncheckedItem] = []
+    /// Every app in /Applications and ~/Applications, for its product record and the libraries it bundles.
+    public var apps: [InstalledApp] = []
+    /// Editor and browser extensions (the packages bundled inside them are in `packages`).
+    public var extensions: [InstalledExtension] = []
 
-    public init(packages: [InstalledPackage] = [], homebrew: [HomebrewItem] = [], otherApps: [String] = [], reports: [SourceReport] = []) {
+    public init(packages: [InstalledPackage] = [], homebrew: [HomebrewItem] = [], otherApps: [String] = [], reports: [SourceReport] = [],
+                apps: [InstalledApp] = [], extensions: [InstalledExtension] = []) {
         self.packages = packages; self.homebrew = homebrew; self.otherApps = otherApps; self.reports = reports
+        self.apps = apps; self.extensions = extensions
     }
 
     public init(from decoder: Decoder) throws {                  // reports saved before otherApps existed
@@ -232,6 +275,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         reports = try c.decode([SourceReport].self, forKey: .reports)
         managed = try c.decodeIfPresent([ManagedPackage].self, forKey: .managed) ?? []          // reports saved before these
         unchecked = try c.decodeIfPresent([UncheckedItem].self, forKey: .unchecked) ?? []
+        apps = try c.decodeIfPresent([InstalledApp].self, forKey: .apps) ?? []
+        extensions = try c.decodeIfPresent([InstalledExtension].self, forKey: .extensions) ?? []
     }
 
     /// This inventory with the given sources replaced by `other`'s.
@@ -242,6 +287,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         out.otherApps = kinds.contains(.electron) ? other.otherApps : otherApps
         out.managed = managed.filter { !kinds.contains($0.origin.kind) } + other.managed.filter { kinds.contains($0.origin.kind) }
         out.unchecked = unchecked.filter { !kinds.contains($0.kind) } + other.unchecked.filter { kinds.contains($0.kind) }
+        out.apps = kinds.contains(.apps) ? other.apps : apps
+        out.extensions = kinds.contains(.extensions) ? other.extensions : extensions
         out.reports = (reports.filter { !kinds.contains($0.kind) } + other.reports.filter { kinds.contains($0.kind) }).sorted { $0.kind < $1.kind }
         return out
     }

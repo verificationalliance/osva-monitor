@@ -250,6 +250,10 @@ import Testing
         let sent = report.sent.distinctItems
         #expect(sent == ["npm axios 1.14.1", "npm lodash 4.17.20", "project nginx"])
         #expect(report.sent.withheldCount == 3)
+        // and the names that stayed here are kept, by where they were found, for Settings to show
+        #expect(report.sent.withheld == [Coverage.Bucket(source: "Homebrew", items: ["our-internal-tool 1.0"]),
+                                         Coverage.Bucket(source: "Folders", items: ["left-pad 1.3.0", "our-internal-ui 3.0.0"])])
+        #expect(report.sent.cached.isEmpty && report.sent.answeredFromCache == 0)
         // and what was not vouched for is said, not counted as clean
         #expect(report.coverage.notInIndex == [Coverage.Bucket(source: "Folders", items: ["left-pad 1.3.0", "our-internal-ui 3.0.0"])])
         #expect(report.coverage.notChecked == [Coverage.Bucket(source: "Homebrew packages with no graded project", items: ["our-internal-tool 1.0"])])
@@ -264,6 +268,50 @@ import Testing
         #expect(again.findings.map(\.id) == report.findings.map(\.id))
         #expect(again.sent.requests.isEmpty)
         #expect(transport.requests.count == before)
+        // and says what the cache answered, as it was sent the first time
+        #expect(again.sent.cached == ["npm axios 1.14.1", "npm lodash 4.17.20", "project nginx"])
+        #expect(again.sent.answeredFromCache == 3)
+        #expect(again.sent.withheld == report.sent.withheld)
+    }
+
+    /// Each name once per source, sources in their usual order, Homebrew's unmatched formulae under Homebrew.
+    @Test func withheldByWhereItWasFound() {
+        let folder = Origin.folder(root: "/r", lockfile: "/r/package-lock.json", direct: true)
+        let other = Origin.folder(root: "/s", lockfile: "/s/package-lock.json", direct: false)
+        let packages = [InstalledPackage(ecosystem: .npm, name: "left-pad", version: "1.3.0", origin: folder),
+                        InstalledPackage(ecosystem: .npm, name: "left-pad", version: "1.3.0", origin: other),
+                        InstalledPackage(ecosystem: .npm, name: "Zeta", version: "1.0.0", origin: folder),
+                        InstalledPackage(ecosystem: .pypi, name: "six", version: "1.15.0", origin: .pip(python: Fixture.applePython, user: false, formula: nil))]
+        let brew = [HomebrewItem(kind: .formula, name: "jq", version: "1.8.1", urls: []), HomebrewItem(kind: .cask, name: "slack", version: "4.51", urls: [])]
+        #expect(Scanner.withheld(packages, unmatchedBrew: brew) == [
+            .init(source: "Homebrew", items: ["jq 1.8.1", "slack 4.51"]),
+            .init(source: "pip", items: ["six 1.15.0"]),
+            .init(source: "Folders", items: ["left-pad 1.3.0", "Zeta 1.0.0"]),
+        ])
+    }
+
+    /// The lists are kept to SentRecord.listLimit names, the counts stay exact, and the cut survives saving.
+    @Test func sentListsAreBounded() throws {
+        let limit = SentRecord.listLimit
+        let cached = (0..<(limit + 7)).map { "npm p\($0) 1.0.0" }
+        let withheld = [Coverage.Bucket(source: "pip", items: (0..<(limit - 2)).map { "a\($0) 1" }),
+                        Coverage.Bucket(source: "Folders", items: (0..<5).map { "b\($0) 1" }),
+                        Coverage.Bucket(source: "RubyGems", items: ["c 1"])]
+        let record = SentRecord(withheldCount: limit + 4, answeredFromCache: cached.count, cached: cached, withheld: withheld)
+        #expect(record.cached.count == limit && record.cached.last == "npm p\(limit - 1) 1.0.0")
+        #expect(record.withheld.map(\.source) == ["pip", "Folders"])
+        #expect(record.withheld.map(\.items.count) == [limit - 2, 2])
+        #expect(record.answeredFromCache == limit + 7 && record.withheldCount == limit + 4)
+        let data = try JSONEncoder().encode(record)
+        #expect(try JSONDecoder().decode(SentRecord.self, from: data) == record)
+    }
+
+    /// A report saved by 0.1.0, before the lists were kept, still opens: the counts without names.
+    @Test func reportsFromBeforeTheListsStillLoad() throws {
+        let old = #"{"requests":[{"endpoint":"GET api/v1/project","items":["project openssh"]}],"withheldCount":760,"answeredFromCache":245}"#
+        let record = try JSONDecoder().decode(SentRecord.self, from: Data(old.utf8))
+        #expect(record.withheldCount == 760 && record.answeredFromCache == 245)
+        #expect(record.cached.isEmpty && record.withheld.isEmpty)
     }
 
     @Test func withoutTheIndexNothingIsSent() async {
@@ -285,7 +333,10 @@ import Testing
                               exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [.homebrewFormula(name: "openssh")],
                               pageURL: SiteURL.projectPage(slug: "openssh"), upgradeCommand: "brew upgrade openssh", verification: .parts, grade: "U")
         let report = ScanReport(startedAt: Date(timeIntervalSince1970: 1_800_000_000), finishedAt: Date(timeIntervalSince1970: 1_800_000_060),
-                                inventory: Inventory(), findings: [finding], sent: SentRecord(requests: [SentRequest(endpoint: "GET api/v1/project", items: ["project openssh"])]),
+                                inventory: Inventory(), findings: [finding],
+                                sent: SentRecord(requests: [SentRequest(endpoint: "GET api/v1/project", items: ["project openssh"])], withheldCount: 2,
+                                                 answeredFromCache: 1, cached: ["npm axios 1.14.1"],
+                                                 withheld: [Coverage.Bucket(source: "pip", items: ["six 1.15.0", "mlx 0.32.4"])]),
                                 indexGeneratedAt: "2026-11-19T01:32:46Z", problems: [])
         let storage = Storage(directory: dir)
         storage.save(report)
@@ -293,5 +344,28 @@ import Testing
         var settings = MonitorSettings(); settings.watchedFolders = ["/Users/ana/code"]; settings.scanIntervalHours = 3
         storage.save(settings)
         #expect(storage.loadSettings() == settings)
+    }
+}
+
+@Suite struct FlawNameTests {
+    @Test func eachUnresolvedFlawIsNamedBySummaryElseByItsID() throws {
+        // The API lists at most 40 flaws per package: CVE-2 is in the plan's remaining list but not in `flaws`.
+        let json = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20","malicious":false,"distinct_flaws":3,"worst_severity":"HIGH","advisories":[],"flaws":[{"id":"CVE-1","severity":"HIGH","summary":"  Windows path escape\nvia a crafted name  ","fixed_in":["9.0.0"],"platform":"windows"},{"id":"CVE-3","severity":"HIGH","fixed_in":["4.17.21"]}],"plan":{"target":"4.17.21","fixes":["CVE-3"],"remaining":[{"id":"CVE-1","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"},{"id":"CVE-2","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"}]}}]}"#
+        let response = try JSONDecoder().decode(BatchResponse.self, from: Data(json.utf8))
+        let selection = PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20",
+                                                                                       origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"))])
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.map { ($0, response.packages[0]) })
+        let f = try #require(FindingBuilder(index: Fixture.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:],
+                                                                           bigIssues: []).first)
+        #expect(f.unresolved.map(\.name) == ["Windows path escape via a crafted name", "CVE-2"])
+        #expect(f.unresolved.map(\.explanation) == ["Windows only, does not affect this Mac", "Windows only, does not affect this Mac"])
+        #expect(FindingBuilder.shortSummary(String(repeating: "word ", count: 40))?.hasSuffix("…") == true)
+    }
+
+    @Test func reportsSavedBeforeStillLoad() throws {
+        // no `summary` and no `commandInputs`: both are optional
+        let old = #"{"id":"GHSA-1","fixedIn":"2.0","reason":"noFix","onThisMac":true}"#
+        let u = try JSONDecoder().decode(UnresolvedFlaw.self, from: Data(old.utf8))
+        #expect(u.summary == nil && u.name == "GHSA-1")
     }
 }

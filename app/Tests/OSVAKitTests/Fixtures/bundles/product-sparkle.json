@@ -1,0 +1,6 @@
+{"key": "sparkle", "name": "Sparkle", "kind": "component", "vendor": "Sparkle Project", "open_source": true,
+ "source": "https://github.com/sparkle-project/Sparkle/security/advisories", "as_of": "2026-11-18",
+ "recent": [
+  {"id": "GHSA-wc9m-r3v6-9p5h", "date": "2025-06-12", "sev": "HIGH", "title": "Sparkle's installer can be used to escalate privileges", "fixed_hint": ["2.7.3"], "kev": false, "cve": "CVE-2025-10015"},
+  {"id": "GHSA-7h3c-5ff6-9vfq", "date": "2023-01-15", "sev": "CRITICAL", "title": "Downgrade to an older, signed update", "fixed_hint": ["1.27.2", "2.0.0"], "kev": false}
+ ]}

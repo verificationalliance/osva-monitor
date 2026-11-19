@@ -56,7 +56,7 @@ public struct GoBuildInfo: Equatable, Sendable {
     static let maxModinfoLength = 4 << 20
 
     /// The build info of a Go executable, or nil when it is not one (or the blob is damaged).
-    static func read(_ macho: MachO) -> GoBuildInfo? {
+    static func read(_ macho: MachOFile) -> GoBuildInfo? {
         guard let (version, modinfo) = readStrings(macho) else { return nil }
         var info = parseModinfo(modinfo)
         info.goVersion = version
@@ -64,11 +64,11 @@ public struct GoBuildInfo: Equatable, Sendable {
     }
 
     /// Whether the binary has the sections the Go linker writes: a cheap test before looking for the blob.
-    static func isGo(_ macho: MachO) -> Bool {
+    static func isGo(_ macho: MachOFile) -> Bool {
         macho.sections.contains { $0.name == "__go_buildinfo" || $0.name == "__gopclntab" }
     }
 
-    static func readStrings(_ macho: MachO) -> (version: String, modinfo: String)? {
+    static func readStrings(_ macho: MachOFile) -> (version: String, modinfo: String)? {
         let region: (addr: UInt64, bytes: [UInt8])
         if let s = macho.section(named: "__go_buildinfo") {
             region = (s.addr, macho.read(s, cap: maxModinfoLength + 4096))

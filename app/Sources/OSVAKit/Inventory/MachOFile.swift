@@ -85,7 +85,7 @@ struct ByteReader {
 
 /// The parts of a Mach-O executable the program readers need: its segments and sections, and reads of their bytes.
 /// Everything read from the file is checked against the file's and the slice's size before it is used.
-struct MachO {
+struct MachOFile {
     struct Segment: Equatable {
         var name: String
         var vmaddr: UInt64, vmsize: UInt64, fileoff: UInt64, filesize: UInt64
@@ -126,7 +126,7 @@ struct MachO {
     }
 
     /// Parses the file: a thin Mach-O, or a universal one (then the slice for this Mac's processor, else the first).
-    static func parse(_ source: ByteSource, preferring cpu: UInt32 = nativeCPU) -> MachO? {
+    static func parse(_ source: ByteSource, preferring cpu: UInt32 = nativeCPU) -> MachOFile? {
         let head = source.read(at: 0, count: 8)
         guard head.count >= 8 else { return nil }
         if head[0] == 0xCA, head[1] == 0xFE, head[2] == 0xBA, head[3] == 0xBE || head[3] == 0xBF {
@@ -143,7 +143,7 @@ struct MachO {
         #endif
     }
 
-    private static func parseFat(_ source: ByteSource, wide: Bool, preferring cpu: UInt32) -> MachO? {
+    private static func parseFat(_ source: ByteSource, wide: Bool, preferring cpu: UInt32) -> MachOFile? {
         let header = ByteReader(bytes: source.read(at: 0, count: 8), bigEndian: true)
         guard let n = header.u32(4), n > 0, n <= UInt32(maxFatArchitectures) else { return nil }
         let entrySize = wide ? 32 : 20
@@ -165,7 +165,7 @@ struct MachO {
         return nil
     }
 
-    private static func parseThin(_ source: ByteSource, at base: UInt64, size: UInt64) -> MachO? {
+    private static func parseThin(_ source: ByteSource, at base: UInt64, size: UInt64) -> MachOFile? {
         let magic = source.read(at: base, count: 4)
         guard magic.count == 4 else { return nil }
         let is64: Bool, bigEndian: Bool
@@ -205,7 +205,7 @@ struct MachO {
             }
             at += Int(cmdsize)
         }
-        return MachO(source: source, sliceOffset: base, sliceSize: size, filetype: filetype, cputype: cputype,
+        return MachOFile(source: source, sliceOffset: base, sliceSize: size, filetype: filetype, cputype: cputype,
                      segments: segments, sections: sections)
     }
 

@@ -29,7 +29,7 @@ public enum RustAudit {
     static let maxCrates = 20_000
 
     /// The crates of a binary built with cargo-auditable, or nil when it has none (or they cannot be read).
-    static func read(_ macho: MachO) -> [Crate]? {
+    static func read(_ macho: MachOFile) -> [Crate]? {
         guard let s = macho.section(named: sectionName) else { return nil }
         let compressed = macho.read(s, cap: maxCompressed)
         guard !compressed.isEmpty, UInt64(compressed.count) == s.size, let json = inflate(zlib: compressed, cap: maxInflated) else { return nil }
@@ -102,7 +102,7 @@ public enum RustAudit {
     /// Whether a binary without the section is plainly Rust: Rust's standard library names the RUST_BACKTRACE
     /// variable, and its panic locations name /rustc/<commit>/library. Only the constant-data sections are read, at
     /// most `budget` bytes, so a large non-Rust binary costs little.
-    static func looksLikeRust(_ macho: MachO, budget: Int = 16 << 20) -> Bool {
+    static func looksLikeRust(_ macho: MachOFile, budget: Int = 16 << 20) -> Bool {
         let sections = [("__TEXT", "__const"), ("__TEXT", "__cstring"), ("__DATA_CONST", "__const")]
         return macho.contains(anyOf: [Array("RUST_BACKTRACE".utf8), Array("/rustc/".utf8)], inSections: sections, budget: budget)
     }

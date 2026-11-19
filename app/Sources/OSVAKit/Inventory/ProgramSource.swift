@@ -171,7 +171,7 @@ public struct ProgramSource: Sendable {
     static func examine(_ c: Candidate, _ context: Context) -> Outcome {
         // The file opened is the file listed (not one swapped in since), and is never run.
         guard let file = ReadOnlyFile(path: c.target), file.identity == c.identity,
-              MachO.looksLikeMachO(file.read(at: 0, count: 4)), let macho = MachO.parse(file), macho.filetype == MachO.mhExecute else { return .nothing }
+              MachOFile.looksLikeMachO(file.read(at: 0, count: 4)), let macho = MachOFile.parse(file), macho.filetype == MachOFile.mhExecute else { return .nothing }
 
         // Which Homebrew formula's Cellar holds it, and at which version.
         let resolved = Paths.realPath(c.target)

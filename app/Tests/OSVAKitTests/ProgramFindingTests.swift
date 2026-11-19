@@ -280,3 +280,117 @@ private extension Finding {
         }
     }
 }
+
+/// The Fix button and "where and why" for the program sources.
+@Suite struct ProgramFixAndProvenanceTests {
+    let tools = ToolEnvironment(home: URL(fileURLWithPath: "/Users/ana"), base: [:], runner: RecordedRunner(outputs: [:]),
+                                isExecutable: { $0 == "/opt/homebrew/bin/brew" })
+
+    func gh(_ place: BuiltProgram.Place = .homebrew) -> BuiltProgram {
+        BuiltProgram(language: .go, path: "/opt/homebrew/bin/gh", name: "gh", version: "2.62.0", place: place, formula: place == .homebrew ? "gh" : nil,
+                     package: "github.com/cli/cli/v2/cmd/gh", module: "github.com/cli/cli/v2", toolchain: "1.22.3")
+    }
+
+    func finding(_ origin: Origin, inputs: UpgradeCommand.Inputs?) -> Finding {
+        let command = inputs.flatMap { UpgradeCommand.advice($0).command } ?? UpgradeCommand.advice(for: origin, name: "x", ecosystem: nil, target: nil, malicious: false).command
+        return Finding(id: "f", group: .criticalHigh, subject: .package(ecosystem: .go, name: "golang.org/x/net"), title: "gh", component: "golang.org/x/net",
+                       installedVersion: "0.23.0", fixedVersion: "0.33.0", severity: .critical, advisoryIDs: [], flawCount: 1, exploited: false,
+                       malicious: false, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.home, upgradeCommand: command,
+                       verification: .none, grade: nil, commandInputs: inputs)
+    }
+
+    @Test func aHomebrewProgramGetsBrewUpgradeChecked() throws {
+        let origin = Origin.program(gh())
+        let f = finding(origin, inputs: FindingBuilder.inputs(origin: origin, malicious: false))
+        guard case let .success(plan) = FixPlan.make(for: f, tools: tools) else { Issue.record("no plan"); return }
+        #expect(plan.command == "brew upgrade gh" && plan.toolName == "brew")
+        let homebrew = try #require(plan.homebrew)
+        // the formula only carries the module: Homebrew can tell whether there is a newer gh, the check after says the rest
+        #expect(!homebrew.versionIsTheFix && homebrew.name == "gh")
+        #expect(HomebrewAvailability.decide(HomebrewInfo(name: "gh", stable: "2.62.0", installed: "2.62.0"), for: homebrew, fixedVersion: "0.33.0")
+                == .unavailable("Homebrew has no newer gh than 2.62.0, the one installed."))
+    }
+
+    @Test func otherProgramsAndManagersAreCopyOnly() {
+        #expect(FindingBuilder.inputs(origin: .program(gh(.goInstall)), malicious: false) == nil)
+        let goInstall = finding(.program(gh(.goInstall)), inputs: UpgradeCommand.Inputs(origin: .program(gh(.goInstall)), name: "gh", ecosystem: nil,
+                                                                                        target: nil, malicious: false))
+        #expect(FixPlan.make(for: goInstall, tools: tools) == .failure(.noCommand))
+        let env = CondaEnvironment(prefix: "/Users/ana/miniforge3", name: "base", named: true, tool: .conda, python: "3.11.5")
+        let conda = finding(.conda(env: env), inputs: UpgradeCommand.Inputs(origin: .conda(env: env), name: "pyyaml", ecosystem: .pypi, target: "5.4",
+                                                                            malicious: false))
+        guard case let .failure(.sharedEnvironment(why)) = FixPlan.make(for: conda, tools: tools) else { Issue.record("conda ran"); return }
+        #expect(why.hasPrefix("Not run for you"))
+        for origin in [Origin.macports(port: "nginx"), .nix(profile: NixProfile(path: "/Users/ana/.nix-profile", style: .profile, shared: false), element: "nginx")] {
+            #expect(FixPlan.make(for: finding(origin, inputs: UpgradeCommand.Inputs(origin: origin, name: "nginx", ecosystem: nil, target: nil, malicious: false)),
+                                 tools: tools) == .failure(.noCommand))
+        }
+    }
+
+    @Test func aProgramAfterAnUpgradeIsTheSamePlace() {
+        var newer = gh(); newer.version = "2.63.0"; newer.path = "/opt/homebrew/Cellar/gh/2.63.0/bin/gh"
+        #expect(Origin.program(gh()).samePlace(as: .program(newer)))
+        var other = gh(.other); other.path = "/usr/local/bin/gh"
+        #expect(!Origin.program(gh()).samePlace(as: .program(other)))
+    }
+
+    @Test func whereAndWhy() async {
+        let home = temporaryDirectory()
+        write("x", to: home.appendingPathComponent("go/bin/gopls"))
+        let gopls = BuiltProgram(language: .go, path: home.path + "/go/bin/gopls", name: "gopls", version: "0.16.1", place: .goInstall, formula: nil,
+                                 package: "golang.org/x/tools/gopls", toolchain: "1.23.0")
+        let docker = BuiltProgram(language: .go, path: "/usr/local/bin/docker", name: "docker", version: nil, place: .app, formula: nil, package: nil,
+                                  toolchain: "1.23.8", app: "Docker", cask: "docker-desktop")
+        let tool = PythonTool(manager: .pipx, name: "black", mainPackage: "black", version: "24.1.0", venv: home.path + "/venvs/black", python: "3.12.4")
+        let findings = [Origin.program(gopls), .program(docker), .pythonTool(tool), .macports(port: "nginx")].enumerated().map { i, o in
+            var f = finding(o, inputs: nil); f.id = "f\(i)"; return f
+        }
+        let explained = await ProvenanceExplainer(tools: ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false }))
+            .explain(findings, inventory: Inventory())
+        let why = explained.map { $0.provenance?.first?.why }
+        #expect(why[0]?.hasPrefix("You installed it with go install on ") == true)
+        #expect(explained[0].provenance?.first?.details == ["Built from golang.org/x/tools/gopls", "Built with Go 1.23.0"])
+        #expect(why[1] == "Ships inside Docker (Homebrew cask docker-desktop)")
+        #expect(why[2] == "You installed it with pipx" && explained[2].provenance?.first?.path == tool.venv)
+        #expect(why[3] == "Installed with MacPorts (the port nginx)")
+    }
+}
+
+extension ProgramFixAndProvenanceTests {
+    @Test func aLinkOntoPathSaysWhatItNames() async throws {
+        let home = temporaryDirectory()
+        write("x", to: home.appendingPathComponent("Cellar/gh/2.62.0/bin/gh"))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: home.path + "/bin/gh", withDestinationPath: "../Cellar/gh/2.62.0/bin/gh")
+        var p = gh(.other); p.path = home.path + "/bin/gh"
+        let explained = await ProvenanceExplainer(tools: ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false }))
+            .explain([finding(.program(p), inputs: nil)], inventory: Inventory())
+        #expect(explained[0].provenance?.first?.details.first == "Links to " + Paths.abbreviatingHome(home.path + "/Cellar/gh/2.62.0/bin/gh", home: home.path))
+    }
+}
+
+extension ProgramFindingTests {
+    @Test func anAppThatIsAFindingTakesItsProgramsIn() throws {
+        func docker(_ name: String) -> BuiltProgram {
+            BuiltProgram(language: .go, path: "/usr/local/bin/\(name)", name: name, version: nil, place: .app, formula: nil, package: nil,
+                         toolchain: nil, app: "Docker", cask: nil)
+        }
+        let programs = findings(program(docker("docker"), [("stdlib", "1.22.3")]) + program(docker("kubectl"), [("golang.org/x/net", "v0.23.0")]))
+        let app = Finding(id: "product|docker|4.41.2", group: .criticalHigh, subject: .product(key: "docker", name: "Docker"),
+                          title: "Docker", installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6,
+                          exploited: false, malicious: false, note: "Likely affected: the issuer names 4.86.0 as fixed.", bigIssue: nil,
+                          origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
+                          upgradeCommand: nil, verification: .none, grade: nil)
+        let other = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", fixedVersion: nil,
+                            severity: nil, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
+                            origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
+        let folded = FindingBuilder.foldingProgramsIntoApps(programs + [app, other])
+        #expect(folded.map(\.id) == ["product|docker|4.41.2", "x"])
+        let d = try #require(folded.first)
+        #expect(d.note == "Likely affected: the issuer names 4.86.0 as fixed. docker and kubectl were built with golang.org/x/net 0.23.0 — fixed in 0.62.0"
+                + " · built with Go 1.22.3, whose stdlib has 74 known flaws.")
+        #expect(d.severity == .critical && d.flawCount == 6 + 20 + 74 && d.fixedVersion == "4.86.0")
+        // without the app's own finding, the programs stay a finding
+        #expect(FindingBuilder.foldingProgramsIntoApps(programs).map(\.title) == ["Docker"])
+    }
+}

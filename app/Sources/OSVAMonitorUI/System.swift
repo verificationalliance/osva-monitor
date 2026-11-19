@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSVAKit
 import ServiceManagement
@@ -45,7 +46,7 @@ public struct SystemNotifier: Notifier {
     public static func text(for findings: [Finding]) -> (title: String, body: String) {
         let worst = findings.sorted { $0.group < $1.group }
         let first = worst[0]
-        let what = first.malicious ? "Malicious package" : first.exploited ? "Exploited flaw" : "On the “patch these first” list"
+        let what = first.malicious ? (first.isExtension ? "Malicious extension" : "Malicious package") : first.exploited ? "Exploited flaw" : "On the “patch these first” list"
         let title = findings.count == 1 ? "\(what): \(first.title)" : "\(findings.count) new findings, starting with \(first.title)"
         var body = "\(first.versionLine) · \(first.originSummary)"
         if findings.count > 1 { body += "\nAlso: " + worst.dropFirst().prefix(3).map(\.title).joined(separator: ", ") + (findings.count > 4 ? " …" : "") }
@@ -69,5 +70,32 @@ public enum LoginItem {
             if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {}
         return isEnabled
+    }
+}
+
+/// Opens a fix's script in a Terminal window.
+public protocol TerminalOpener: Sendable {
+    @MainActor func open(_ script: URL, completion: @escaping @Sendable (String?) -> Void)
+}
+
+/// Terminal, named by its bundle identifier, opens the script as a document through Launch Services: what
+/// `open -a Terminal fix.command` does. Terminal runs a `.command` file it is given in a new window, with the person's
+/// own shell and environment. Nothing here sends Terminal Apple Events to script it (AppleScript's `do script`), so
+/// macOS asks for no Automation permission, and no other app can be told to run anything: only Terminal, only this file.
+public struct SystemTerminal: TerminalOpener {
+    public static let bundleIdentifier = "com.apple.Terminal"
+
+    public init() {}
+
+    @MainActor public func open(_ script: URL, completion: @escaping @Sendable (String?) -> Void) {
+        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleIdentifier) else {
+            completion("Terminal is not on this Mac")
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: configuration) { _, error in
+            completion(error?.localizedDescription)
+        }
     }
 }

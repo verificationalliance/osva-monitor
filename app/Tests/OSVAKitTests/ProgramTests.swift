@@ -36,53 +36,53 @@ enum Binaries {
 
 @Suite struct MachOTests {
     @Test func readsSegmentsAndSections() throws {
-        let m = try #require(MachO.parse(Binaries.goInline))
-        #expect(m.filetype == MachO.mhExecute && m.cputype == MachO.cpuARM64)
+        let m = try #require(MachOFile.parse(Binaries.goInline))
+        #expect(m.filetype == MachOFile.mhExecute && m.cputype == MachOFile.cpuARM64)
         #expect(m.segments.map(\.name).prefix(2) == ["__PAGEZERO", "__TEXT"])
         #expect(m.section(named: "__go_buildinfo")?.segment == "__DATA")
-        #expect(MachO.parse(Binaries.rust)?.section(named: ".dep-v0", segment: "__DATA") != nil)
+        #expect(MachOFile.parse(Binaries.rust)?.section(named: ".dep-v0", segment: "__DATA") != nil)
     }
 
     @Test func universalFilesPreferThisMacsSlice() throws {
-        let fat = Binaries.universal([(MachO.cpuX86_64, Binaries.goPointers), (MachO.cpuARM64, Binaries.goInline)])
-        #expect(MachO.looksLikeMachO(fat))
-        let arm = try #require(MachO.parse(fat, preferring: MachO.cpuARM64))
+        let fat = Binaries.universal([(MachOFile.cpuX86_64, Binaries.goPointers), (MachOFile.cpuARM64, Binaries.goInline)])
+        #expect(MachOFile.looksLikeMachO(fat))
+        let arm = try #require(MachOFile.parse(fat, preferring: MachOFile.cpuARM64))
         #expect(GoBuildInfo.read(arm)?.goVersion == "go1.27.4")
-        let intel = try #require(MachO.parse(fat, preferring: MachO.cpuX86_64))
+        let intel = try #require(MachOFile.parse(fat, preferring: MachOFile.cpuX86_64))
         #expect(GoBuildInfo.read(intel)?.goVersion == "go1.17.13")          // the x86_64 slice (here: the 1.17 binary)
         // a slice that points past the end of the file is skipped, not read
         var broken = fat
         broken[16] = 0xF0                                                   // first slice's offset: far past the end
-        let fallback = try #require(MachO.parse(broken, preferring: MachO.cpuX86_64))
+        let fallback = try #require(MachOFile.parse(broken, preferring: MachOFile.cpuX86_64))
         #expect(GoBuildInfo.read(fallback)?.goVersion == "go1.27.4")
     }
 
     @Test func notMachO() {
-        #expect(MachO.parse(Array("#!/bin/sh\necho hi\n".utf8)) == nil)
-        #expect(MachO.parse([]) == nil)
-        #expect(!MachO.looksLikeMachO([0xCF, 0xFA]))
+        #expect(MachOFile.parse(Array("#!/bin/sh\necho hi\n".utf8)) == nil)
+        #expect(MachOFile.parse([]) == nil)
+        #expect(!MachOFile.looksLikeMachO([0xCF, 0xFA]))
         // a Java class file starts like a universal binary; its "architectures" are nonsense and are refused
-        #expect(MachO.parse([0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34] + [UInt8](repeating: 0x41, count: 4096)) == nil)
+        #expect(MachOFile.parse([0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34] + [UInt8](repeating: 0x41, count: 4096)) == nil)
     }
 
     @Test func hostileHeadersAreRefused() {
         var b = Binaries.goInline
         b[20] = 0xFF; b[21] = 0xFF; b[22] = 0xFF; b[23] = 0x7F           // sizeofcmds: 2 GB
-        #expect(MachO.parse(b) == nil)
+        #expect(MachOFile.parse(b) == nil)
         var n = Binaries.goInline
         n[16] = 0xFF; n[17] = 0xFF; n[18] = 0xFF; n[19] = 0xFF           // ncmds: 4 billion
-        #expect(MachO.parse(n) == nil)
+        #expect(MachOFile.parse(n) == nil)
         // a segment claiming more sections than its command holds keeps no sections from it
         var s = Binaries.goInline
         let firstSegment = 32
         s[firstSegment + 64] = 0xFF; s[firstSegment + 65] = 0xFF
-        #expect(MachO.parse(s) != nil)
+        #expect(MachOFile.parse(s) != nil)
     }
 }
 
 @Suite struct GoBuildInfoTests {
     @Test func inlineFormat() throws {
-        let macho = try #require(MachO.parse(Binaries.goInline))
+        let macho = try #require(MachOFile.parse(Binaries.goInline))
         let info = try #require(GoBuildInfo.read(macho))
         #expect(info.goVersion == "go1.27.4" && info.stdlibVersion == "1.27.4")
         #expect(info.path == "example.com/osva/gofixture")
@@ -95,14 +95,14 @@ enum Binaries {
     }
 
     @Test func pointerFormatBeforeGo118() throws {
-        let macho = try #require(MachO.parse(Binaries.goPointers))
+        let macho = try #require(MachOFile.parse(Binaries.goPointers))
         let info = try #require(GoBuildInfo.read(macho))
         #expect(info.goVersion == "go1.17.13" && info.stdlibVersion == "1.17.13")
         #expect(info.deps == [.init(path: "golang.org/x/net", version: "v0.0.0-20210226172049-e18ecbb05110")])
     }
 
     @Test func whatIsChecked() throws {
-        let macho = try #require(MachO.parse(Binaries.goInline))
+        let macho = try #require(MachOFile.parse(Binaries.goInline))
         let info = try #require(GoBuildInfo.read(macho))
         let program = BuiltProgram(language: .go, path: "/x/gofixture", name: "gofixture", version: nil, place: .other, formula: nil,
                                    package: info.path, module: info.main?.path, toolchain: info.stdlibVersion)
@@ -148,7 +148,7 @@ enum Binaries {
             lengths += [fixture.count - 1, fixture.count]
             for n in lengths {
                 let cut = Array(fixture.prefix(n))
-                if let m = MachO.parse(cut), let info = GoBuildInfo.read(m) { #expect(!info.goVersion.isEmpty) }
+                if let m = MachOFile.parse(cut), let info = GoBuildInfo.read(m) { #expect(!info.goVersion.isEmpty) }
             }
             var rng = SeededRandom(seed: 7)
             for _ in 0..<200 {
@@ -158,7 +158,7 @@ enum Binaries {
                     let at = rng.next() % 2 == 0 ? Int(rng.next() % 4096) : magic + Int(rng.next() % 1024)
                     b[at] = UInt8(truncatingIfNeeded: rng.next())
                 }
-                if let m = MachO.parse(b) { _ = GoBuildInfo.read(m); _ = RustAudit.read(m); _ = RustAudit.looksLikeRust(m) }
+                if let m = MachOFile.parse(b) { _ = GoBuildInfo.read(m); _ = RustAudit.read(m); _ = RustAudit.looksLikeRust(m) }
             }
         }
         var rng = SeededRandom(seed: 11)
@@ -166,7 +166,7 @@ enum Binaries {
             var b = [UInt8](repeating: 0, count: Int(rng.next() % 8192))
             for i in b.indices { b[i] = UInt8(truncatingIfNeeded: rng.next()) }
             if Bool.random(using: &rng) && b.count >= 4 { b[0] = 0xCF; b[1] = 0xFA; b[2] = 0xED; b[3] = 0xFE }
-            if let m = MachO.parse(b) { _ = GoBuildInfo.read(m); _ = RustAudit.read(m) }
+            if let m = MachOFile.parse(b) { _ = GoBuildInfo.read(m); _ = RustAudit.read(m) }
         }
     }
 
@@ -176,17 +176,17 @@ enum Binaries {
         let magic = b.firstIndex(of: GoBuildInfo.magic, alignedTo: 16)!
         for i in 0..<9 { b[magic + 32 + i] = 0xFF }
         b[magic + 41] = 0x7F
-        let damaged = try #require(MachO.parse(b))
+        let damaged = try #require(MachOFile.parse(b))
         #expect(GoBuildInfo.read(damaged) == nil)
         // pointer format: a modinfo string header claiming 4 GB
         var p = Binaries.goPointers
-        let m = try #require(MachO.parse(p))
+        let m = try #require(MachOFile.parse(p))
         let pmagic = p.firstIndex(of: GoBuildInfo.magic, alignedTo: 16)!
         let modHeader = ByteReader(bytes: Array(p[(pmagic + 24)..<(pmagic + 32)]), bigEndian: false).u64(0)!
         let seg = m.segments.first { modHeader >= $0.vmaddr && modHeader - $0.vmaddr < $0.filesize }!
         let at = Int(seg.fileoff + modHeader - seg.vmaddr) + 8
         for i in 0..<8 { p[at + i] = i == 4 ? 1 : 0 }
-        let pm = try #require(MachO.parse(p))
+        let pm = try #require(MachOFile.parse(p))
         let info = GoBuildInfo.read(pm)
         #expect(info?.goVersion == "go1.17.13" && info?.deps == [])          // the version still reads; the modules do not
     }
@@ -194,7 +194,7 @@ enum Binaries {
 
 @Suite struct RustAuditTests {
     @Test func readsTheCrateList() throws {
-        let macho = try #require(MachO.parse(Binaries.rust))
+        let macho = try #require(MachOFile.parse(Binaries.rust))
         let crates = try #require(RustAudit.read(macho))
         #expect(crates == [RustAudit.Crate(name: "libc", version: "0.2.191", source: "crates.io"),
                            RustAudit.Crate(name: "rustfixture", version: "0.1.0", source: "local", root: true),
@@ -236,22 +236,22 @@ enum Binaries {
     }
 
     @Test func plainlyRust() throws {
-        let plain = try #require(MachO.parse(Binaries.rustWithoutCrateList))
-        let go = try #require(MachO.parse(Binaries.goInline))
+        let plain = try #require(MachOFile.parse(Binaries.rustWithoutCrateList))
+        let go = try #require(MachOFile.parse(Binaries.goInline))
         #expect(RustAudit.looksLikeRust(plain) && RustAudit.read(plain) == nil)
         #expect(!RustAudit.looksLikeRust(go))
     }
 
     @Test func damagedFilesDoNotCrash() throws {
-        let section = try #require(MachO.parse(Binaries.rust)?.section(named: ".dep-v0"))
+        let section = try #require(MachOFile.parse(Binaries.rust)?.section(named: ".dep-v0"))
         for n in Array(stride(from: 0, to: Binaries.rust.count, by: 997)) + Array(Int(section.offset)..<Int(section.offset + section.size + 2)) {
-            if let m = MachO.parse(Array(Binaries.rust.prefix(n))) { _ = RustAudit.read(m); _ = RustAudit.looksLikeRust(m) }
+            if let m = MachOFile.parse(Array(Binaries.rust.prefix(n))) { _ = RustAudit.read(m); _ = RustAudit.looksLikeRust(m) }
         }
         var rng = SeededRandom(seed: 3)
         for _ in 0..<300 {
             var b = Binaries.rust
             b[Int(section.offset) + Int(rng.next() % section.size)] = UInt8(truncatingIfNeeded: rng.next())
-            if let m = MachO.parse(b) { _ = RustAudit.read(m) }
+            if let m = MachOFile.parse(b) { _ = RustAudit.read(m) }
         }
     }
 }

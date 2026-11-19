@@ -37,6 +37,13 @@ public struct ApprovedProject: Hashable, Sendable {
     public var sentDescription: String { "project \(slug)" }
 }
 
+/// A product key (an app or a bundled library) the privacy filter found in the public index's `A` and `C` lines.
+public struct ApprovedProduct: Hashable, Sendable {
+    public let key: String
+    fileprivate init(key: String) { self.key = key }
+    public var sentDescription: String { "product \(key)" }
+}
+
 /// Decides, through the verified core, what may leave this Mac.
 public struct PrivacyFilter: Sendable {
     public let index: PublicIndex
@@ -68,5 +75,13 @@ public struct PrivacyFilter: Sendable {
         let unique = Array(Set(slugs)).sorted()
         let mask = Core.shared.select(inventory: unique.map(PackageNames.projectKey), index: index.keys)
         return zip(unique, mask).filter(\.1).map { ApprovedProject(slug: $0.0) }
+    }
+
+    /// Product keys come from the index's own `A` and `C` lines, never from this Mac's files; they still pass the
+    /// verified filter, like project slugs, before anything is asked about them.
+    public func approve(products keys: [String]) -> [ApprovedProduct] {
+        let unique = Array(Set(keys)).sorted()
+        let mask = Core.shared.select(inventory: unique.map(PackageNames.productKey), index: index.products.productKeys)
+        return zip(unique, mask).filter(\.1).map { ApprovedProduct(key: $0.0) }
     }
 }

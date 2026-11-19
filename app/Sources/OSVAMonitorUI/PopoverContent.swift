@@ -6,7 +6,10 @@ import OSVAKit
 public struct PopoverContent: Sendable {
     public struct Section: Identifiable, Sendable {
         public var group: Finding.Group
+        /// Its rows: the findings, and those fixed since the last full scan, each where it was.
         public var findings: [Finding]
+        /// How many still stand (the heading's number): fixed rows are shown, not counted.
+        public var count: Int
         public var id: Int { group.rawValue }
     }
 
@@ -68,14 +71,18 @@ public struct PopoverContent: Sendable {
     public var progress: String
     public var hasReport: Bool
 
-    public init(report: ScanReport?, isScanning: Bool, progress: String = "", now: Date = Date()) {
+    /// `resolved` are findings fixed since the last full scan: no longer in the report, still shown in their place
+    /// (their rows say "Fixed — now …") until the next full scan.
+    public init(report: ScanReport?, isScanning: Bool, progress: String = "", now: Date = Date(), resolved: [Finding] = []) {
         self.isScanning = isScanning
         self.progress = progress
         hasReport = report != nil
         let findings = report?.findings ?? []
+        let standing = Set(findings.map(\.id))
+        let shown = findings + resolved.filter { !standing.contains($0.id) }
         sections = Finding.Group.allCases.compactMap { g in
-            let items = findings.filter { $0.group == g }
-            return items.isEmpty ? nil : Section(group: g, findings: items)
+            let items = FindingOrder.sorted(shown.filter { $0.group == g })          // each app's findings together
+            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) }.count)
         }
         actionCount = report?.actionCount ?? 0
         problem = report?.problems.first
@@ -115,8 +122,7 @@ public struct PopoverContent: Sendable {
             switch hero {
             case .malicious:
                 sentence = n == 1 ? "needs action" : "need action"
-                advice = "Remove the malicious \(malicious == 1 ? "package" : "packages") first."
-            case .high: sentence = n == 1 ? "high-severity flaw to fix" : "high-severity flaws to fix"
+                advice = Self.removeFirst(urgent.filter(\.malicious))
             default: sentence = n == 1 ? "needs action" : "need action"
             }
             subline = when
@@ -127,14 +133,26 @@ public struct PopoverContent: Sendable {
     /// The whole headline in words ("8 need action"), for notifications and accessibility.
     public var headline: String { [heroCount.map(String.init), sentence].compactMap { $0 }.joined(separator: " ") }
 
-    /// "Homebrew, 15 Electron apps, Go and Rust programs, pip, pipx, RubyGems, 2 folders": the sources that had
-    /// something. Each one keeps its words together (no-break spaces), so a wrapped line never splits "15 Electron apps".
+    /// "Remove the malicious package first.", "Remove the malicious extensions first."
+    static func removeFirst(_ malicious: [Finding]) -> String {
+        let extensions = malicious.filter(\.isExtension).count, packages = malicious.count - extensions
+        let what = [packages == 0 ? nil : packages == 1 ? "package" : "packages",
+                    extensions == 0 ? nil : extensions == 1 ? "extension" : "extensions"].compactMap { $0 }.joined(separator: " and ")
+        return "Remove the malicious \(what) first."
+    }
+
+    /// "Homebrew, 138 apps, 23 extensions, Go and Rust programs, pip, pipx, RubyGems, 2 folders": the sources that had
+    /// something. The apps count includes those that bundle Electron, so they are not counted twice; Go and Rust
+    /// programs, and pipx and uv tools, share one name when both are there. Each name keeps its words together
+    /// (no-break spaces), so a wrapped line never splits "138 apps" or "Go and Rust programs".
     public static func sourcesSummary(_ reports: [SourceReport]) -> String {
         let shown = reports.filter { $0.available && $0.count > 0 }
         let kinds = Set(shown.map(\.kind))
-        return shown.compactMap { r -> String? in
+        return shown.filter { !(kinds.contains(.apps) && $0.kind == .electron) }.compactMap { r -> String? in
             switch r.kind {
             case .electron: return r.count == 1 ? "1 Electron app" : "\(r.count) Electron apps"
+            case .apps: return r.count == 1 ? "1\u{00A0}app" : "\(r.count.formatted())\u{00A0}apps"             // never "140 / apps"
+            case .extensions: return r.count == 1 ? "1\u{00A0}extension" : "\(r.count.formatted())\u{00A0}extensions"
             case .folders:
                 let n = Int(r.detail.split(separator: " ").first ?? "") ?? 0
                 return n == 1 ? "1 folder" : "\(n) folders"
@@ -165,16 +183,5 @@ public struct PopoverContent: Sendable {
         case .malicious: return .malicious(actionCount)
         case .critical, .high: return .action(actionCount)
         }
-    }
-}
-
-extension Finding {
-    /// The installed version, and the fixed one when known ("Electron 18.3.15", "42.11.16").
-    public var installedLabel: String { (component.map { "\($0) " } ?? "") + installedVersion }
-
-    /// "1.13.8 → 1.19.5", "Electron 24.2.0 → 42.11.16", "1.14.1", in one string (notifications, accessibility).
-    public var versionLine: String {
-        if malicious { return installedLabel }
-        return fixedVersion.map { "\(installedLabel) → \($0)" } ?? installedLabel
     }
 }
