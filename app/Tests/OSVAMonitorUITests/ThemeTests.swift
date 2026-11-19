@@ -131,14 +131,15 @@ import OSVAKit
                           "FixElapsed", "SiteLink", "RowHover", "ProvenanceView", "FactRow", "NameListView", "NameRow",
                           "ListDisclosureRow", "QuietCoverageSection", "AppIcon", "PanelCard", "WhatsNewCard", "ChangelogLines",
                           "WhatsNewSection", "FixAllCard", "FixAllReview", "FixAllStepLine", "FixAllSkipLine", "FixAllProgress",
-                          "FixAllSummary", "FixNotice", "FixDisclosure"] {
+                          "FixAllSummary", "FixNotice", "FixDisclosure", "ConsentView"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
     }
 
-    /// A container on the panel is a PanelCard: the groups, the quiet lists, a waiting update, What's New. Nothing else
-    /// draws `Surface.card` or the panel's concentric corners, so no container can be restyled on its own.
+    /// A container on the panel is a PanelCard: the groups, the quiet lists, a waiting update, What's New, Fix all, the
+    /// first-launch card. Nothing else draws `Surface.card` or the panel's concentric corners, so no container can be
+    /// restyled on its own.
     @Test func containersArePanelCards() {
         for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") where file != "Theme.swift" {
             let code = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }.joined(separator: "\n")
@@ -148,7 +149,8 @@ import OSVAKit
             #expect(cards == allowed && corners == allowed, "\(file) draws a container of its own (\(cards) Surface.card, \(corners) ConcentricRectangle)")
         }
         let users = Self.sources("OSVAMonitorUI").filter { $0.1.contains(".panelCard(") }.map(\.0)
-        #expect(Set(users).isSuperset(of: ["Components.swift", "PopoverView.swift", "Updates.swift", "WhatsNewViews.swift", "FixAllViews.swift"]),
+        #expect(Set(users).isSuperset(of: ["Components.swift", "PopoverView.swift", "Updates.swift", "WhatsNewViews.swift", "FixAllViews.swift",
+                                           "ConsentView.swift"]),
                 "\(users)")
     }
 

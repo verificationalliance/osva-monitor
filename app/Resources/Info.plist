@@ -26,8 +26,10 @@
   <key>SUFeedURL</key>                     <string>https://verificationalliance.org/app/appcast.xml</string>
   <!-- The update key's public half. The private half signs every release zip and the feed itself. -->
   <key>SUPublicEDKey</key>                 <string>9cEJw3YLnFNchYW7zNMy1geAw8SW2uvLC+5CT5FtAcw=</string>
-  <!-- Check once a day without asking first; Settings turns it off. -->
-  <key>SUEnableAutomaticChecks</key>       <true/>
+  <!-- No check until the person chose: the first-launch card's "Check for updates daily" turns it on (Sparkle keeps
+       the choice in the user defaults, which win over this), and Settings turns it off again. Never asked by
+       Sparkle's own window either, since this is set. -->
+  <key>SUEnableAutomaticChecks</key>       <false/>
   <key>SUScheduledCheckInterval</key>      <integer>86400</integer>
   <!-- Check the zip's signature before unpacking any of it, so a bad download is never even opened. -->
   <key>SUVerifyUpdateBeforeExtraction</key><true/>

@@ -54,6 +54,22 @@ public struct SystemNotifier: Notifier {
     }
 }
 
+/// Open at login, as the app model sees it: the system's (SystemLoginItem), or a test's.
+@MainActor public protocol LoginItemService {
+    var isAvailable: Bool { get }
+    var isEnabled: Bool { get }
+    /// Returns the state after trying.
+    func set(_ enabled: Bool) -> Bool
+}
+
+/// LoginItem, SMAppService's main app.
+public struct SystemLoginItem: LoginItemService {
+    public init() {}
+    public var isAvailable: Bool { LoginItem.isAvailable }
+    public var isEnabled: Bool { LoginItem.isEnabled }
+    public func set(_ enabled: Bool) -> Bool { LoginItem.set(enabled) }
+}
+
 /// Open at login, through SMAppService (only for the installed app).
 public enum LoginItem {
     public static var isAvailable: Bool { AppBundle.isInstalledApp }

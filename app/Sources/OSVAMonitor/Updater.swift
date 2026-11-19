@@ -6,7 +6,10 @@ import Sparkle
 /// The app's own updates, by Sparkle 2: one standard updater controller for the whole run, with its standard windows.
 ///
 /// What is checked and trusted is set in Info.plist (app/Resources/Info.plist): the feed, the update key, a check a
-/// day, the zip verified before it is unpacked, and a feed signed with the same key. Here, what a menu-bar app needs:
+/// day once the person chose it, the zip verified before it is unpacked, and a feed signed with the same key. Sparkle
+/// starts only when the app model starts it (AppModel.begin), after Start on the first-launch card; Info.plist turns
+/// the daily check off, so Sparkle never checks on its own before the person said it may. Here, what a menu-bar app
+/// needs:
 ///   - it has no window of its own and is not frontmost, so a check the person asks for activates it first, and
 ///     Sparkle's window comes up in front;
 ///   - an update a scheduled check finds is not pushed in a window behind whatever the person is doing (Sparkle's
@@ -17,20 +20,29 @@ import Sparkle
 ///     change it), and the test-only override below exists only in builds made with UPDATE_TESTING=1
 ///     (scripts/build-app.sh).
 @MainActor @Observable
-final class Updater: NSObject {
+final class Updater: NSObject, AppUpdating {
     private(set) var state = UpdateState.none
     @ObservationIgnored private var controller: SPUStandardUpdaterController?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
 
-    /// Starts Sparkle, in the installed app only (under `swift run` there is no Info.plist to read, and the capture
-    /// mode must not reach the network).
-    func start() {
+    /// The daily check as the person last set it, which Sparkle keeps in the user defaults; or on, as it was for
+    /// everyone who never changed it before 0.5.0, when Info.plist turned it on. Read before Sparkle starts: the
+    /// first-launch card shows it.
+    var checksDaily: Bool { UserDefaults.standard.object(forKey: Self.automaticChecksKey) as? Bool ?? true }
+
+    /// Sparkle's own key for its daily check (SUEnableAutomaticChecksKey), in the user defaults and in Info.plist.
+    static let automaticChecksKey = "SUEnableAutomaticChecks"
+
+    /// Starts Sparkle, checking once a day or not, in the installed app only (under `swift run` there is no
+    /// Info.plist to read, and the capture mode must not reach the network).
+    func start(checksDaily: Bool) {
         guard controller == nil, AppBundle.isInstalledApp else { return }
         let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
         self.controller = controller
         #if !OSVA_UPDATE_TESTING
         controller.updater.clearFeedURLFromUserDefaults()
         #endif
+        controller.updater.automaticallyChecksForUpdates = checksDaily   // before it starts, so no check goes against it
         controller.startUpdater()
         let updater = controller.updater
         // Sparkle changes these on the main thread, but a setting backed by the user defaults may change elsewhere.

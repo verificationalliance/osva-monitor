@@ -103,7 +103,7 @@ struct ComponentSheet: View {
                 StatusChip(.count(.severity(.critical), 3)); StatusChip(.count(.severity(.high), 4))
             }
             HStack(spacing: 18) {
-                MenuBarLabel(.notScanned); MenuBarLabel(.clean); MenuBarLabel(.action(3)); MenuBarLabel(.malicious(12))
+                MenuBarLabel(.notScanned); MenuBarLabel(.waiting); MenuBarLabel(.clean); MenuBarLabel(.action(3)); MenuBarLabel(.malicious(12))
             }
             .font(.system(size: 13))
             CommandBlock("cd ~/osva-monitor/run/demo-projects/api && python3 -m pip install 'Django>=5.2.17'").frame(width: 300)
@@ -244,6 +244,10 @@ func main() throws {
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,
                                                                      launchAtLogin: false, launchAtLoginAvailable: false, lastReport: nil), actions: .none)), .hostingView),
         ("components", AnyView(ComponentSheet()), .imageRenderer),
+        // before Start: the first-launch card, on a first install and for someone updating from 0.4.0. Drawn by
+        // NSHostingView, as Settings is: ImageRenderer leaves its switches out.
+        ("popover-consent", AnyView(ConsentView(choices: .constant(PreviewData.consentFresh), start: {}, quit: {})), .hostingView),
+        ("popover-consent-upgrade", AnyView(ConsentView(choices: .constant(PreviewData.consentUpgrade), start: {}, quit: {})), .hostingView),
         // the in-app fix: a run's steps and the review's details, rows under the pointer, then each state on its findings
         ("fix-steps", AnyView(FixStepSheet()), .imageRenderer),
         ("fix-hover", AnyView(HoverSheet()), .imageRenderer),

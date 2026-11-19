@@ -9,10 +9,13 @@ public final class AppModel {
     public private(set) var report: ScanReport?
     public private(set) var isScanning = false
     public private(set) var progress = ""
-    public private(set) var launchAtLogin = LoginItem.isEnabled
+    public private(set) var launchAtLogin: Bool
     public private(set) var settings: MonitorSettings
 
     public let notifier: any Notifier
+    @ObservationIgnored private let loginItem: any LoginItemService
+    /// Sparkle, in the app; started by `begin` and nothing else.
+    @ObservationIgnored private let updater: (any AppUpdating)?
     private let storage: Storage
     private let tools: ToolEnvironment
     private let transport: any HTTPTransport
@@ -26,13 +29,17 @@ public final class AppModel {
     @ObservationIgnored private var pendingRefresh: Set<SourceKind>?
     @ObservationIgnored private var folderDebounce: Task<Void, Never>?
 
-    /// `tools` and `transport` are this Mac's and the network's, `defaults`, `version` and `changelog` this app's;
-    /// tests pass their own.
+    /// `tools` and `transport` are this Mac's and the network's, `defaults`, `version` and `changelog` this app's,
+    /// `loginItem` and `updater` the system's and Sparkle's; tests pass their own.
     public init(storage: Storage = Storage(directory: Paths.supportDirectory()), notifier: any Notifier = SystemNotifier(),
                 tools: ToolEnvironment = ToolEnvironment(), transport: any HTTPTransport = URLSessionTransport(),
-                defaults: UserDefaults = .standard, version: String = AppModel.appVersion, changelog: Changelog = .bundled) {
+                defaults: UserDefaults = .standard, version: String = AppModel.appVersion, changelog: Changelog = .bundled,
+                loginItem: any LoginItemService = SystemLoginItem(), updater: (any AppUpdating)? = nil) {
         self.storage = storage
         self.notifier = notifier
+        self.loginItem = loginItem
+        self.updater = updater
+        launchAtLogin = loginItem.isEnabled
         self.tools = tools
         self.transport = transport
         self.defaults = defaults
@@ -72,14 +79,26 @@ public final class AppModel {
         settings = fixtureSettings
     }
 
-    /// Decides whether there is anything new to show, starts the schedule and the folder watcher, and scans if the
-    /// last scan is older than the interval.
+    /// At launch. The one gate: until the person agreed (Consent), the app shows the first-launch card and does nothing
+    /// else, no scan, no index, no update check, no notification prompt, no login item. Once they have, `begin`.
     public func start() {
+        guard Consent.given(defaults) else {
+            consent = Consent.prefill(ranBefore: ranBefore, settings: settings, openAtLogin: launchAtLogin,
+                                      checksForUpdates: updater?.checksDaily ?? true)
+            return
+        }
+        begin(checksForUpdates: updater?.checksDaily ?? true)
+    }
+
+    /// Decides whether there is anything new to show, starts the updater, the schedule and the folder watcher, asks
+    /// for notifications if they are on, and scans if the last scan is older than the interval.
+    private func begin(checksForUpdates: Bool) {
         checkWhatsNew()                                   // before this version's first scan is recorded
         schedule()
         watchFolders()
         prepareFixFolders()
-        Task { await notifier.requestPermission() }
+        if settings.notificationsEnabled { Task { await notifier.requestPermission() } }
+        updater?.start(checksDaily: checksForUpdates)
         let due = report.map { Date().timeIntervalSince($0.finishedAt) > interval } ?? true
         // A newer app scans at once, so the findings carry what it adds (0.2.0's Fix button needs a new scan).
         let scannedByOlder = report != nil && defaults.string(forKey: Self.scannedByKey) != version
@@ -88,6 +107,38 @@ public final class AppModel {
 
     /// The app version that made the saved report.
     static let scannedByKey = "lastFullScanAppVersion"
+
+    /// Whether an earlier version ran here: the version of its last scan (recorded since 0.2.1), or a saved scan or
+    /// settings file (every version).
+    private var ranBefore: Bool { defaults.string(forKey: Self.scannedByKey) != nil || storage.hasSavedState }
+
+    // MARK: Consent
+
+    /// The first-launch card's switches while it waits for Start; nil once the person agreed.
+    public private(set) var consent: ConsentChoices?
+
+    /// The menu-bar shield: with a dot beside it while the card waits for Start, otherwise what the last report says.
+    public var menuBarState: MenuBarLabel.State { consent == nil ? popoverContent.menuBarState : .waiting }
+
+    /// A switch on the card changed. Nothing is applied before Start.
+    public func setConsent(_ choices: ConsentChoices) {
+        guard consent != nil else { return }
+        consent = choices
+    }
+
+    /// Start: the agreement kept, each switch applied as set (the notification prompt and the login item only if on),
+    /// then everything `begin` starts, the first scan with it. Quit, instead, leaves all as it was.
+    public func agree() {
+        guard let choices = consent else { return }
+        defaults.set(Consent.version, forKey: Consent.key)
+        consent = nil
+        if settings.notificationsEnabled != choices.notify {
+            settings.notificationsEnabled = choices.notify
+            storage.save(settings)
+        }
+        if choices.openAtLogin != launchAtLogin { launchAtLogin = loginItem.set(choices.openAtLogin) }
+        begin(checksForUpdates: choices.checkForUpdates)
+    }
     public nonisolated static var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
 
     // MARK: What's new
@@ -98,7 +149,6 @@ public final class AppModel {
 
     /// At launch: show this version's entry if the app was updated to it, and on a first install note the version.
     func checkWhatsNew() {
-        let ranBefore = defaults.string(forKey: Self.scannedByKey) != nil || storage.hasSavedState
         switch WhatsNew.decide(current: version, lastSeen: defaults.string(forKey: WhatsNew.lastSeenKey), ranBefore: ranBefore,
                                changelog: changelog) {
         case let .show(entry): whatsNew = entry
@@ -938,7 +988,7 @@ public final class AppModel {
     }
 
     public func setLaunchAtLogin(_ on: Bool) {
-        launchAtLogin = LoginItem.set(on)
+        launchAtLogin = loginItem.set(on)
     }
 
     /// Asks for a folder with the standard panel and watches it.

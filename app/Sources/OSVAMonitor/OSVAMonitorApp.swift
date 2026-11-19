@@ -13,7 +13,7 @@ struct OSVAMonitorApp: App {
         MenuBarExtra {
             PopoverScene(model: delegate.model, updater: delegate.updater)
         } label: {
-            MenuBarLabel(delegate.model.popoverContent.menuBarState)
+            MenuBarLabel(delegate.model.menuBarState)
         }
         .menuBarExtraStyle(.window)
 
@@ -36,8 +36,15 @@ struct OSVAMonitorApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let model = AppModel()
-    let updater = Updater()
+    let updater: Updater
+    let model: AppModel
+
+    override init() {
+        let updater = Updater()
+        self.updater = updater
+        model = AppModel(updater: updater)               // the model starts it, once the person pressed Start
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let capture = CaptureMode(arguments: CommandLine.arguments) {
@@ -46,8 +53,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             capture.run(model: model)                     // draws its own windows to PNG, then quits
         } else {
             model.start()
-            updater.start()
         }
+    }
+}
+
+/// Until the person agreed, the panel and Settings show the first-launch card, and nothing else (Consent).
+struct ConsentScene: View {
+    let model: AppModel
+    let choices: ConsentChoices
+
+    var body: some View {
+        ConsentView(choices: Binding(get: { model.consent ?? choices }, set: { model.setConsent($0) }),
+                    start: { model.agree() }, quit: { NSApp.terminate(nil) })
     }
 }
 
@@ -58,6 +75,14 @@ struct PopoverScene: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        if let choices = model.consent {
+            ConsentScene(model: model, choices: choices)
+        } else {
+            popover
+        }
+    }
+
+    private var popover: some View {
         PopoverView(content: model.popoverContent, actions: PopoverActions(
             scanNow: { model.scanNow() },
             openSettings: {
@@ -96,6 +121,14 @@ struct SettingsScene: View {
     let updater: Updater
 
     var body: some View {
+        if let choices = model.consent {
+            ConsentScene(model: model, choices: choices)
+        } else {
+            settings
+        }
+    }
+
+    private var settings: some View {
         SettingsView(
             state: SettingsState(folders: model.settings.watchedFolders, intervalHours: model.settings.scanIntervalHours,
                                  notifications: model.settings.notificationsEnabled, notificationsAvailable: model.notifier.isAvailable,

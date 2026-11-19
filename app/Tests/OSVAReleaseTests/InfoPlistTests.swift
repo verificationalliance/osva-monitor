@@ -27,9 +27,11 @@ import Testing
         _ = try UpdateKey.publicKey(base64: key)
     }
 
-    @Test func checksDailyWithoutAsking() {
+    /// Daily, once the person chose it on the first-launch card: off until then, so Sparkle never checks before they
+    /// agreed, and set, so Sparkle never asks with a window of its own.
+    @Test func checksDailyOnlyOnceChosen() {
         let p = Self.plist
-        #expect(p["SUEnableAutomaticChecks"] as? Bool == true)
+        #expect(p["SUEnableAutomaticChecks"] as? Bool == false)
         #expect(p["SUScheduledCheckInterval"] as? Int == 86_400)
         #expect(p["SUEnableSystemProfiling"] as? Bool == false)
         #expect(p["SUAutomaticallyUpdate"] == nil)                     // installing stays the person's choice

@@ -496,10 +496,14 @@ struct TightLabel: LabelStyle {
 }
 
 /// The menu-bar icon: a template SF Symbol (the system colours it for light, dark and selected menu bars) whose shape
-/// carries the state, with the number of findings that need action in SF Pro monospaced digits.
+/// carries the state, with the number of findings that need action in SF Pro monospaced digits, or, while the
+/// first-launch card waits for Start, a dot where the number goes. A menu-bar app cannot open its own panel (SwiftUI's
+/// MenuBarExtra has no way to), so the dot is how it asks to be opened.
 public struct MenuBarLabel: View {
     public enum State: Equatable, Sendable {
         case notScanned
+        /// The first-launch card waits for Start (Consent): nothing has run.
+        case waiting
         case clean
         case action(Int)
         case malicious(Int)
@@ -511,15 +515,19 @@ public struct MenuBarLabel: View {
     public var body: some View {
         HStack(spacing: 3) {
             Image(systemName: symbol)
-            if let n = count { Text("\(n)").monospacedDigit() }
+            if let n = count { Text("\(n)").monospacedDigit() } else if state == .waiting { Text(Self.dot) }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibility)
     }
 
+    /// The dot while the card waits: a record-button circle drawn as text (U+23FA, U+FE0E), centred on the shield and
+    /// about half its width. A bullet (•) is too small to see there, a black circle (●) as tall as a digit.
+    static let dot = "\u{23FA}\u{FE0E}"
+
     public var symbol: String {
         switch state {
-        case .notScanned: return "shield"
+        case .notScanned, .waiting: return "shield"
         case .clean: return "checkmark.shield"
         case .action: return "exclamationmark.shield.fill"
         case .malicious: return "xmark.shield.fill"
@@ -533,6 +541,7 @@ public struct MenuBarLabel: View {
     private var accessibility: String {
         switch state {
         case .notScanned: return "OSVA Monitor: not scanned yet"
+        case .waiting: return "OSVA Monitor: waiting for you to press Start"
         case .clean: return "OSVA Monitor: nothing needs action"
         case let .action(n): return "OSVA Monitor: \(n) findings need action"
         case let .malicious(n): return "OSVA Monitor: malicious package found; \(n) findings need action"

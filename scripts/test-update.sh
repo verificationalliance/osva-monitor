@@ -146,8 +146,8 @@ if [ "${1:-}" = --gui ]; then
   cat <<GUI
 
 == by hand: $gui/OSVA Monitor.app (0.1.0) is open, reading the good feed
-   Right after launch Sparkle checks and shows "OSVA Monitor 0.1.1 is available" in front, with the notes.
-   Otherwise: click the shield, then the gear, then Check for Updates…
+   Click the shield and press Start (Check for updates daily on): Sparkle then checks and shows "OSVA Monitor
+   0.1.1 is available" in front, with the notes. Otherwise: click the shield, then the gear, then Check for Updates…
    Install Update: the app quits, is replaced and opens again; Settings › Updates then says 0.1.1.
    Press Return here to stop serving the feed.
 GUI

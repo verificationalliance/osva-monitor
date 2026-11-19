@@ -9,7 +9,7 @@ public struct UpdateState: Sendable, Equatable {
     public var isAvailable: Bool
     /// False while a check or an update is already under way.
     public var canCheck: Bool
-    /// Check once a day (Sparkle's automatic checks); on unless the person turned it off.
+    /// Check once a day (Sparkle's automatic checks), as the person chose on the first-launch card or since.
     public var checksAutomatically: Bool
     /// This app's version ("0.1.0").
     public var version: String
@@ -35,6 +35,15 @@ public struct UpdateState: Sendable, Equatable {
             : d.formatted(date: .abbreviated, time: .omitted)
         return "Last checked \(day) at \(d.formatted(date: .omitted, time: .shortened))"
     }
+}
+
+/// The updater as the app model starts it: Sparkle (Updater, in the app target), or a test's. Nothing starts it but
+/// the model, once the person pressed Start on the first-launch card (Consent).
+@MainActor public protocol AppUpdating: AnyObject {
+    /// Whether it checks once a day: as the person last chose, or on if they never did.
+    var checksDaily: Bool { get }
+    /// Starts it, checking once a day or not.
+    func start(checksDaily: Bool)
 }
 
 /// The popover's line for a waiting update: one quiet row above the controls, the whole of it a button.

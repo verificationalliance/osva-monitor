@@ -77,7 +77,8 @@ shows the command and runs nothing.
 
 <img src="docs/screenshots/popover-clean-dark.png" width="340" align="right" alt="Nothing needs action, with what could not be checked and what is not in the index">
 
-Very little. The app downloads the site's public index, every package that has ever had an advisory or a malware
+Very little, and nothing until you say so: on first launch the app shows what it reads and what it sends, and
+waits for Start. Then it downloads the site's public index, every package that has ever had an advisory or a malware
 report (about 256,000 names), and matches your packages against it on the Mac. Only the matches are sent: packages as
 ecosystem, name and version, and apps and bundled libraries by the index's own name for them. Extensions are checked on
 the Mac only. No file paths, no bundle identifiers, no extension IDs, no list of what else you have. Settings shows
