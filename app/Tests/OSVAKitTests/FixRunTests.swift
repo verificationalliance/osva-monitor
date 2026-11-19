@@ -101,7 +101,7 @@ import Testing
         "", " ", "npm  install", "npm install ", " npm", "npm install x; rm -rf ~", "npm install $(id)", "npm install `id`", "npm i x|y", "npm i x&",
         "npm i x > f", "npm i *", "npm i ~/x", "npm i =ls", "npm i \"x\"", "npm i 'unclosed", "npm i \\x", "npm i x\ny", "npm i x\ty",
         "cd relative && npm i", "cd /p; npm i", "cd /p && ", "cd /p &&npm i", "cd ~ && npm i", "npm i {a,b}", "npm i x#y", "npm i ?", "npm i [a]",
-        "npm i x!", "npm i ${HOME}", "FOO=1 npm i",
+        "npm i x!", "npm i ${HOME}", "npm i a;b", "npm i x;", "npm i a(b)", "npm i a<b", "FOO=1 npm i",
     ])
     func rejected(_ line: String) {
         let read = ShellWords.read(line, home: "/Users/ana")
@@ -283,11 +283,16 @@ final class UpdateRecorder: @unchecked Sendable {
     @Test func stopEndsItAndEverythingItStarted() async throws {
         let dir = temporaryDirectory()
         let pids = dir.appendingPathComponent("pids")
-        let t = tool("sleep 300 & echo $! > '\(pids.path)'; echo started; sleep 300", in: dir)
+        let marker = dir.appendingPathComponent("child-got-term")
+        // a child that cleans up on SIGTERM: Stop asks the whole group to end, so it gets the chance before any SIGKILL
+        let cleaner = tool("trap 'echo term > \"\(marker.path)\"; exit 0' TERM; while :; do sleep 0.1; done", in: dir, name: "child")
+        let t = tool("sleep 300 & echo $! > '\(pids.path)'; '\(cleaner.path)' & echo started; sleep 300", in: dir)
         let start = Date()
         let (ending, log) = await run(FixInvocation(executable: t.path, arguments: []), stopAfter: 0.5)
         #expect(ending == .stopped && log.lines == ["started"])
         #expect(Date().timeIntervalSince(start) < 4)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(FileManager.default.fileExists(atPath: marker.path))
         let child = Int32(try String(contentsOf: pids, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
         try await Task.sleep(for: .milliseconds(200))
         #expect(kill(child, 0) != 0)                                               // the background child is gone too
