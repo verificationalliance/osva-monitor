@@ -111,7 +111,7 @@ public enum PreviewData {
                                           page: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), ecosystem: .pypi)
 
     /// torch in python.org's Python, where torchaudio pins it: they move together.
-    public static let pythonOrg = PythonEnvironment(executable: "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3", version: "3.13.9",
+    public static let pythonOrg = PythonEnvironment(executable: "/usr/local/bin/python3.13", version: "3.13.9",
                                                     kind: .pythonOrg, externallyManaged: false, userSite: nil, formula: nil)
     public static let torch = finding("pkg|PyPI|torch|2.7.0|py3.13.9", .criticalHigh, .package(ecosystem: .pypi, name: "torch"), "torch", "2.7.0", "2.8.0",
                                       .high, flaws: 6, origins: [.pip(python: pythonOrg, user: false, formula: nil)],
