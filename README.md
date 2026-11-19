@@ -20,9 +20,7 @@ OSVA Monitor lives in the menu bar, checks all of that against public vulnerabil
 the few things that need you, each with the command that fixes it on this Mac.
 
 <p align="center">
-  <img src="docs/screenshots/popover-dark.png" width="380" alt="Findings: a malicious package, flaws exploited in the wild, each with its fix">
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/popover-clean-dark.png" width="380" alt="Nothing needs action, with what could not be checked">
+  <img src="docs/screenshots/popover-dark.png" width="400" alt="Findings: a malicious package, flaws exploited in the wild, each with its fix">
 </p>
 
 ## One example
@@ -38,7 +36,10 @@ OSVA Monitor works out what can actually be done here:
 - The flaw fixed only in 83.0.0 needs a newer Python. The app says so, instead of suggesting an upgrade that would
   fail.
 - One flaw affects Windows only. It is listed, but it does not push you to upgrade.
-- Apple's Python is read-only, so the command installs the fixed copy into your user site, which Python loads first:
+- Apple's Python is read-only, so the command installs the fixed copy into your user site, which Python loads
+  first.
+
+<br clear="right">
 
 ```sh
 /usr/bin/python3 -m pip install --user --upgrade 'setuptools>=78.1.1'
@@ -46,8 +47,6 @@ OSVA Monitor works out what can actually be done here:
 
 Every finding works like this: the smallest upgrade that fixes what can be fixed where the package lives, and a
 command for that place, whether it is Homebrew, a project folder, a global npm install or one of your Pythons.
-
-<br clear="right">
 
 ## What it looks at
 
@@ -61,6 +60,8 @@ command for that place, whether it is Homebrew, a project folder, a global npm i
 
 ## What leaves your Mac
 
+<img src="docs/screenshots/popover-clean-dark.png" width="340" align="right" alt="Nothing needs action, with what could not be checked and what is not in the index">
+
 Very little. The app downloads the site's public index, every package that has ever had an advisory or a malware
 report (about 256,000 names), and matches your packages against it on the Mac. Only the matches are sent, as
 ecosystem, name and version. No file paths, no app names, no list of what else you have. Settings shows exactly what
@@ -69,6 +70,8 @@ the last scan sent.
 Packages that are not in the index are listed as *not in the index: no known problems, not proof of safety*. Things
 the app cannot check at all are listed as *not checked*. It never calls something safe because it did not recognise
 it.
+
+<br clear="right">
 
 ## Proved, not only tested
 
