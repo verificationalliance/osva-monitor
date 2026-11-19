@@ -255,6 +255,13 @@ func main() throws {
         ("popover-bundles", AnyView(popover(PreviewData.bundlesReport(), expanded: PreviewData.bundlesOpen)), .imageRenderer),
         ("popover-bundles-closed", AnyView(popover(PreviewData.bundlesReport())), .imageRenderer),
         ("settings-bundles", AnyView(SettingsView(state: PreviewData.settings(report: PreviewData.bundlesReport()), actions: .none)), .hostingView),
+        // Java runtimes: Temurin's cask (Terminal only), Oracle's JDK 8 as Java names it, Zulu from SDKMAN, Homebrew's
+        // openjdk@8 in the same form, GraalVM not checked; open, closed, and Oracle's where-and-why details open
+        ("popover-java", AnyView(popover(PreviewData.javaReport(), expanded: PreviewData.javaOpen, fixes: PreviewData.javaFixes,
+                                         coverageOpen: [JavaCheck.noRecord])), .imageRenderer),
+        ("popover-java-closed", AnyView(popover(PreviewData.javaReport(), fixes: PreviewData.javaFixes)), .imageRenderer),
+        ("popover-java-details", AnyView(popover(PreviewData.javaReport(), expanded: [PreviewData.JavaID.oracle], fixes: PreviewData.javaFixes)
+            .environment(\.provenanceDetailsOpen, true)), .imageRenderer),
         // what could not be vouched for: one name per line, long lists in a window of their own
         ("popover-coverage", AnyView(popover(PreviewData.coverageReport(), coverageOpen: ["Bundled libraries with no readable version", "updatedElsewhere",
                                                                                   AppCoverage.webApps("Edge")])), .imageRenderer),
