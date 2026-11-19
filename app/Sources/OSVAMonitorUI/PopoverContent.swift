@@ -116,7 +116,6 @@ public struct PopoverContent: Sendable {
             case .malicious:
                 sentence = n == 1 ? "needs action" : "need action"
                 advice = "Remove the malicious \(malicious == 1 ? "package" : "packages") first."
-            case .high: sentence = n == 1 ? "high-severity flaw to fix" : "high-severity flaws to fix"
             default: sentence = n == 1 ? "needs action" : "need action"
             }
             subline = when

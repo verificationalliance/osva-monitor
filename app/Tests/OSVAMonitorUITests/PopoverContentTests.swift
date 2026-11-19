@@ -29,7 +29,7 @@ import OSVAKit
         let critical = content(all.filter { !$0.malicious })
         #expect(critical.hero == .critical && critical.sentence == "need action" && critical.menuBarState == .action(8))
         let high = content(all.filter { $0.severity == .high && !$0.exploited && $0.group.needsAction })
-        #expect(high.hero == .high && high.heroCount == 4 && high.sentence == "high-severity flaws to fix")
+        #expect(high.hero == .high && high.heroCount == 4 && high.sentence == "need action")
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
