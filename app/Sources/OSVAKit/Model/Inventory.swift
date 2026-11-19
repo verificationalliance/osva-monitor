@@ -146,9 +146,12 @@ public struct InstalledPackage: Hashable, Codable, Sendable {
     public var name: String
     public var version: String
     public var origin: Origin
+    /// Where it is and why, as far as its source could tell cheaply (pip: the site-packages directory pip reported).
+    /// Stays on this Mac; `ProvenanceExplainer` completes it for the copies behind findings.
+    public var provenance: Provenance?
 
-    public init(ecosystem: Ecosystem, name: String, version: String, origin: Origin) {
-        self.ecosystem = ecosystem; self.name = name; self.version = version; self.origin = origin
+    public init(ecosystem: Ecosystem, name: String, version: String, origin: Origin, provenance: Provenance? = nil) {
+        self.ecosystem = ecosystem; self.name = name; self.version = version; self.origin = origin; self.provenance = provenance
     }
 }
 

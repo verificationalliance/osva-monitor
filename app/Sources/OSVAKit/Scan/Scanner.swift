@@ -135,8 +135,10 @@ public actor Scanner {
         }
 
         // 7. Findings, and what could not be vouched for.
-        let findings = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
-                                                             brew: brewChecked, projects: projects, bigIssues: bigIssues)
+        let built = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
+                                                          brew: brewChecked, projects: projects, bigIssues: bigIssues)
+        // Where each finding's copies are and why: read from this Mac's files, after every request was made.
+        let findings = await ProvenanceExplainer(tools: configuration.tools).explain(built, inventory: inventory)
         let checkedBrew = Set(brewChecked.map(\.item))
         let coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
                                      otherApps: inventory.otherApps)
@@ -226,9 +228,10 @@ public actor Scanner {
             let versions = Array(Set(installs.map(\.version)))
             now = (finding.component.map { "\($0) " } ?? "") + (Core.shared.newestVersion(versions) ?? versions[0])
         }
-        updated = Self.replacing(finding, with: rebuilt, in: updated)
+        let explained = await ProvenanceExplainer(tools: configuration.tools).explain(rebuilt, inventory: updated.inventory)
+        updated = Self.replacing(finding, with: explained, in: updated)
         updated.sent.requests += await api.takeSentRequests()
-        return (updated, rebuilt.first.map(Recheck.stillAffected) ?? .fixed(now: now))
+        return (updated, explained.first.map(Recheck.stillAffected) ?? .fixed(now: now))
     }
 
     /// The report with `old` replaced by `new` (and no finding listed twice), still in the list's order.
