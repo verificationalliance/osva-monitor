@@ -8,6 +8,11 @@ go on over indented lines). At most six lines, each short and plain: what change
 their words, not ours. docs/release-notes/<version>.md, the notes in Sparkle's update window, has the same lines;
 ChangelogTests checks both, and that scripts/build-app.sh's version has an entry.
 
+## 0.4.0
+
+- Fix all: one review, then every fix the app can make, one at a time.
+- If a fix breaks something, Fix all stops there and offers Undo.
+
 ## 0.3.1
 
 - What’s new now shows in the app, once after each update.
