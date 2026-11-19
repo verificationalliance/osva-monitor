@@ -4,9 +4,9 @@ import OSVACore
 /// The only door to the verified core (`Sources/OSVACore`, declared in `osva_core.h`).
 ///
 /// Four kinds of decision would mislead the person using OSVA Monitor if they were wrong: which of two versions is
-/// newer, whether an installed version is affected by an advisory, which installed packages may be named to the
-/// server, and how a name is written into a URL. The verified core makes all four, and nothing else in the app
-/// compares versions, decides affectedness, filters the inventory or percent-encodes.
+/// newer, whether an installed version is affected by an advisory (and which upgrade clears it), which installed
+/// packages may be named to the server, and how a name is written into a URL. The verified core makes all four, and
+/// nothing else in the app compares versions, decides affectedness, filters the inventory or percent-encodes.
 ///
 /// The core asks to be started once and called from one thread at a time, so this wrapper starts it when first used
 /// and makes every call on one serial queue.
@@ -58,7 +58,8 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         case unknown
     }
 
-    /// Is `installed` affected, given the first fixed version the issuer names for each release branch?
+    /// Is `installed` affected, given the first fixed version the issuer names for each release branch? For advisories
+    /// that carry only these (`fixed_hint`); `affectedness(installed:ranges:)` decides when the issuer's ranges are known.
     public func affectedness(installed: String, fixedVersions: [String]) -> Affectedness {
         let version = Array(installed.utf8)
         let fixed = KeyList(fixedVersions)
@@ -72,6 +73,37 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         case 0: return .notAffected
         default: return .unknown
         }
+    }
+
+    /// Is `installed` affected, given the issuer's affected ranges? Affected exactly when it lies in one of them
+    /// (Ranges.lean: sound and complete); `.unknown` when there are none.
+    public func affectedness(installed: String, ranges: [AffectedRange]) -> Affectedness {
+        let version = Array(installed.utf8)
+        let list = RangeList(ranges)
+        let answer = queue.sync {
+            withBytes(version) { pv, nv in list.withRanges { p, n in osva_affected_ranges(pv, nv, p, n) } }
+        }
+        switch answer {
+        case 1: return .affected
+        case 0: return .notAffected
+        default: return .unknown
+        }
+    }
+
+    /// The upgrade that leaves every range behind: the lowest fixed version of any of `ranges` that is above `installed`
+    /// and lies in none of them (Ranges.lean `upgradeIn`). Give it the ranges of every advisory weighed together, so the
+    /// upgrade never lands in a flaw that starts later. Nil when there is none.
+    public func upgrade(from installed: String, ranges: [AffectedRange]) -> String? {
+        let version = Array(installed.utf8)
+        let list = RangeList(ranges)
+        var output = [UInt8](repeating: 0, count: max(list.longestFixed, 1))
+        let length = queue.sync {
+            withBytes(version) { pv, nv in
+                list.withRanges { p, n in output.withUnsafeMutableBufferPointer { o in osva_upgrade_ranges(pv, nv, p, n, o.baseAddress!, o.count) } }
+            }
+        }
+        precondition(length >= -1, "The verified core refused the ranges (osva_upgrade_ranges returned \(length)).")
+        return length < 0 ? nil : String(decoding: output.prefix(length), as: UTF8.self)
     }
 
     // MARK: Privacy filter
@@ -105,6 +137,55 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         }
         precondition(length >= 0, "The verified core refused to encode a URL component.")
         return String(decoding: output.prefix(length), as: UTF8.self)
+    }
+}
+
+/// One affected range as the issuer publishes it (the API's `ranges`): from `introduced` (nil: the first version) up to
+/// but not including `fixed`, or up to and including `lastAffected` (neither: every later version).
+public struct AffectedRange: Codable, Sendable, Hashable {
+    public var introduced: String?
+    public var fixed: String?
+    public var lastAffected: String?
+
+    public init(introduced: String? = nil, fixed: String? = nil, lastAffected: String? = nil) {
+        self.introduced = introduced; self.fixed = fixed; self.lastAffected = lastAffected
+    }
+
+    enum CodingKeys: String, CodingKey { case introduced, fixed, lastAffected = "last_affected" }
+}
+
+/// Ranges laid out the way osva_affected_ranges wants them: their bounds in one buffer, an osva_range per range pointing
+/// into it, and NULL for an absent bound.
+private struct RangeList {
+    private var bytes: [UInt8] = []
+    private var bounds: [[(offset: Int, length: Int)?]] = []
+
+    init(_ ranges: [AffectedRange]) {
+        for r in ranges {
+            bounds.append([r.introduced, r.fixed, r.lastAffected].map { s in
+                guard let s else { return nil }
+                let start = bytes.count
+                bytes.append(contentsOf: s.utf8)
+                return (start, bytes.count - start)
+            })
+        }
+    }
+
+    var longestFixed: Int { bounds.compactMap { $0[1]?.length }.max() ?? 0 }
+
+    func withRanges<R>(_ body: (UnsafePointer<osva_range>, Int) -> R) -> R {
+        let storage = bytes.isEmpty ? [0] : bytes                 // a present bound is never a null pointer, even when empty
+        return storage.withUnsafeBufferPointer { buffer in
+            let base = buffer.baseAddress!
+            func pointer(_ b: (offset: Int, length: Int)?) -> UnsafePointer<UInt8>? { b.map { base + $0.offset } }
+            var ranges = bounds.map { b in
+                osva_range(introduced: pointer(b[0]), introduced_len: b[0]?.length ?? 0, fixed: pointer(b[1]), fixed_len: b[1]?.length ?? 0,
+                           last_affected: pointer(b[2]), last_affected_len: b[2]?.length ?? 0)
+            }
+            let count = ranges.count
+            if ranges.isEmpty { ranges = [osva_range()] }        // never hand the core a null base pointer
+            return ranges.withUnsafeBufferPointer { body($0.baseAddress!, count) }
+        }
     }
 }
 

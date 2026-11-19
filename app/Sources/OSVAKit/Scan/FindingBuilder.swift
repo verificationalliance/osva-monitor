@@ -129,28 +129,43 @@ public struct FindingBuilder: Sendable {
         for match in brew {
             guard let project = projects[match.project.slug] else { continue }
             let installed = match.item.version
-            var hits: [(advisory: ProjectResponse.Advisory, fix: String?)] = []
-            for a in project.recent where Self.weighed(a) {
-                if core.affectedness(installed: installed, fixedVersions: a.fixedHint) == .affected {
-                    hits.append((a, core.nearestVersion(in: a.fixedHint, above: installed)))
-                }
+            // Each advisory by the issuer's ranges when it has them, else by its first fixed versions (AdvisoryCheck).
+            guard let d = AdvisoryCheck.decide(installed, project.recent) else { continue }
+            var target = d.target, note = d.note
+            // A versioned formula never leaves its line: `brew upgrade python@3.11` cannot install 3.12.9, so a fix only on
+            // another line is said, not offered as a command that would do nothing.
+            let offLine = target.map { t in Self.formulaLine(match.item).map { !Self.isOnLine(t, $0) } ?? false } ?? false
+            if offLine, let t = target {
+                note = "The issuer lists \(installed) as affected; its fix, \(t), is not a \(match.item.name) release."
+                target = nil
             }
-            guard !hits.isEmpty else { continue }
-            // One upgrade that clears them all: the newest of the nearest fixes.
-            let target = core.newestVersion(hits.compactMap(\.fix))
-            let exploited = hits.contains { $0.advisory.kev }
             out.append(Finding(
-                id: "brew|\(match.item.name)|\(installed)", group: exploited ? .exploited : .criticalHigh,
+                id: "brew|\(match.item.name)|\(installed)", group: d.exploited ? .exploited : .criticalHigh,
                 subject: .project(slug: project.slug, name: project.name, installedAs: match.item.name), title: project.name,
-                installedVersion: installed, fixedVersion: target, severity: hits.compactMap { Severity(api: $0.advisory.severity) }.max(),
-                advisoryIDs: hits.map(\.advisory.id), flawCount: hits.count, exploited: exploited, malicious: false,
-                note: target.map { "Likely affected: the issuer names \($0) as fixed." }, bigIssue: nil, origins: [match.item.origin],
+                installedVersion: installed, fixedVersion: target, severity: d.severity,
+                advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
+                note: note, bigIssue: nil, origins: [match.item.origin],
                 pageURL: SiteURL.projectPage(slug: project.slug),
-                upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
+                upgradeCommand: offLine ? nil : UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
                 verification: project.verificationMark, grade: project.grade,
-                commandInputs: Self.inputs(match.item.origin, match.item.name, nil, target)))
+                commandInputs: offLine ? nil : Self.inputs(match.item.origin, match.item.name, nil, target)))
         }
         return out
+    }
+
+    /// The release line a versioned formula stays on: "python@3.11" → 3.11, "postgresql@16" → 16, "openssl@3" → 3. Nil for
+    /// an unversioned formula or a cask, which may move to any release.
+    static func formulaLine(_ item: HomebrewItem) -> [Int]? {
+        guard item.kind == .formula, let at = item.name.lastIndex(of: "@") else { return nil }
+        let parts = item.name[item.name.index(after: at)...].split(separator: ".", omittingEmptySubsequences: false)
+        let numbers = parts.compactMap { $0.allSatisfy(\.isNumber) ? Int($0) : nil }
+        return !parts.isEmpty && numbers.count == parts.count ? numbers : nil
+    }
+
+    /// Whether a version's first numbers are the line's ("3.11.18" is on 3.11, "3.12.9" is not).
+    static func isOnLine(_ version: String, _ line: [Int]) -> Bool {
+        let numbers = version.drop { $0 == "v" || $0 == "V" }.split(separator: ".").prefix(line.count).map { Int($0.prefix { $0.isNumber }) }
+        return numbers.count == line.count && zip(numbers, line).allSatisfy { $0 == $1 }
     }
 
     /// The inputs of an upgrade command, with a version from the server only if it reads as one.
@@ -165,10 +180,26 @@ public struct FindingBuilder: Sendable {
                         brew: [BrewMatch], projects: [String: ProjectResponse]) {
         for issue in issues where !issue.fixedIn.isEmpty {
             let label = "On the site's “patch these first” list: \(issue.title.isEmpty ? issue.name : issue.title)"
-            let fix = { (v: String) in self.core.nearestVersion(in: issue.fixedIn, above: v) }
+            // When the project's record has the issuer's ranges for every advisory on the list, they decide, as for the
+            // project's own findings; otherwise the list's first fixed versions do, as before ranges.
+            let listed = projects[issue.slug]?.recent.filter { a in issue.ids.contains(a.id) || a.cve.map(issue.ids.contains) == true } ?? []
+            let covered = Set(listed.flatMap { [$0.id] + ($0.cve.map { [$0] } ?? []) })
+            let rangeSets = listed.compactMap(\.ranges)
+            let byRanges = !listed.isEmpty && rangeSets.count == listed.count && issue.ids.allSatisfy(covered.contains)
+            let allRanges = rangeSets.flatMap { $0 }
+            let affects = { (v: String) in
+                byRanges ? rangeSets.contains { self.core.affectedness(installed: v, ranges: $0) == .affected }
+                         : self.core.affectedness(installed: v, fixedVersions: issue.fixedIn) == .affected
+            }
+            let firstFix = { (v: String) in self.core.nearestVersion(in: issue.fixedIn, above: v) }
+            let fix = { (v: String) in byRanges ? self.core.upgrade(from: v, ranges: allRanges) : firstFix(v) }
+            let says = { (v: String, t: String?) -> String? in
+                byRanges ? (t.map { "The issuer lists \(v) as affected and \($0) as fixed." } ?? "The issuer lists \(v) as affected. No fixed release yet.")
+                         : t.map { "Likely affected: the issuer names \($0) as fixed." }
+            }
             let severity = Severity(api: issue.severity)
             let group: Finding.Group = issue.exploited ? .exploited : (severity ?? .low) >= .high ? .criticalHigh : .other
-            func mark(id: String, make: () -> Finding) {
+            func mark(id: String, fix: (String) -> String?, make: () -> Finding) {
                 if let i = findings.firstIndex(where: { $0.id == id }) {
                     findings[i].bigIssue = label
                     if issue.exploited { findings[i].exploited = true }
@@ -182,15 +213,15 @@ public struct FindingBuilder: Sendable {
             // Homebrew formulae and casks of the project
             for match in brew where match.project.slug == issue.slug {
                 let v = match.item.version
-                guard core.affectedness(installed: v, fixedVersions: issue.fixedIn) == .affected else { continue }
+                guard affects(v) else { continue }
                 let project = projects[issue.slug]
                 let target = fix(v)
-                mark(id: "brew|\(match.item.name)|\(v)") {
+                mark(id: "brew|\(match.item.name)|\(v)", fix: fix) {
                     Finding(id: "brew|\(match.item.name)|\(v)", group: group,
                             subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.item.name),
                             title: project?.name ?? match.project.name, installedVersion: v, fixedVersion: target, severity: severity,
                             advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                            note: target.map { "Likely affected: the issuer names \($0) as fixed." }, bigIssue: label,
+                            note: says(v, target), bigIssue: label,
                             origins: [match.item.origin], pageURL: SiteURL.projectPage(slug: issue.slug),
                             upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
                             verification: project?.verificationMark ?? .none, grade: project?.grade,
@@ -201,13 +232,13 @@ public struct FindingBuilder: Sendable {
             for (package, installs) in approved {
                 let belongs = issue.slug == "electron" && package.ecosystem == .npm && package.name == "electron"
                 guard belongs, core.affectedness(installed: package.version, fixedVersions: issue.fixedIn) == .affected else { continue }
-                let target = fix(package.version)
+                let target = firstFix(package.version)
                 for install in installs {
                     let isApp = install.origin.kind == .electron
                     let id: String
                     if case let .electronApp(_, path, _) = install.origin { id = "app|\(path)|\(package.version)" }
                     else { id = "pkg|\(package.ecosystem)|\(package.name)|\(package.version)" + (package.python.map { "|py\($0)" } ?? "") }
-                    mark(id: id) {
+                    mark(id: id, fix: firstFix) {
                         Finding(id: id, group: group, subject: .package(ecosystem: package.ecosystem, name: package.name),
                                 title: isApp ? install.origin.label : install.name, component: isApp ? "Electron" : nil,
                                 installedVersion: package.version, fixedVersion: target, severity: severity, advisoryIDs: issue.ids,

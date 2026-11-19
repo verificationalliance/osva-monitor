@@ -110,39 +110,27 @@ public struct BundleCheck: Sendable {
     // MARK: Findings
 
     /// The advisories `installed` is affected by, weighed as Homebrew projects' are (critical, high, or exploited),
-    /// each decided by the verified core, and the one upgrade that clears them: the newest of the nearest fixes.
-    struct Decision {
-        var advisories: [ProjectResponse.Advisory]
-        var target: String?
-        var exploited: Bool
-        var severity: Severity?
+    /// each decided by the verified core on the issuer's ranges when the record has them, else on its first fixed
+    /// versions (AdvisoryCheck), and the one upgrade that clears them.
+    static func decide(_ installed: String, _ recent: [ProjectResponse.Advisory]) -> AdvisoryCheck? {
+        AdvisoryCheck.decide(installed, recent)
     }
 
-    static func decide(_ installed: String, _ recent: [ProjectResponse.Advisory]) -> Decision? {
-        let core = Core.shared
-        var hits: [(ProjectResponse.Advisory, String?)] = []
-        for a in recent where FindingBuilder.weighed(a) {
-            if core.affectedness(installed: installed, fixedVersions: a.fixedHint) == .affected {
-                hits.append((a, core.nearestVersion(in: a.fixedHint, above: installed)))
-            }
-        }
-        guard !hits.isEmpty else { return nil }
-        return Decision(advisories: hits.map(\.0), target: core.newestVersion(hits.compactMap(\.1)), exploited: hits.contains { $0.0.kev },
-                        severity: hits.compactMap { Severity(api: $0.0.severity) }.max())
-    }
-
-    /// A library's own version number (libavcodec 61.3.100) is compared with a record only when the record's fixed
-    /// versions are numbered the same way (some share its major version); FFmpeg's releases (7.1.1) are not, and such
-    /// a library is "not checked" rather than silently fine.
+    /// A library's own version number (libavcodec 61.3.100) is compared with a record only when the record's versions
+    /// (fixed versions and range bounds) are numbered the same way (some share its major version); FFmpeg's releases
+    /// (7.1.1) are not, and such a library is "not checked" rather than silently fine.
     static func comparable(_ found: ComponentReader.Found, _ version: String, _ recent: [ProjectResponse.Advisory]) -> Bool {
         guard found.isLibraryVersion else { return true }
         let major = ComponentReader.majorOf(version)
-        return recent.contains { $0.fixedHint.contains { ComponentReader.majorOf($0) == major } }
+        return recent.contains { a in
+            let bounds = (a.ranges ?? []).flatMap { [$0.introduced, $0.fixed, $0.lastAffected].compactMap { $0 } }
+            return (a.fixedHint + bounds).contains { ComponentReader.majorOf($0) == major }
+        }
     }
 
     public func findings(products: [String: ProductResponse], projects: [String: ProjectResponse]) -> [Finding] {
         var out: [Finding] = []
-        func likely(_ d: Decision) -> String? { d.target.map { "Likely affected: the issuer names \($0) as fixed." } }
+        func likely(_ d: AdvisoryCheck) -> String? { d.note }
 
         // An app's own version, against its product record.
         for m in apps {

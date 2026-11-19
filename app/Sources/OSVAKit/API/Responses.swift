@@ -134,12 +134,18 @@ public struct ProjectResponse: Codable, Sendable {
         public var date: String
         public var severity: String
         public var title: String
-        /// The first fixed version the issuer names for each release branch.
+        /// The first fixed version the issuer names for each release branch. Decides only when `ranges` is nil.
         public var fixedHint: [String]
         public var kev: Bool
         public var cve: String?
+        /// Every affected range the issuer states ([]: no version is affected). Nil when the server has none for this
+        /// advisory: an older server, or a record it cannot read as ranges exactly (`rangesNote` says why).
+        public var ranges: [AffectedRange]?
+        public var rangesNote: String?
 
-        enum CodingKeys: String, CodingKey { case id, date, title, kev, cve, severity = "sev", fixedHint = "fixed_hint" }
+        enum CodingKeys: String, CodingKey {
+            case id, date, title, kev, cve, ranges, severity = "sev", fixedHint = "fixed_hint", rangesNote = "ranges_note"
+        }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
             id = try c.decode(String.self, forKey: .id)
@@ -149,6 +155,8 @@ public struct ProjectResponse: Codable, Sendable {
             fixedHint = (try? c.decodeIfPresent([String].self, forKey: .fixedHint)) ?? []
             kev = (try? c.decodeIfPresent(Bool.self, forKey: .kev)) ?? false
             cve = try? c.decodeIfPresent(String.self, forKey: .cve)
+            ranges = try? c.decodeIfPresent([AffectedRange].self, forKey: .ranges)     // malformed reads as none: fixed_hint decides
+            rangesNote = try? c.decodeIfPresent(String.self, forKey: .rangesNote)
         }
     }
 
