@@ -116,7 +116,8 @@ import OSVAKit
 
     @Test func eachSharedThingIsDefinedOnce() {
         let all = (Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor")).map(\.1).joined(separator: "\n")
-        for component in ["SeverityMark", "StatusChip", "GradeTile", "VerificationMark", "GroupContainer", "FindingRow", "CommandBlock"] {
+        for component in ["SeverityMark", "StatusChip", "GradeTile", "VerificationMark", "GroupContainer", "FindingRow", "CommandBlock",
+                          "FixButton", "FixConfirmation", "FixStatusLine"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }

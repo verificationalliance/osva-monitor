@@ -8,7 +8,8 @@ import SwiftUI
 /// appearance, writes `<view>-<appearance>.png` into <dir>, and quits.
 ///
 /// With --fixtures it shows the render fixtures instead of the last scan; --only <id>[,<id>…] keeps just those findings,
-/// opened (for a close-up of one fix plan). Either way it does not scan, send anything,
+/// opened (for a close-up of one fix plan); --fix-states offer|confirm|results shows the Fix buttons, the confirmations
+/// or the outcomes of runs on the fixtures (with --fixtures). Either way it does not scan, run, send anything,
 /// ask for notification permission, or write anything but the PNGs. It captures only its own windows, which macOS
 /// allows without Screen Recording permission.
 @MainActor
@@ -19,6 +20,8 @@ struct CaptureMode {
     let waitSeconds: Int
     /// Finding ids to keep, opened (`--only`); empty keeps them all with the malicious one opened.
     let only: [String]
+    /// `--fix-states offer|confirm|results`: which fixture fix states to show.
+    let fixStates: String?
 
     /// The popover's openSettings action, registered when the popover appears.
     static var openSettings: OpenSettingsAction?
@@ -37,6 +40,19 @@ struct CaptureMode {
         } else {
             only = []
         }
+        if let f = arguments.firstIndex(of: "--fix-states"), f + 1 < arguments.count { fixStates = arguments[f + 1] } else { fixStates = nil }
+    }
+
+    /// The fixture fix states (PreviewData), and the findings they open.
+    private var fixtureFixes: (fixes: [String: FixRowState], resolved: [Finding], open: Set<String>)? {
+        guard fixtures else { return nil }
+        let resolved = PreviewData.findings.filter { PreviewData.fixResolved.contains($0.id) }
+        switch fixStates {
+        case "offer": return (PreviewData.fixOffers, [], Set(PreviewData.fixOffers.keys))
+        case "confirm": return (PreviewData.fixConfirmations, [], Set(PreviewData.fixConfirmations.keys))
+        case "results": return (PreviewData.fixResults, resolved, [PreviewData.FixID.nginx, PreviewData.FixID.openmtp])
+        default: return nil
+        }
     }
 
     func run(model: AppModel) {
@@ -44,8 +60,18 @@ struct CaptureMode {
         if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; return c } }
         let clean = fixtures ? PreviewData.report(findings: []) : model.report.map { r in var c = r; c.findings = []; return c }
         let fixtureSettings = fixtures ? MonitorSettings(watchedFolders: PreviewData.settings().folders) : model.settings
-        model.showFixtures(full, settings: fixtureSettings)
-        model.initiallyExpanded = only.isEmpty ? ["pkg|npm|axios|1.14.1"] : Set(only)
+        if fixtureFixes != nil, fixStates == "results" {
+            // what a scan would show after the runs: the fixed findings are no longer in it
+            full = full.map { r in var c = r; c.findings = r.findings.filter { !PreviewData.fixResolved.contains($0.id) }; return c }
+        }
+        let fixes = fixtureFixes
+        /// The findings with their fix states, or the clean panel with none.
+        func show(_ report: ScanReport?, withFixes: Bool) {
+            model.showFixtures(report, settings: fixtureSettings)
+            model.showFixtureFixes(withFixes ? fixes?.fixes ?? [:] : [:], resolved: withFixes ? fixes?.resolved ?? [] : [])
+        }
+        show(full, withFixes: true)
+        model.initiallyExpanded = only.isEmpty ? (fixes?.open ?? ["pkg|npm|axios|1.14.1"]) : Set(only)
         Task { @MainActor in
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -57,12 +83,12 @@ struct CaptureMode {
                 let prefix = isReplica ? "replica-" : ""
                 for (name, appearance) in appearances {
                     NSApp.appearance = NSAppearance(named: appearance)
-                    model.showFixtures(full, settings: fixtureSettings)
+                    show(full, withFixes: true)
                     try await settle()
                     if isReplica { try await Self.fitReplica() } else { panel = try await reopenIfClosed(panel) }
                     try capture(panel, "\(prefix)popover-\(name)")
                     if let bar = statusBarWindow(), bar.windowNumber > 0 { try? capture(bar, "menubar-\(name)") }
-                    model.showFixtures(clean, settings: fixtureSettings)
+                    show(clean, withFixes: false)
                     try await settle()
                     if isReplica { try await Self.fitReplica() } else { panel = try await reopenIfClosed(panel) }
                     try capture(panel, "\(prefix)popover-clean-\(name)")
@@ -71,7 +97,7 @@ struct CaptureMode {
 
                 for (name, appearance) in appearances {
                     NSApp.appearance = NSAppearance(named: appearance)
-                    model.showFixtures(full, settings: fixtureSettings)
+                    show(full, withFixes: true)
                     NSApp.activate(ignoringOtherApps: true)
                     Self.openSettings?()
                     try await settle(seconds: 1.5)

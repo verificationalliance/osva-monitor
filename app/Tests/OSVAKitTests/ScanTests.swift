@@ -295,3 +295,26 @@ import Testing
         #expect(storage.loadSettings() == settings)
     }
 }
+
+@Suite struct FlawNameTests {
+    @Test func eachUnresolvedFlawIsNamedBySummaryElseByItsID() throws {
+        // The API lists at most 40 flaws per package: CVE-2 is in the plan's remaining list but not in `flaws`.
+        let json = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20","malicious":false,"distinct_flaws":3,"worst_severity":"HIGH","advisories":[],"flaws":[{"id":"CVE-1","severity":"HIGH","summary":"  Windows path escape\nvia a crafted name  ","fixed_in":["9.0.0"],"platform":"windows"},{"id":"CVE-3","severity":"HIGH","fixed_in":["4.17.21"]}],"plan":{"target":"4.17.21","fixes":["CVE-3"],"remaining":[{"id":"CVE-1","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"},{"id":"CVE-2","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"}]}}]}"#
+        let response = try JSONDecoder().decode(BatchResponse.self, from: Data(json.utf8))
+        let selection = PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20",
+                                                                                       origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"))])
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.map { ($0, response.packages[0]) })
+        let f = try #require(FindingBuilder(index: Fixture.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:],
+                                                                           bigIssues: []).first)
+        #expect(f.unresolved.map(\.name) == ["Windows path escape via a crafted name", "CVE-2"])
+        #expect(f.unresolved.map(\.explanation) == ["Windows only, does not affect this Mac", "Windows only, does not affect this Mac"])
+        #expect(FindingBuilder.shortSummary(String(repeating: "word ", count: 40))?.hasSuffix("…") == true)
+    }
+
+    @Test func reportsSavedBeforeStillLoad() throws {
+        // no `summary` and no `commandInputs`: both are optional
+        let old = #"{"id":"GHSA-1","fixedIn":"2.0","reason":"noFix","onThisMac":true}"#
+        let u = try JSONDecoder().decode(UnresolvedFlaw.self, from: Data(old.utf8))
+        #expect(u.summary == nil && u.name == "GHSA-1")
+    }
+}

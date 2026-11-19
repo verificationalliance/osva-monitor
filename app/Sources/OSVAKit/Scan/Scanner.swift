@@ -148,6 +148,97 @@ public actor Scanner {
                           indexGeneratedAt: index.generatedAt, problems: problems, coverage: coverage)
     }
 
+    // MARK: One finding again, after a fix
+
+    /// What a re-check found.
+    public enum Recheck: Equatable, Sendable {
+        /// Installed now at this version (as the row writes it: "1.30.7", "Electron 42.11.16"), and nothing found.
+        case fixed(now: String)
+        /// Not installed any more.
+        case removed
+        /// Still found: the finding as it is now.
+        case stillAffected(Finding)
+        case couldNotCheck(String)
+    }
+
+    /// Checks one finding again, after a fix ran: reads its sources again, asks the API about exactly that package at
+    /// the version now installed (a fresh answer, not the cache's), and rebuilds its findings. Returns the report with
+    /// them in place of the old finding, and what became of it.
+    public func recheck(_ finding: Finding, in report: ScanReport) async -> (report: ScanReport, outcome: Recheck) {
+        _ = await api.takeSentRequests()
+        let own = Set(finding.origins.map(\.kind))
+        var kinds = own
+        if kinds.contains(.electron) { kinds.insert(.homebrew) }          // the apps' cask tokens come from Homebrew
+        let fresh = await takeInventory(kinds)
+        var updated = report
+        updated.inventory = report.inventory.replacing(kinds, with: fresh)
+        let sourceError = fresh.reports.first { own.contains($0.kind) && $0.error != nil }.map { "\($0.kind.title): \($0.error!)" }
+
+        let index: PublicIndex
+        do { index = try await indexStore.load(maxAge: Freshness.index).index }
+        catch { return (report, .couldNotCheck("could not read the public index (\(error.localizedDescription))")) }
+        let builder = FindingBuilder(index: index)
+        let bigIssues = cache.readJSON(StateResponse.self, "state", "state", maxAge: Freshness.state)?.bigIssues ?? []
+
+        let rebuilt: [Finding]
+        let now: String
+        switch finding.subject {
+        case let .project(slug, _, installedAs):
+            guard let item = updated.inventory.homebrew.first(where: { $0.name == installedAs && finding.origins.contains($0.origin) }) else {
+                return sourceError.map { (report, .couldNotCheck($0)) } ?? (Self.replacing(finding, with: [], in: updated), .removed)
+            }
+            guard let project = index.project(slug: slug), let approved = PrivacyFilter(index: index).approve(projects: [slug]).first else {
+                return (report, .couldNotCheck("\(slug) is not in the public index"))
+            }
+            var response = cache.readJSON(ProjectResponse.self, "project", slug, maxAge: Freshness.project)
+            if response == nil {
+                do { response = try await api.project(approved); cache.writeJSON(response!, "project", slug) }
+                catch { return (report, .couldNotCheck(error.localizedDescription)) }
+            }
+            rebuilt = builder.findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)], projects: [slug: response!],
+                                       bigIssues: bigIssues)
+            now = item.version
+        case let .package(ecosystem, name):
+            let installs = updated.inventory.packages.filter { p in
+                p.ecosystem == ecosystem && PackageNames.indexName(p.name, in: ecosystem) == name
+                    && finding.origins.contains { $0.samePlace(as: p.origin) }
+            }
+            guard !installs.isEmpty else {
+                return sourceError.map { (report, .couldNotCheck($0)) } ?? (Self.replacing(finding, with: [], in: updated), .removed)
+            }
+            let selection = PrivacyFilter(index: index).approve(installs)
+            guard !selection.approved.isEmpty else { return (report, .couldNotCheck("the version installed now cannot be checked")) }
+            var verdicts: [ApprovedPackage: BatchResponse.Result] = [:]
+            for chunk in Self.batches(selection.approved.keys.sorted { $0.cacheKey < $1.cacheKey }) {
+                do {
+                    let results = try await api.checkBatch(chunk)
+                    let byKey = Dictionary(results.map { ("\($0.ecosystem)\u{1F}\($0.name)\u{1F}\($0.version)", $0) }, uniquingKeysWith: { a, _ in a })
+                    for p in chunk {
+                        if let r = byKey[p.versionKey] { verdicts[p] = r }
+                        cache.writeJSON(CachedVerdict(result: byKey[p.versionKey]), "batch", p.cacheKey)
+                    }
+                } catch {
+                    return (report, .couldNotCheck(error.localizedDescription))
+                }
+            }
+            rebuilt = builder.findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: bigIssues)
+                .filter { f in f.origins.contains { o in finding.origins.contains { $0.samePlace(as: o) } } }
+            let versions = Array(Set(installs.map(\.version)))
+            now = (finding.component.map { "\($0) " } ?? "") + (Core.shared.newestVersion(versions) ?? versions[0])
+        }
+        updated = Self.replacing(finding, with: rebuilt, in: updated)
+        updated.sent.requests += await api.takeSentRequests()
+        return (updated, rebuilt.first.map(Recheck.stillAffected) ?? .fixed(now: now))
+    }
+
+    /// The report with `old` replaced by `new` (and no finding listed twice), still in the list's order.
+    static func replacing(_ old: Finding, with new: [Finding], in report: ScanReport) -> ScanReport {
+        var r = report
+        let ids = Set(new.map(\.id)).union([old.id])
+        r.findings = (r.findings.filter { !ids.contains($0.id) } + new).sorted(by: FindingBuilder.precedes)
+        return r
+    }
+
     /// Batches of at most 200 in which each package and version appears once (the same version installed in two
     /// Pythons is two questions, asked in different batches).
     static func batches(_ packages: [ApprovedPackage]) -> [[ApprovedPackage]] {

@@ -6,7 +6,10 @@ import OSVAKit
 public struct PopoverContent: Sendable {
     public struct Section: Identifiable, Sendable {
         public var group: Finding.Group
+        /// Its rows: the findings, and those fixed since the last full scan, each where it was.
         public var findings: [Finding]
+        /// How many still stand (the heading's number): fixed rows are shown, not counted.
+        public var count: Int
         public var id: Int { group.rawValue }
     }
 
@@ -68,14 +71,18 @@ public struct PopoverContent: Sendable {
     public var progress: String
     public var hasReport: Bool
 
-    public init(report: ScanReport?, isScanning: Bool, progress: String = "", now: Date = Date()) {
+    /// `resolved` are findings fixed since the last full scan: no longer in the report, still shown in their place
+    /// (their rows say "Fixed — now …") until the next full scan.
+    public init(report: ScanReport?, isScanning: Bool, progress: String = "", now: Date = Date(), resolved: [Finding] = []) {
         self.isScanning = isScanning
         self.progress = progress
         hasReport = report != nil
         let findings = report?.findings ?? []
+        let standing = Set(findings.map(\.id))
+        let shown = findings + resolved.filter { !standing.contains($0.id) }
         sections = Finding.Group.allCases.compactMap { g in
-            let items = findings.filter { $0.group == g }
-            return items.isEmpty ? nil : Section(group: g, findings: items)
+            let items = shown.filter { $0.group == g }.sorted(by: FindingBuilder.precedes)
+            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) }.count)
         }
         actionCount = report?.actionCount ?? 0
         problem = report?.problems.first
@@ -116,7 +123,6 @@ public struct PopoverContent: Sendable {
             case .malicious:
                 sentence = n == 1 ? "needs action" : "need action"
                 advice = "Remove the malicious \(malicious == 1 ? "package" : "packages") first."
-            case .high: sentence = n == 1 ? "high-severity flaw to fix" : "high-severity flaws to fix"
             default: sentence = n == 1 ? "needs action" : "need action"
             }
             subline = when
@@ -155,16 +161,5 @@ public struct PopoverContent: Sendable {
         case .malicious: return .malicious(actionCount)
         case .critical, .high: return .action(actionCount)
         }
-    }
-}
-
-extension Finding {
-    /// The installed version, and the fixed one when known ("Electron 18.3.15", "42.11.16").
-    public var installedLabel: String { (component.map { "\($0) " } ?? "") + installedVersion }
-
-    /// "1.13.8 → 1.19.5", "Electron 24.2.0 → 42.11.16", "1.14.1", in one string (notifications, accessibility).
-    public var versionLine: String {
-        if malicious { return installedLabel }
-        return fixedVersion.map { "\(installedLabel) → \($0)" } ?? installedLabel
     }
 }

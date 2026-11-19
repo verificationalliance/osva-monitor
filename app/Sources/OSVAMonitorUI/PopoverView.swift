@@ -8,10 +8,11 @@ public struct PopoverActions {
     public var quit: () -> Void
     public var open: (URL) -> Void
     public var copy: (String) -> Void
+    public var fix: FixActions
 
     public init(scanNow: @escaping () -> Void, openSettings: @escaping () -> Void, quit: @escaping () -> Void,
-                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void) {
-        self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy
+                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none) {
+        self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy; self.fix = fix
     }
 
     public static var none: PopoverActions { PopoverActions(scanNow: {}, openSettings: {}, quit: {}, open: { _ in }, copy: { _ in }) }
@@ -26,15 +27,17 @@ public struct PopoverView: View {
 
     public var content: PopoverContent
     public var actions: PopoverActions
+    /// Each finding's fix: its button, its confirmation, how its last run went.
+    public var fixes: [String: FixRowState]
     public var maxListHeight: CGFloat
     /// False draws the list without a scroll view (for ImageRenderer, which does not draw scroll views' content).
     public var scrolls: Bool
     @State private var expanded: Set<String>
     @State private var listHeight: CGFloat = 0
 
-    public init(content: PopoverContent, actions: PopoverActions, expanded: Set<String> = [],
+    public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], expanded: Set<String> = [],
                 maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true) {
-        self.content = content; self.actions = actions; self.maxListHeight = maxListHeight; self.scrolls = scrolls
+        self.content = content; self.actions = actions; self.fixes = fixes; self.maxListHeight = maxListHeight; self.scrolls = scrolls
         _expanded = State(initialValue: expanded)
     }
 
@@ -62,15 +65,16 @@ public struct PopoverView: View {
         .frame(width: Self.width)
         .animation(.smooth(duration: 0.3), value: expanded)
         .animation(.smooth(duration: 0.3), value: content.isScanning)
+        .animation(.smooth(duration: 0.25), value: fixes)
     }
 
     private var groups: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(content.sections) { section in
-                GroupContainer(section.group, count: section.findings.count) {
+                GroupContainer(section.group, count: section.count) {
                     ForEach(Array(section.findings.enumerated()), id: \.element.id) { i, f in
                         if i > 0 { Divider().padding(.leading, 12) }
-                        FindingRow(finding: f, expanded: expanded.contains(f.id), actions: actions) {
+                        FindingRow(finding: f, expanded: expanded.contains(f.id), actions: actions, fix: fixes[f.id] ?? FixRowState()) {
                             if expanded.contains(f.id) { expanded.remove(f.id) } else { expanded.insert(f.id) }
                         }
                     }
