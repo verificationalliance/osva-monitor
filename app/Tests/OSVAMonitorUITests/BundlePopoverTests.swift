@@ -44,7 +44,10 @@ import OSVAKit
 
     @Test func whatLeavesYourMacCountsProducts() {
         #expect(SentSummary.counts(PreviewData.bundleSent) == .init(batch: 3, projects: 2, products: 4))
-        #expect(SentSummary.groups(PreviewData.bundleSent).map(\.title) == ["POST /api/v1/check/batch · 3", "GET /api/v1/project · 2", "GET /api/v1/product · 4"])
+        let lists = SentSummary.lists(PreviewData.bundleSent)
+        #expect(lists.map(\.kind) == [.checked, .projects, .products, .cached, .withheld])
+        #expect(lists[2].title == "Apps and bundled libraries checked" && lists[2].sections.flatMap(\.items) == ["openssl", "sparkle", "vlc", "zoom"])
+        #expect(!SentSummary.lists(PreviewData.sent).contains { $0.kind == .products })       // only once a scan asked about any
     }
 
     @Test func notificationsNameAnExtension() {

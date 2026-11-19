@@ -53,11 +53,19 @@ public struct UnresolvedFlaw: Hashable, Codable, Sendable {
     public var python: String?
     /// Whether the package runs on this Mac (installed software), rather than being a project's dependency.
     public var onThisMac: Bool
+    /// The advisory's one-line summary ("ChromaDB has a code injection vulnerability"), so that two flaws with the same
+    /// reason ("Windows only") are not read as one listed twice. Nil when the answer has none (the API sends at most
+    /// 40 flaws per package); the row then names the flaw by its id.
+    public var summary: String?
 
-    public init(id: String, severity: Severity?, fixedIn: String?, reason: Reason, detail: String?, python: String? = nil, onThisMac: Bool = true) {
+    public init(id: String, severity: Severity?, fixedIn: String?, reason: Reason, detail: String?, python: String? = nil, onThisMac: Bool = true,
+                summary: String? = nil) {
         self.id = id; self.severity = severity; self.fixedIn = fixedIn; self.reason = reason; self.detail = detail
-        self.python = python; self.onThisMac = onThisMac
+        self.python = python; self.onThisMac = onThisMac; self.summary = summary
     }
+
+    /// The flaw's name for its line: the summary, else the id.
+    public var name: String { summary ?? id }
 
     /// "Fixed in 83.0.0, which needs Python ≥3.10; this Python is 3.9.6", "Windows only, does not affect this Mac",
     /// "No fixed release yet".
@@ -140,20 +148,24 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var origins: [Origin]
     public var pageURL: URL
     public var upgradeCommand: String?
+    /// What `upgradeCommand` was made from. The Fix button makes the command again from these and runs it only if it
+    /// is exactly `upgradeCommand` (nil in reports saved before the button existed: they get no button until rescanned).
+    public var commandInputs: UpgradeCommand.Inputs?
     public var verification: Verification
     public var grade: String?
 
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String, fixedVersion: String?,
                 severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
                 note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
-                verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = []) {
+                verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
+                commandInputs: UpgradeCommand.Inputs? = nil) {
         self.id = id; self.group = group; self.subject = subject; self.title = title; self.component = component
         self.installedVersion = installedVersion
         self.fixedVersion = fixedVersion; self.severity = severity; self.advisoryIDs = advisoryIDs; self.flawCount = flawCount
         self.exploited = exploited; self.malicious = malicious; self.note = note; self.bigIssue = bigIssue
         self.origins = origins; self.pageURL = pageURL; self.upgradeCommand = upgradeCommand
         self.verification = verification; self.grade = grade
-        self.fixesCount = fixesCount; self.unresolved = unresolved
+        self.fixesCount = fixesCount; self.unresolved = unresolved; self.commandInputs = commandInputs
     }
 
     public var ecosystem: Ecosystem? {
@@ -171,6 +183,15 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         for o in origins where seen.insert(o.location).inserted { labels.append(o.location) }
         let shown = labels.prefix(3).joined(separator: ", ")
         return labels.count > 3 ? "\(shown) and \(labels.count - 3) more" : shown
+    }
+
+    /// The installed version, with the component it belongs to ("Electron 18.3.15", "42.11.16").
+    public var installedLabel: String { (component.map { "\($0) " } ?? "") + installedVersion }
+
+    /// "1.13.8 → 1.19.5", "Electron 24.2.0 → 42.11.16", "1.14.1", in one string (notifications, accessibility).
+    public var versionLine: String {
+        if malicious { return installedLabel }
+        return fixedVersion.map { "\(installedLabel) → \($0)" } ?? installedLabel
     }
 
     /// Notifications are sent for these when they first appear.

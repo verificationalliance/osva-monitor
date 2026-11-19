@@ -7,8 +7,8 @@ import SwiftUI
 // The panel is one sheet of system Liquid Glass (the MenuBarExtra window); everything inside it is content. Surfaces,
 // text and controls are the system's: `.primary`/`.secondary`/`.tertiary` text, `.quinary`/`.quaternary` fills, and
 // untinted controls that follow the person's accent colour. The site's colours (site/formalinformer/app.css) appear
-// only on status elements: severity marks, the exploited chip, the malicious section, grade tiles, verification marks
-// and the hero shield. Blue is for proof only, clay red for danger only.
+// only on status elements: severity marks, the exploited chip, the malicious section, grade tiles, verification marks,
+// the hero shield and a fixed row's check. Blue is for proof only, clay red for danger only.
 //
 // Each status colour has a value per role (fill, ring, glyph, text) and per appearance (light, dark, and their
 // Increase Contrast variants), from "OSVA Monitor colour palette" (reports/). Glyph values clear 3:1 and text values
@@ -127,7 +127,7 @@ public enum Tokens {
         public static let glyph = Tone(0xA12828, dark: 0xE7524E, lightIC: 0x990015, darkIC: 0xFFA8A0)
     }
 
-    /// Nothing needs action: the site's grade-A green, on the hero shield only.
+    /// Nothing needs action: the site's grade-A green, on the hero shield and on the check of a row its fix resolved.
     public static let clean = Tone(0x1D5E3C, dark: 0x8CCDA5, lightIC: 0x195A39, darkIC: 0xA6E7BE)
 
     /// Verification blue (--v4, --v1). Dark mode swaps disc and check so the filled mark stays the loudest.

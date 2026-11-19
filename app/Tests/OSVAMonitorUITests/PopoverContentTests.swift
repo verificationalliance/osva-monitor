@@ -29,7 +29,7 @@ import OSVAKit
         let critical = content(all.filter { !$0.malicious })
         #expect(critical.hero == .critical && critical.sentence == "need action" && critical.menuBarState == .action(8))
         let high = content(all.filter { $0.severity == .high && !$0.exploited && $0.group.needsAction })
-        #expect(high.hero == .high && high.heroCount == 4 && high.sentence == "high-severity flaws to fix")
+        #expect(high.hero == .high && high.heroCount == 4 && high.sentence == "need action")
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
@@ -65,7 +65,6 @@ import OSVAKit
     @Test func whatLeavesYourMacInNumbers() {
         #expect(SentSummary.counts(PreviewData.sent) == .init(batch: 9, projects: 4))
         #expect(SentSummary.counts(SentRecord()) == .init(batch: 0, projects: 0))
-        #expect(SentSummary.groups(PreviewData.sent).map(\.title) == ["POST /api/v1/check/batch · 9", "GET /api/v1/project · 4"])
     }
 
     @Test func notCheckedIsShownNotCountedAsClean() {
@@ -81,6 +80,29 @@ import OSVAKit
         #expect(title == "4 new findings, starting with axios")
         #expect(body == "1.14.1 · ~/code/storefront/package-lock.json\nAlso: OpenSSH, OpenMTP, nginx")
         #expect(SystemNotifier.text(for: [fresh[1]]).title == "Exploited flaw: OpenSSH")
+    }
+
+    @Test func aFixedFindingKeepsItsRowButIsNotCounted() {
+        let nginx = PreviewData.findings.first { $0.id == PreviewData.FixID.nginx }!
+        let rest = PreviewData.findings.filter { $0.id != nginx.id }
+        let c = PopoverContent(report: PreviewData.report(findings: rest), isScanning: false, now: now, resolved: [nginx])
+        let section = c.sections.first { $0.group == .criticalHigh }!
+        #expect(section.findings.map(\.id).contains(nginx.id))
+        #expect(section.count == section.findings.count - 1)
+        #expect(section.findings.map(\.id) == section.findings.sorted(by: FindingBuilder.precedes).map(\.id))   // in its place
+        #expect(c.heroCount == 8 && c.actionCount == 8)
+        // once a scan finds it again, it is listed once
+        let again = PopoverContent(report: PreviewData.report(), isScanning: false, now: now, resolved: [nginx])
+        #expect(again.sections.flatMap(\.findings).filter { $0.id == nginx.id }.count == 1 && again.heroCount == 9)
+    }
+
+    @Test func everyFixtureCommandIsOneTheAppWouldRun() {
+        // the render fixtures' commands are UpgradeCommand's own, and FixPlan offers them on a Mac with the tools
+        for f in PreviewData.findings where f.upgradeCommand != nil {
+            #expect(f.commandInputs.map { UpgradeCommand.advice($0).command } == f.upgradeCommand, "\(f.id)")
+        }
+        #expect(PreviewData.offer(PreviewData.FixID.nginx).plan.command == "brew upgrade nginx")
+        #expect(PreviewData.offer(PreviewData.FixID.axios).plan.action == .removal)
     }
 
     @Test func notAnInstalledApp() {

@@ -243,12 +243,12 @@ public struct BundleCheck: Sendable {
     /// Each product's record: from the cache when it is fresh, else from the API. A product the server has no record
     /// of (404) is remembered as such and is "not checked", not a problem.
     static func records(_ approved: [ApprovedProduct], api: APIClient, cache: DiskCache, maxAge: TimeInterval,
-                        progress: @Sendable (String) -> Void) async -> (records: [String: ProductResponse], fromCache: Int, problems: [String]) {
-        var records: [String: ProductResponse] = [:], fromCache = 0, problems: [String] = []
+                        progress: @Sendable (String) -> Void) async -> (records: [String: ProductResponse], fromCache: [String], problems: [String]) {
+        var records: [String: ProductResponse] = [:], fromCache: [String] = [], problems: [String] = []
         for p in approved {
             if let cached = cache.readJSON(CachedProduct.self, "product", p.key, maxAge: maxAge) {
                 if let r = cached.record { records[p.key] = r }
-                fromCache += 1
+                fromCache.append(p.sentDescription)
                 continue
             }
             progress("Reading \(p.key)'s advisories…")
@@ -285,8 +285,7 @@ extension BundleAdvice {
 /// its worst one is (Zoom's own flaws, then the Sparkle it bundles), so each thing to update reads as one.
 public enum FindingOrder {
     public static func sorted(_ findings: [Finding]) -> [Finding] {
-        func rank(_ f: Finding) -> Int { -(f.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1) }
-        let base = findings.sorted { ($0.group, rank($0), $0.title.lowercased(), $0.id) < ($1.group, rank($1), $1.title.lowercased(), $1.id) }
+        let base = findings.sorted(by: FindingBuilder.precedes)
         var out: [Finding] = []
         for group in Finding.Group.allCases {
             var clusters: [String: [Finding]] = [:], order: [String] = []

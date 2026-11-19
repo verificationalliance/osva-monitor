@@ -13,6 +13,7 @@
 //   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
 //   osva-scan      One scan from the command line, with the same code the app runs.
 //   osva-render    Renders the popover and the settings window off-screen to PNG, from fixture data.
+//   OSVARelease    The update feed (appcast) and its signatures, for ../scripts/release.sh; osva-appcast runs it.
 import Foundation
 import PackageDescription
 
@@ -52,7 +53,14 @@ let verifiedCore: Target = .target(
     ])]
 )
 
-// ── The rest ───────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Updates ────────────────────────────────────────────────────────────────────────────────────────────────────
+//
+// Sparkle 2 updates the app (Sources/OSVAMonitor/Updater.swift). It is pinned to one exact release, not a range: it
+// installs code on people's Macs, so a new version is taken on purpose, after reading its changes, never by a resolve.
+// 2.10.1 (25 October 2026) is the latest stable release; 2.11 is still a beta. The app relies on two older features,
+// signed feeds (2.9) and checking the zip before unpacking it (2.7.3); see Resources/Info.plist. SwiftPM checks the
+// binary against the checksum in Sparkle's own manifest at that tag, and Package.resolved pins the tag's commit. Only
+// the app links Sparkle; OSVAKit, the views and their tests do not. ../scripts/build-app.sh embeds and signs it.
 
 let package = Package(
     name: "OSVAMonitor",
@@ -61,16 +69,23 @@ let package = Package(
         .executable(name: "OSVAMonitor", targets: ["OSVAMonitor"]),
         .executable(name: "osva-scan", targets: ["osva-scan"]),
         .executable(name: "osva-render", targets: ["osva-render"]),
+        .executable(name: "osva-appcast", targets: ["osva-appcast"]),
         .library(name: "OSVAKit", targets: ["OSVAKit"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
     ],
     targets: [
         verifiedCore,
         .target(name: "OSVAKit", dependencies: ["OSVACore"]),
         .target(name: "OSVAMonitorUI", dependencies: ["OSVAKit"]),
-        .executableTarget(name: "OSVAMonitor", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
+        .executableTarget(name: "OSVAMonitor", dependencies: ["OSVAKit", "OSVAMonitorUI", .product(name: "Sparkle", package: "Sparkle")]),
         .executableTarget(name: "osva-scan", dependencies: ["OSVAKit"]),
         .executableTarget(name: "osva-render", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
+        .target(name: "OSVARelease"),
+        .executableTarget(name: "osva-appcast", dependencies: ["OSVARelease"]),
         .testTarget(name: "OSVAKitTests", dependencies: ["OSVAKit", "OSVACore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "OSVAMonitorUITests", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
+        .testTarget(name: "OSVAReleaseTests", dependencies: ["OSVARelease"], resources: [.copy("Fixtures")]),
     ]
 )

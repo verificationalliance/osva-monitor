@@ -12,6 +12,24 @@ public enum UpgradeCommand {
         public init(command: String?, note: String? = nil) { self.command = command; self.note = note }
     }
 
+    /// What a command is made from: where the package lives, its name as this Mac spells it, the version to go to,
+    /// and whether it is to be removed. A finding keeps these, so the Fix button can make the command again from them
+    /// and run only a command that is exactly the one shown.
+    public struct Inputs: Hashable, Codable, Sendable {
+        public var origin: Origin
+        public var name: String
+        public var ecosystem: Ecosystem?
+        public var target: String?
+        public var malicious: Bool
+        public init(origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool) {
+            self.origin = origin; self.name = name; self.ecosystem = ecosystem; self.target = target; self.malicious = malicious
+        }
+    }
+
+    public static func advice(_ i: Inputs, home: String = NSHomeDirectory()) -> Advice {
+        advice(for: i.origin, name: i.name, ecosystem: i.ecosystem, target: i.target, malicious: i.malicious, home: home)
+    }
+
     public static func command(for origin: Origin, name: String, ecosystem: Ecosystem?, fixed: String?, malicious: Bool,
                                home: String = NSHomeDirectory()) -> String? {
         advice(for: origin, name: name, ecosystem: ecosystem, target: fixed, malicious: malicious, home: home).command
