@@ -150,6 +150,24 @@ public struct FixPlan: Hashable, Sendable {
                 }
             }
 
+        case let .program(p):
+            // A Homebrew formula's program: brew brings the formula's newest build, and the check after the run says
+            // whether that was built with the fixed modules. A program rebuilt with go install or cargo install, or
+            // updated where it came from, is there to read and copy.
+            guard p.place == .homebrew, let f = p.formula else { return .failure(.noCommand) }
+            guard FixSafety.isSafeName(f) else { return .failure(.unsafeName) }
+            guard let b = brew() else { return .failure(.toolNotFound("Homebrew")) }
+            plan.use(tool: b, name: "brew", pathFirst: true)
+            plan.place = homebrewPlace(b) + ", the \(f) formula, which brings \(p.name)"
+            if action == .upgrade { plan.homebrew = Homebrew(brew: b, name: f, cask: false, versionIsTheFix: false, label: f) }
+
+        case .conda:
+            return .failure(.sharedEnvironment("Not run for you: other packages in the conda environment may depend on this one. Update it there, then check that what uses it still works."))
+
+        case .pythonTool, .macports, .nix:
+            // pipx and uv tools, MacPorts (with sudo) and Nix: there to read and copy; the app does not run these yet.
+            return .failure(.noCommand)
+
         case .application, .addOn:
             // An app updates itself or through its cask, an extension through its editor or browser: the command is
             // there to read and copy; the app does not run it for you yet.

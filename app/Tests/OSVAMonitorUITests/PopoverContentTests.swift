@@ -18,7 +18,7 @@ import OSVAKit
         #expect(c.heroCount == 9)
         #expect(c.sentence == "need action" && c.advice == "Remove the malicious package first.")
         #expect(c.headline == "9 need action")
-        #expect(c.subline == "Scanned 4 minutes ago · Homebrew, 15 Electron apps, npm, pip, RubyGems, 2 folders")
+        #expect(c.subline == "Scanned\u{00A0}4\u{00A0}minutes\u{00A0}ago · Homebrew, 15\u{00A0}Electron\u{00A0}apps, npm, pip, RubyGems, 2\u{00A0}folders")
         #expect(c.tallies.map { "\($0.count) \($0.tally.word($0.count))" } == ["1 Malicious", "2 Exploited", "2 Critical", "4 High"])
         #expect(c.menuBarState == .malicious(9))
     }
@@ -33,13 +33,31 @@ import OSVAKit
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
-        #expect(clean.subline.hasPrefix("4 lower-severity findings · 8 not checked · Scanned"))   // never "clean" without saying so
+        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings · 8\u{00A0}not\u{00A0}checked · Scanned"))   // never "clean" without saying so
         #expect(clean.menuBarState == .clean && clean.hero.symbol == "checkmark.shield.fill")
         let none = PopoverContent(report: nil, isScanning: false, now: now)
         #expect(none.hero == .notScanned && none.sentence == "Not scanned yet" && none.menuBarState == .notScanned)
         #expect(none.hero.symbol == "shield")                         // hollow: never mistaken for the clean shield
         let first = PopoverContent(report: nil, isScanning: true, progress: "Looking at what is installed…", now: now)
         #expect(first.hero == .firstScan && first.subline == "Looking at what is installed…")
+    }
+
+    @Test func everySourceIsNamedOnceAndKeepsItsWordsTogether() {
+        let summary = PopoverContent.sourcesSummary(PreviewData.programReports)
+        #expect(summary == ["Homebrew", "MacPorts", "Nix", "15 Electron apps", "Go and Rust programs", "npm", "pip", "pipx and uv tools", "conda",
+                            "RubyGems", "2 folders"].map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: ", "))
+        let goOnly = PreviewData.programReports.filter { $0.kind != .rust && $0.kind != .uv }
+        #expect(PopoverContent.sourcesSummary(goOnly).contains("Go\u{00A0}programs, npm, pip, pipx, conda"))
+        // with apps and extensions read, the apps count stands for the Electron apps too
+        let withApps = PreviewData.programReports + [SourceReport(kind: .apps, available: true, count: 140, detail: "140 apps"),
+                                                     SourceReport(kind: .extensions, available: true, count: 23, detail: "23 extensions")]
+        #expect(PopoverContent.sourcesSummary(withApps.sorted { $0.kind < $1.kind }) == ["Homebrew", "MacPorts", "Nix", "140 apps", "23 extensions",
+                "Go and Rust programs", "npm", "pip", "pipx and uv tools", "conda", "RubyGems", "2 folders"]
+                .map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: ", "))
+        // a source that found nothing, or is not installed, is not named
+        let none = [SourceReport(kind: .nix, available: true, count: 0, detail: "0 packages in 1 profile"),
+                    SourceReport(kind: .macports, available: false, count: 0, detail: "MacPorts not found")]
+        #expect(PopoverContent.sourcesSummary(none) == "")
     }
 
     @Test func whileScanningTheLastFindingsStay() {

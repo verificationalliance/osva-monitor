@@ -50,9 +50,10 @@ if json {
 
 print("OSVA Monitor scan, \(report.finishedAt.formatted(date: .abbreviated, time: .standard)) (index of \(report.indexGeneratedAt ?? "?"))")
 print("")
-print("Looked at:")
+print("Looked at:   (seconds per source; they run side by side, the scan took \(String(format: "%.2f", report.finishedAt.timeIntervalSince(report.startedAt))) s)")
 for r in report.inventory.reports {
-    print("  \(r.kind.title.padding(toLength: 14, withPad: " ", startingAt: 0)) \(r.detail)\(r.error.map { "  [\($0)]" } ?? "")")
+    let time = r.seconds.map { String(format: "%6.2f s  ", $0) } ?? String(repeating: " ", count: 10)
+    print("  \(r.kind.title.padding(toLength: 14, withPad: " ", startingAt: 0)) \(time)\(r.detail)\(r.error.map { "  [\($0)]" } ?? "")")
 }
 print("")
 if report.findings.isEmpty {
