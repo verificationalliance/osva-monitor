@@ -70,7 +70,9 @@ if [ "$testing" = 1 ]; then
 else
   [ -z "$(info NSAppTransportSecurity)" ] || die "this is a test build (it allows local networking)"
   ! grep -q -a OSVA_UPDATE_FEED "$app/Contents/MacOS/OSVAMonitor" || die "this is a test build (it has the feed override)"
-  codesign -dvv "$app" 2>&1 | grep -q "^Authority=Developer ID Application:" || die "the app is not signed with a Developer ID"
+  # grep reads all of codesign's output (no -q): with pipefail, -q stops at the first match and codesign's SIGPIPE
+  # (exit 141) would fail a correctly signed app
+  codesign -dvv "$app" 2>&1 | grep "^Authority=Developer ID Application:" >/dev/null || die "the app is not signed with a Developer ID"
   xcrun stapler validate "$app" >/dev/null || die "the app has no notarization ticket stapled"
 fi
 echo "   OSVA Monitor $version (bundle version $build), macOS $minimum or later, trusts update key $app_key"

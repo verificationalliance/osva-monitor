@@ -153,4 +153,6 @@ if [ "${1:-}" = --gui ]; then
 GUI
   read -r _
 fi
-! printf '%s\n' "${results[@]}" | grep -q '^FAIL'
+# no -q: with pipefail, grep -q stopping at the first FAIL lets printf die of SIGPIPE, and the negation would read
+# that non-zero status as "no failures"
+! printf '%s\n' "${results[@]}" | grep '^FAIL' >/dev/null
