@@ -68,9 +68,14 @@ public actor Scanner {
         let brew = inventory.homebrew.compactMap { item in
             ProjectMatcher.project(for: item, in: index).map { FindingBuilder.BrewMatch(item: item, project: $0) }
         }
-        let approvedProjects = filter.approve(projects: brew.map(\.project.slug))
+        // MacPorts, Nix and conda packages that the index's R lines name as a graded project's software.
+        let managed = inventory.managed.compactMap { p in
+            index.project(manager: p.manager.rawValue, package: p.name).map { FindingBuilder.ManagedMatch(package: p, project: $0) }
+        }
+        let approvedProjects = filter.approve(projects: brew.map(\.project.slug) + managed.map(\.project.slug))
         let allowed = Set(approvedProjects.map(\.slug))
         let brewChecked = brew.filter { allowed.contains($0.project.slug) }
+        let managedChecked = managed.filter { allowed.contains($0.project.slug) }
         var fromCache = 0
 
         // 4. Exact versions, 200 at a time.
@@ -136,12 +141,22 @@ public actor Scanner {
 
         // 7. Findings, and what could not be vouched for.
         let findings = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
-                                                             brew: brewChecked, projects: projects, bigIssues: bigIssues)
+                                                             brew: brewChecked, projects: projects, bigIssues: bigIssues, managed: managedChecked)
+        // A formula whose programs were read for what they were built with has been checked, graded project or not.
         let checkedBrew = Set(brewChecked.map(\.item))
-        let coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
-                                     otherApps: inventory.otherApps)
+        let formulaeWithPrograms = Set(inventory.packages.compactMap { p -> String? in
+            if case let .program(program) = p.origin { return program.formula }
+            return nil
+        })
+        let unmatchedBrew = inventory.homebrew.filter { !checkedBrew.contains($0) && !($0.kind == .formula && formulaeWithPrograms.contains($0.name)) }
+        let checkedManaged = Set(managedChecked.map(\.package))
+        let listedUnderHomebrew = Set(unmatchedBrew.map(\.name))
+        let coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: unmatchedBrew, otherApps: inventory.otherApps,
+                                     unmatchedManaged: inventory.managed.filter { !checkedManaged.contains($0) },
+                                     unchecked: inventory.unchecked.filter { $0.formula.map { !listedUnderHomebrew.contains($0) } ?? true })
         let sent = SentRecord(requests: await api.takeSentRequests(),
-                              withheldCount: selection.withheld.count + (inventory.homebrew.count - brewChecked.count),
+                              withheldCount: selection.withheld.count + (inventory.homebrew.count - brewChecked.count)
+                                  + (inventory.managed.count - managedChecked.count),
                               answeredFromCache: fromCache)
         progress("")
         return ScanReport(startedAt: started, finishedAt: Date(), inventory: inventory, findings: findings, sent: sent,
@@ -163,7 +178,8 @@ public actor Scanner {
     }
 
     /// Not in the index (nothing ever reported: no known problem, not proof of safety) versus not checked at all.
-    static func coverage(withheld: [InstalledPackage], unmatchedBrew: [HomebrewItem], otherApps: [String]) -> Coverage {
+    static func coverage(withheld: [InstalledPackage], unmatchedBrew: [HomebrewItem], otherApps: [String],
+                         unmatchedManaged: [ManagedPackage] = [], unchecked: [UncheckedItem] = []) -> Coverage {
         func describe(_ p: InstalledPackage) -> String { "\(p.name) \(p.version)" }
         func checkable(_ p: InstalledPackage) -> Bool { Ecosystem.checkable.contains(p.ecosystem) && PackageNames.isPlausibleVersion(p.version) }
         let bySource = Dictionary(grouping: withheld.filter(checkable)) { $0.origin.kind }
@@ -181,34 +197,61 @@ public actor Scanner {
         if !uncheckable.isEmpty {
             notChecked.append(.init(source: "Packages the site cannot check", items: Array(Set(uncheckable.map(describe))).sorted()))
         }
+        notChecked += Self.programCoverage(unmatchedManaged: unmatchedManaged, unchecked: unchecked)
         return Coverage(notInIndex: notInIndex, notChecked: notChecked)
     }
 
-    /// Inventory of the given sources, run side by side.
+    /// Inventory of the given sources, run side by side. Each report says how long its source took.
     func takeInventory(_ kinds: Set<SourceKind>) async -> Inventory {
         var inventory = Inventory()
         let tools = configuration.tools
+        typealias Collected = (packages: [InstalledPackage], report: SourceReport)
+        @Sendable func timed(_ body: () async -> Collected) async -> Collected {
+            let t = await Stopwatch.time(body)
+            var r = t.value
+            r.report.seconds = r.report.seconds ?? t.seconds
+            return r
+        }
         // Homebrew first: its casks say which apps it installed, for the apps' upgrade commands.
         var caskForApp: [String: String] = [:]
         if kinds.contains(.homebrew) {
-            let r = await HomebrewSource(environment: tools).collect()
+            let t = await Stopwatch.time { await HomebrewSource(environment: tools).collect() }
+            var r = t.value
+            r.report.seconds = t.seconds
             inventory.homebrew = r.items; caskForApp = r.caskForApp; inventory.reports.append(r.report)
         }
         let globals = GlobalPackageSources(environment: tools)
         let roots = configuration.applicationRoots, folders = configuration.folders, casks = caskForApp
-        async let npm = kinds.contains(.npm) ? await globals.npm() : nil
-        async let pip = kinds.contains(.pip) ? await PythonSource(environment: tools).collect() : nil
-        async let gem = kinds.contains(.gem) ? await globals.gem() : nil
-        async let apps = kinds.contains(.electron) ? ElectronSource(roots: roots, caskForApp: casks).collect() : nil
-        async let lockfiles = kinds.contains(.folders) ? FolderSource(roots: folders).collect() : nil
-        let cargo = kinds.contains(.cargo) ? globals.cargo() : nil
+        async let npm = kinds.contains(.npm) ? await timed { await globals.npm() } : nil
+        async let pip = kinds.contains(.pip) ? await timed { await PythonSource(environment: tools).collect() } : nil
+        async let gem = kinds.contains(.gem) ? await timed { await globals.gem() } : nil
+        async let apps = kinds.contains(.electron) ? await Stopwatch.time { ElectronSource(roots: roots, caskForApp: casks).collect() } : nil
+        async let lockfiles = kinds.contains(.folders) ? await timed { FolderSource(roots: folders).collect() } : nil
+        // Go and Rust programs (one pass finds both), pipx and uv tools, conda, MacPorts and Nix time themselves.
+        async let programs = kinds.contains(.go) || kinds.contains(.rust) ? ProgramSource(environment: tools, caskForApp: casks).collect() : nil
+        async let pythonTools = kinds.contains(.pipx) || kinds.contains(.uv) ? PythonToolSource(environment: tools).collect() : nil
+        async let conda = kinds.contains(.conda) ? CondaSource(environment: tools).collect() : nil
+        async let ports = kinds.contains(.macports) ? await MacPortsSource(environment: tools).collect() : nil
+        async let nix = kinds.contains(.nix) ? NixSource(environment: tools).collect() : nil
+        let cargo = kinds.contains(.cargo) ? await timed { globals.cargo() } : nil
         let electron = await apps
-        inventory.otherApps = electron?.otherApps ?? []
-        let appPackages = electron.map { (packages: $0.packages, report: $0.report) }
+        inventory.otherApps = electron?.value.otherApps ?? []
+        var appPackages = electron.map { (packages: $0.value.packages, report: $0.value.report) }
+        appPackages?.report.seconds = electron?.seconds
         for r in [appPackages, await npm, await pip, cargo, await gem, await lockfiles].compactMap({ $0 }) {
             inventory.packages += r.packages
             inventory.reports.append(r.report)
         }
+        if let p = await programs {
+            inventory.packages += p.packages; inventory.unchecked += p.unchecked; inventory.reports += p.reports
+        }
+        if let t = await pythonTools { inventory.packages += t.packages; inventory.reports += t.reports }
+        if let c = await conda {
+            inventory.packages += c.packages; inventory.managed += c.managed; inventory.unchecked += c.unchecked
+            inventory.reports.append(c.report)
+        }
+        if let m = await ports { inventory.managed += m.managed; inventory.reports.append(m.report) }
+        if let n = await nix { inventory.managed += n.managed; inventory.unchecked += n.unchecked; inventory.reports.append(n.report) }
         inventory.reports.sort { $0.kind < $1.kind }
         return inventory
     }

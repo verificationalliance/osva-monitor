@@ -50,6 +50,16 @@ public enum UpgradeCommand {
                              malicious: malicious, direct: direct)
             if let c = a.command { a.command = "cd \(folderArgument(folder.isEmpty ? root : folder, home: home)) && \(c)" }
             return a
+        case let .program(p):
+            return program(p, rebuildOnly: true, malicious: malicious)
+        case let .pythonTool(t):
+            return pythonTool(t, upgrades: [(name, target)], malicious: malicious)
+        case let .conda(env):
+            return conda(env, name: name, target: target, malicious: malicious)
+        case let .macports(port):
+            return macports(port)
+        case let .nix(profile, element):
+            return nix(profile, element: element)
         }
     }
 

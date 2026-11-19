@@ -15,14 +15,20 @@ public struct FindingBuilder: Sendable {
         public init(item: HomebrewItem, project: PublicIndex.Project) { self.item = item; self.project = project }
     }
 
-    public func findings(approved: [ApprovedPackage: [InstalledPackage]],
+    public func findings(approved all: [ApprovedPackage: [InstalledPackage]],
                          verdicts: [ApprovedPackage: BatchResponse.Result],
                          brew: [BrewMatch],
                          projects: [String: ProjectResponse],
-                         bigIssues: [StateResponse.BigIssue]) -> [Finding] {
+                         bigIssues: [StateResponse.BigIssue],
+                         managed: [ManagedMatch] = []) -> [Finding] {
+        // Packages inside Go and Rust programs and pipx and uv tools are reported per program (ProgramFindings.swift).
+        let (approved, programs) = Self.separatingPrograms(all)
         var out = packageFindings(approved: approved, verdicts: verdicts)
         out += projectFindings(brew: brew, projects: projects)
+        out += managedFindings(managed, projects: projects)
         applyBigIssues(bigIssues, to: &out, approved: approved, brew: brew, projects: projects)
+        applyBigIssues(bigIssues, toManaged: managed, findings: &out, projects: projects)
+        programFindings(programs, verdicts: verdicts, into: &out)
         return out.sorted {
             ($0.group, -($0.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), $0.title.lowercased(), $0.id)
                 < ($1.group, -($1.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), $1.title.lowercased(), $1.id)

@@ -60,6 +60,16 @@ public enum Origin: Hashable, Codable, Sendable {
     /// A lockfile inside a folder the person asked us to watch. `direct` is whether the project's manifest names the
     /// package itself (nil when there is no manifest to tell).
     case folder(root: String, lockfile: String, direct: Bool?)
+    /// A module or crate a Go or Rust program was built with (or its toolchain's standard library).
+    case program(BuiltProgram)
+    /// A package in a pipx or uv tool's environment.
+    case pythonTool(PythonTool)
+    /// A package in a conda environment.
+    case conda(env: CondaEnvironment)
+    /// A MacPorts port.
+    case macports(port: String)
+    /// A package in a Nix profile; `element` is what its upgrade command names.
+    case nix(profile: NixProfile, element: String)
 
     /// A short human description: "Homebrew", "Slack", "global npm", "~/code/site/package-lock.json".
     public var label: String {
@@ -76,6 +86,13 @@ public enum Origin: Hashable, Codable, Sendable {
         case let .folder(_, lockfile, direct):
             let path = Paths.abbreviatingHome(lockfile)
             switch direct { case true?: return path; case false?: return "\(path) · indirect"; case nil: return path }
+        case let .program(p): return p.originLabel
+        case let .pythonTool(t): return (t.manager == .pipx ? "pipx" : "uv tool") + (t.python.map { " · Python \($0)" } ?? "")
+        case let .conda(env):
+            let place = env.named ? "conda env \(env.name)" : "conda env \(Paths.abbreviatingHome(env.prefix))"
+            return place + (env.python.map { " · Python \($0)" } ?? "")
+        case let .macports(port): return "MacPorts \(port)"
+        case let .nix(profile, element): return "Nix \(element) · \(Paths.abbreviatingHome(profile.path))"
         }
     }
 
@@ -92,6 +109,8 @@ public enum Origin: Hashable, Codable, Sendable {
     /// The Python version a pip package is installed with.
     public var pythonVersion: String? {
         if case let .pip(python, _, _) = self { return python.version }
+        if case let .pythonTool(tool) = self { return tool.python }
+        if case let .conda(env) = self { return env.python }
         return nil
     }
 
@@ -104,13 +123,18 @@ public enum Origin: Hashable, Codable, Sendable {
         case .cargoInstall: return .cargo
         case .gem: return .gem
         case .folder: return .folders
+        case let .program(p): return p.language == .go ? .go : .rust
+        case let .pythonTool(t): return t.manager == .pipx ? .pipx : .uv
+        case .conda: return .conda
+        case .macports: return .macports
+        case .nix: return .nix
         }
     }
 }
 
 /// The places OSVA Monitor looks.
 public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
-    case homebrew, electron, npm, pip, cargo, gem, folders
+    case homebrew, macports, nix, electron, go, rust, npm, pip, pipx, uv, conda, cargo, gem, folders
 
     public var title: String {
         switch self {
@@ -121,6 +145,13 @@ public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
         case .cargo: return "cargo"
         case .gem: return "RubyGems"
         case .folders: return "Folders"
+        case .macports: return "MacPorts"
+        case .nix: return "Nix"
+        case .go: return "Go programs"
+        case .rust: return "Rust programs"
+        case .pipx: return "pipx"
+        case .uv: return "uv tools"
+        case .conda: return "conda"
         }
     }
 
@@ -168,9 +199,12 @@ public struct SourceReport: Hashable, Codable, Sendable {
     /// "338 formulae, 69 casks", "npm not found", "2 folders, 7 lockfiles".
     public var detail: String
     public var error: String?
+    /// How long the source took, in seconds (nil in reports saved before it was measured).
+    public var seconds: Double?
 
-    public init(kind: SourceKind, available: Bool, count: Int, detail: String, error: String? = nil) {
+    public init(kind: SourceKind, available: Bool, count: Int, detail: String, error: String? = nil, seconds: Double? = nil) {
         self.kind = kind; self.available = available; self.count = count; self.detail = detail; self.error = error
+        self.seconds = seconds
     }
 }
 
@@ -181,6 +215,10 @@ public struct Inventory: Codable, Sendable, Hashable {
     /// Apps in /Applications and ~/Applications that do not bundle Electron: not checked.
     public var otherApps: [String] = []
     public var reports: [SourceReport] = []
+    /// MacPorts ports, Nix packages and conda's non-PyPI packages: matched to graded projects through the index.
+    public var managed: [ManagedPackage] = []
+    /// What the sources found and could not check at all.
+    public var unchecked: [UncheckedItem] = []
 
     public init(packages: [InstalledPackage] = [], homebrew: [HomebrewItem] = [], otherApps: [String] = [], reports: [SourceReport] = []) {
         self.packages = packages; self.homebrew = homebrew; self.otherApps = otherApps; self.reports = reports
@@ -192,6 +230,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         homebrew = try c.decode([HomebrewItem].self, forKey: .homebrew)
         otherApps = try c.decodeIfPresent([String].self, forKey: .otherApps) ?? []
         reports = try c.decode([SourceReport].self, forKey: .reports)
+        managed = try c.decodeIfPresent([ManagedPackage].self, forKey: .managed) ?? []          // reports saved before these
+        unchecked = try c.decodeIfPresent([UncheckedItem].self, forKey: .unchecked) ?? []
     }
 
     /// This inventory with the given sources replaced by `other`'s.
@@ -200,6 +240,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         out.packages = packages.filter { !kinds.contains($0.origin.kind) } + other.packages.filter { kinds.contains($0.origin.kind) }
         out.homebrew = kinds.contains(.homebrew) ? other.homebrew : homebrew
         out.otherApps = kinds.contains(.electron) ? other.otherApps : otherApps
+        out.managed = managed.filter { !kinds.contains($0.origin.kind) } + other.managed.filter { kinds.contains($0.origin.kind) }
+        out.unchecked = unchecked.filter { !kinds.contains($0.kind) } + other.unchecked.filter { kinds.contains($0.kind) }
         out.reports = (reports.filter { !kinds.contains($0.kind) } + other.reports.filter { kinds.contains($0.kind) }).sorted { $0.kind < $1.kind }
         return out
     }
