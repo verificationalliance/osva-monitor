@@ -196,12 +196,27 @@ func tool(_ body: String, in dir: URL = temporaryDirectory(), name: String = "to
 }
 
 func run(_ invocation: FixInvocation, environment: [String: String] = ["PATH": "/usr/bin:/bin"], limits: FixLimits = FixLimits(),
-         stopAfter: TimeInterval? = nil, updates: UpdateRecorder = UpdateRecorder()) async -> (FixEnding, FixLog) {
+         stopAfter: TimeInterval? = nil, stopWhenExists ready: URL? = nil,
+         updates: UpdateRecorder = UpdateRecorder()) async -> (FixEnding, FixLog) {
     let p = FixProcessLauncher().launch(invocation, environment: environment, limits: limits) { updates.add($0) }
     if let stopAfter {
         Task { try? await Task.sleep(for: .seconds(stopAfter)); p.stop() }
     }
+    if let ready {
+        // Stop once the tool says it is ready, not after a fixed time: a slow machine may not have got that far yet.
+        Task { _ = await eventually(seconds: 20) { FileManager.default.fileExists(atPath: ready.path) }; p.stop() }
+    }
     return await p.ending()
+}
+
+/// Polls `condition` every 20 ms until it holds or `seconds` pass; whether it held.
+func eventually(seconds: Double, _ condition: () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return condition()
 }
 
 final class UpdateRecorder: @unchecked Sendable {
@@ -284,18 +299,21 @@ final class UpdateRecorder: @unchecked Sendable {
         let dir = temporaryDirectory()
         let pids = dir.appendingPathComponent("pids")
         let marker = dir.appendingPathComponent("child-got-term")
-        // a child that cleans up on SIGTERM: Stop asks the whole group to end, so it gets the chance before any SIGKILL
-        let cleaner = tool("trap 'echo term > \"\(marker.path)\"; exit 0' TERM; while :; do sleep 0.1; done", in: dir, name: "child")
+        let ready = dir.appendingPathComponent("child-ready")
+        // a child that cleans up on SIGTERM: Stop asks the whole group to end, so it gets the chance before any SIGKILL.
+        // It says it is ready only once its trap is set, and Stop waits for that, so a slow machine cannot race it.
+        let cleaner = tool("trap 'echo term > \"\(marker.path)\"; exit 0' TERM; : > \"\(ready.path)\"; while :; do sleep 0.1; done",
+                           in: dir, name: "child")
         let t = tool("sleep 300 & echo $! > '\(pids.path)'; '\(cleaner.path)' & echo started; sleep 300", in: dir)
-        let start = Date()
-        let (ending, log) = await run(FixInvocation(executable: t.path, arguments: []), stopAfter: 0.5)
+        let (ending, log) = await run(FixInvocation(executable: t.path, arguments: []), stopWhenExists: ready)
+        let stopped = Date()
         #expect(ending == .stopped && log.lines.first == "started")            // sh may also say what it killed
-        #expect(Date().timeIntervalSince(start) < 4)
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(FileManager.default.fileExists(atPath: marker.path))
+        #expect(await eventually(seconds: 5) { FileManager.default.fileExists(atPath: marker.path) })
         let child = Int32(try String(contentsOf: pids, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(kill(child, 0) != 0)                                               // the background child is gone too
+        #expect(await eventually(seconds: 5) { kill(child, 0) != 0 })            // the background child is gone too
+        // and none of it waited for the 5 s SIGKILL: every process here ends on SIGTERM
+        let readyAt = try FileManager.default.attributesOfItem(atPath: ready.path)[.modificationDate] as! Date
+        #expect(stopped.timeIntervalSince(readyAt) < 4)
     }
 
     @Test func aCommandThatIgnoresSIGTERMIsKilledAfterTheGracePeriod() async {
