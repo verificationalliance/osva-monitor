@@ -1,7 +1,11 @@
 // osva-render: draws the popover and the settings window off-screen to PNG, from fixture data (or a real report), in
-// light and dark appearance, so the UI can be checked without opening a window on anyone's screen.
+// light and dark appearance (the panel also over a mid-grey backdrop), so the UI can be checked without opening a
+// window on anyone's screen.
 //
-//   osva-render [--out DIR] [--report last-scan.json] [--scale 2]
+//   osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only PREFIX,…] [--apps]
+//
+// --apps also draws the app lists from this Mac's own /Applications and ~/Applications (read here, sent nowhere), for
+// a look at real names and icons; keep those PNGs out of the repository.
 //
 // What can be drawn off-screen, as of macOS 26:
 //   - ImageRenderer draws SwiftUI's own content, but not scroll-view content or AppKit controls (buttons, toggles,
@@ -18,10 +22,11 @@ import SwiftUI
 enum Method { case imageRenderer, hostingView, window }
 
 @MainActor
-func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale: CGFloat, width: CGFloat? = nil) throws -> NSBitmapImageRep {
+func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale: CGFloat, width: CGFloat? = nil,
+                      backdrop: NSColor? = nil) throws -> NSBitmapImageRep {
     let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     let root = view
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: backdrop ?? .windowBackgroundColor))
         .environment(\.colorScheme, dark ? .dark : .light)
     var result: Result<NSBitmapImageRep, Error> = .failure(CocoaError(.fileWriteUnknown))
     appearance.performAsCurrentDrawingAppearance {
@@ -109,19 +114,33 @@ struct ComponentSheet: View {
 
 @MainActor
 func main() throws {
-    var out = URL(fileURLWithPath: "shots", isDirectory: true), reportPath: String?, scale: CGFloat = 2
+    var out = URL(fileURLWithPath: "shots", isDirectory: true), reportPath: String?, scale: CGFloat = 2, prefixes: [String] = [], thisMacsApps = false
     var args = CommandLine.arguments.dropFirst()
     while let a = args.popFirst() {
         switch a {
         case "--out": out = URL(fileURLWithPath: args.popFirst() ?? "shots", isDirectory: true)
         case "--report": reportPath = args.popFirst()
         case "--scale": scale = CGFloat(Double(args.popFirst() ?? "2") ?? 2)
+        case "--apps": thisMacsApps = true
+        case "--only": prefixes = (args.popFirst() ?? "").split(separator: ",").map(String.init)
         default:
-            FileHandle.standardError.write(Data("usage: osva-render [--out DIR] [--report last-scan.json] [--scale 2]\n".utf8))
+            FileHandle.standardError.write(Data("usage: osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only PREFIX,…] [--apps]\n".utf8))
             exit(2)
         }
     }
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    // App icons: this tool runs where macOS's icon service may not answer (an SSH session gets only placeholders), so
+    // it reads each app's own .icns, at most 8 MB, from the bundle on this Mac. The app itself asks NSWorkspace.
+    AppIcons.source = { path in
+        let resources = URL(fileURLWithPath: path).appendingPathComponent("Contents/Resources")
+        let info = NSDictionary(contentsOfFile: path + "/Contents/Info.plist")
+        if var file = info?["CFBundleIconFile"] as? String, !file.contains("/") {
+            if !file.hasSuffix(".icns") { file += ".icns" }
+            let url = resources.appendingPathComponent(file)
+            if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= 8 << 20, let image = NSImage(contentsOf: url) { return image }
+        }
+        return NSWorkspace.shared.icon(for: .applicationBundle)
+    }
     // ImageRenderer draws some symbol renderings blank until AppKit has drawn once in this process.
     _ = NSApplication.shared
     _ = try capture(Text("warm-up"), appearance: NSAppearance(named: .aqua)!, method: .hostingView, scale: 1)
@@ -140,9 +159,17 @@ func main() throws {
     }
     let open: Set<String> = ["pkg|npm|axios|1.14.1", "brew|nginx|1.30.2"]
     func popover(_ report: ScanReport?, scanning: Bool = false, progress: String = "", expanded: Set<String> = [],
-                 fixes: [String: FixRowState] = [:], resolved: [Finding] = []) -> some View {
+                 fixes: [String: FixRowState] = [:], resolved: [Finding] = [], coverageOpen: Set<String> = []) -> some View {
         PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now, resolved: resolved), actions: .none,
-                    fixes: fixes, expanded: expanded, scrolls: false)
+                    fixes: fixes, expanded: expanded, scrolls: false, coverageOpen: coverageOpen)
+    }
+    /// The windows the panel opens for long lists: every app no check covers, narrowed by a search, and the App Store's.
+    func coverageLists() -> [(String, AnyView, Method)] {
+        let c = PreviewData.appCoverage, scanned = PreviewData.coverageReport().finishedAt
+        let noRecord = CoverageLists.list(c.notChecked[1], in: .notChecked), appStore = CoverageLists.list(c.updatedElsewhere[0], in: .updatedElsewhere)
+        return [("list-no-record", AnyView(NameListView(list: noRecord, scanned: scanned)), .window),
+                ("list-no-record-search", AnyView(NameListView(list: noRecord, scanned: scanned, query: "micro")), .window),
+                ("list-app-store", AnyView(NameListView(list: appStore, scanned: scanned)), .window)]
     }
     // The fix button, its confirmation, and how runs ended, each on the findings it applies to.
     typealias F = PreviewData.FixID
@@ -170,7 +197,14 @@ func main() throws {
         ("fix-offer", AnyView(popover(only(offerIDs), expanded: Set(offerIDs), fixes: PreviewData.fixOffers)), .imageRenderer),
         ("fix-confirm", AnyView(popover(only(confirmIDs), expanded: Set(confirmIDs), fixes: PreviewData.fixConfirmations)), .imageRenderer),
         ("fix-results", AnyView(popover(afterRuns, expanded: [F.nginx, F.openmtp], fixes: PreviewData.fixResults, resolved: resolved)), .imageRenderer),
-    ] + sheets(full, prefix: "sent")
+        // apps, the libraries they bundle, and extensions
+        ("popover-bundles", AnyView(popover(PreviewData.bundlesReport(), expanded: PreviewData.bundlesOpen)), .imageRenderer),
+        ("popover-bundles-closed", AnyView(popover(PreviewData.bundlesReport())), .imageRenderer),
+        ("settings-bundles", AnyView(SettingsView(state: PreviewData.settings(report: PreviewData.bundlesReport()), actions: .none)), .hostingView),
+        // what could not be vouched for: one name per line, long lists in a window of their own
+        ("popover-coverage", AnyView(popover(PreviewData.coverageReport(), coverageOpen: ["Bundled libraries with no readable version", "updatedElsewhere",
+                                                                                  AppCoverage.webApps("Edge")])), .imageRenderer),
+    ] + sheets(full, prefix: "sent") + sheets(PreviewData.bundlesReport(), prefix: "sent-bundles") + coverageLists()
     // Where each copy is and why: rows open, then one with its details open; on the window background and on a mid-grey
     // like the glass of the owner's panel over their desktop (sampled from their screenshot: rgb 122).
     let explained = PreviewData.report(findings: PreviewData.provenanceFindings, coverage: Coverage())
@@ -200,13 +234,30 @@ func main() throws {
                                                                           actions: .none, expanded: Set(opened.findings.map(\.id)), scrolls: false)
                                                                  .background(midGrey)), .imageRenderer))
     }
+    if thisMacsApps {
+        let roots = ElectronSource.defaultRoots(home: FileManager.default.homeDirectoryForCurrentUser)
+        let split = AppCoverage.buckets(ElectronSource(roots: roots).collect().otherApps, apps: AppSource(roots: roots).collect().apps)
+        var coverage = PreviewData.appCoverage
+        coverage.notChecked = coverage.notChecked.flatMap { $0.source == AppCoverage.noRecord ? [split.notChecked].compactMap { $0 } : [$0] }
+        coverage.updatedElsewhere = split.updatedElsewhere
+        let mac = PreviewData.report(findings: PreviewData.findings.filter { $0.group == .other }, coverage: coverage)
+        views.append(("popover-coverage-mac", AnyView(popover(mac, coverageOpen: ["updatedElsewhere"])), .imageRenderer))
+        for (name, bucket, part) in [("no-record", split.notChecked, CoverageLists.Part.notChecked)] + split.updatedElsewhere.map({ ("kept-" + $0.source.prefix(24).lowercased().replacingOccurrences(of: " ", with: "-"), Optional($0), CoverageLists.Part.updatedElsewhere) }) {
+            if let bucket { views.append(("list-mac-\(name)", AnyView(NameListView(list: CoverageLists.list(bucket, in: part), scanned: mac.finishedAt)), .window)) }
+        }
+    }
     // Increase Contrast cannot be drawn here: AppKit returns plain Aqua for the high-contrast appearance names unless
     // the setting is on, so those variants are checked by ToneTests and on the real panel.
-    for (mode, name) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+    // The panel's views also over a mid-grey backdrop, in both appearances: glass over a grey desktop, where contrast
+    // is hardest. Windows are opaque, so they are drawn on their own background only.
+    let grey = NSColor(white: 0.5, alpha: 1)
+    for (mode, name, backdrop) in [("light", NSAppearance.Name.aqua, nil), ("dark", .darkAqua, nil), ("grey-light", .aqua, grey), ("grey-dark", .darkAqua, grey)] {
         let appearance = NSAppearance(named: name)!
-        for (view, content, method) in views {
-            try write(capture(content, appearance: appearance, method: method, scale: scale,
-                              width: view.hasPrefix("popover") || view.hasPrefix("fix-") ? PopoverView.width : nil), "\(view)-\(mode)", into: out)
+        for (view, content, method) in views where prefixes.isEmpty || prefixes.contains(where: view.hasPrefix) {
+            let panel = view.hasPrefix("popover") || view.hasPrefix("fix-")
+            guard backdrop == nil || panel else { continue }
+            try write(capture(content, appearance: appearance, method: method, scale: scale, width: panel ? PopoverView.width : nil, backdrop: backdrop),
+                      "\(view)-\(mode)", into: out)
         }
     }
 }

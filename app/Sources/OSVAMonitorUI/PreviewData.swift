@@ -33,7 +33,7 @@ public enum PreviewData {
                      .init(source: "RubyGems", items: ["CFPropertyList 2.3.6", "did_you_mean 1.3.0", "minitest 5.11.3"]),
                      .init(source: "Folders", items: ["@next/env 14.0.0", "accepts 1.3.8", "express 4.18.2"])],
         notChecked: [.init(source: "Homebrew packages with no graded project", items: ["abseil 20260817.0", "ack 3.10.0", "aom 3.15.3", "slack 4.51.180"]),
-                     .init(source: "Apps that do not bundle Electron", items: ["Firefox", "Google Chrome", "iTerm", "Xcode"])])
+                     .init(source: "Apps with no security record", items: ["Firefox", "Google Chrome", "iTerm", "Xcode"])])
 
     public static let findings: [Finding] = {
         let home = NSHomeDirectory()
@@ -108,6 +108,15 @@ public enum PreviewData {
         return FixOffer(plan: plan, homebrew: homebrew)
     }
 
+    /// What FixPlan decides for a fixture finding: its plan, or the refusal the row shows (a pip or lockfile upgrade
+    /// is not run for you since 0.2.1).
+    static func availability(_ id: String) -> FixRowState.Availability {
+        switch FixPlan.make(for: finding(id), tools: fixtureTools) {
+        case let .success(plan): return .offered(FixOffer(plan: plan, homebrew: nil))
+        case let .failure(refusal): return .withheld(refusal.explanation)
+        }
+    }
+
     public enum FixID {
         public static let axios = "pkg|npm|axios|1.14.1", openssh = "brew|openssh|10.6p1", openmtp = "app|/Applications/OpenMTP.app|18.3.15"
         public static let nginx = "brew|nginx|1.30.2", nokogiri = "pkg|RubyGems|nokogiri|1.13.8", cpython = "brew|python@3.12|3.12.16"
@@ -131,10 +140,8 @@ public enum PreviewData {
                                                                  openssl@3 3.6.1 -> 3.6.2
                                                                  nginx 1.30.2 -> 1.30.7
                                                                  """)))),
-         FixID.setuptools: FixRowState(availability: .offered(offer(FixID.setuptools)),
-                                       preview: .ready(.none("This pip (21.2.4) has no dry run: pip 22.2 added it."))),
-         FixID.hacl: FixRowState(availability: .offered(offer(FixID.hacl)),
-                                 preview: .ready(.none("npm has no dry run the app uses: the Terminal window shows what changes.")))]
+         FixID.setuptools: FixRowState(availability: availability(FixID.setuptools)),
+         FixID.hacl: FixRowState(availability: availability(FixID.hacl))]
     }
 
     /// After runs: one under way, one being checked, two fixed (kept in place, not counted), one still affected, one failed.

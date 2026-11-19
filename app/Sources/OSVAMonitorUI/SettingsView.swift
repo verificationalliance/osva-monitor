@@ -97,7 +97,7 @@ public struct SettingsView: View {
                 Toggle(isOn: Binding(get: { state.notifications }, set: { actions.setNotifications($0) })) {
                     Label {
                         Text("Notifications")
-                        Text("Malicious packages, flaws exploited in the wild, and anything on the site's “patch these first” list.")
+                        Text("Malicious packages and extensions, flaws exploited in the wild, and anything on the site's “patch these first” list.")
                     } icon: { Image(systemName: "bell.badge").symbolRenderingMode(.hierarchical) }
                 }
                 .disabled(!state.notificationsAvailable)
@@ -115,7 +115,7 @@ public struct SettingsView: View {
             }
 
             Section {
-                Text("OSVA Monitor downloads the site's public index, every package that has ever had an advisory or a malicious report and every project the site grades, and decides on this Mac which installed packages are in it. Only those are named to verificationalliance.org, by name and exact version, with the projects matched from Homebrew; with a package installed on this Mac it says so (macOS), and with a Python package the version of its Python. No file paths, app names or list of what else is installed are sent.")
+                Text("OSVA Monitor downloads the site's public index (packages with an advisory or a malicious report, graded projects, apps, bundled libraries, malicious extensions) and decides on this Mac which installed things are in it. Only those are named to verificationalliance.org: packages by name and exact version (saying macOS, and a Python package's Python), projects and products by the index's own names. Extensions are checked on this Mac only. No file paths, bundle identifiers, extension IDs or list of what else is installed are sent.")
                     .font(Typeface.body).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let report = state.lastReport {
@@ -210,37 +210,44 @@ private extension Text {
 
 /// The words and numbers for "What leaves your Mac".
 public enum SentSummary {
-    public struct Counts: Equatable, Sendable { public var batch: Int; public var projects: Int }
+    public struct Counts: Equatable, Sendable { public var batch: Int; public var projects: Int; public var products: Int = 0 }
 
     public static func counts(_ sent: SentRecord) -> Counts {
         func count(_ endpoint: String) -> Int { sent.requests.filter { $0.endpoint == endpoint }.reduce(0) { $0 + $1.items.count } }
-        return Counts(batch: count("POST api/v1/check/batch"), projects: count("GET api/v1/project"))
+        return Counts(batch: count("POST api/v1/check/batch"), projects: count("GET api/v1/project"), products: count("GET api/v1/product"))
     }
 
-    /// The four numbers, each with the list behind it, in the order Settings shows them.
+    /// The numbers, each with the list behind it, in the order Settings shows them. Apps and bundled libraries have a
+    /// number of their own once a scan has asked about any.
     public static func lists(_ sent: SentRecord) -> [SentList] {
         func items(_ endpoint: String) -> [String] { sent.requests.filter { $0.endpoint == endpoint }.flatMap(\.items) }
         let checked = items("POST api/v1/check/batch")
         let projects = items("GET api/v1/project").map(projectSlug)
-        let cachedPackages = sent.cached.filter { !$0.hasPrefix("project ") }
+        let products = items("GET api/v1/product").map(productKey)
+        let cachedPackages = sent.cached.filter { !$0.hasPrefix("project ") && !$0.hasPrefix("product ") }
         let cachedProjects = sent.cached.filter { $0.hasPrefix("project ") }.map(projectSlug)
+        let cachedProducts = sent.cached.filter { $0.hasPrefix("product ") }.map(productKey)
         return [
             SentList(kind: .checked, count: checked.count, sections: [.init(title: nil, items: checked)]),
             SentList(kind: .projects, count: projects.count, sections: [.init(title: nil, items: projects)]),
+        ] + (products.isEmpty && cachedProducts.isEmpty ? [] : [SentList(kind: .products, count: products.count, sections: [.init(title: nil, items: products)])]) + [
             SentList(kind: .cached, count: sent.answeredFromCache,
-                     sections: [.init(title: "Package versions", items: cachedPackages), .init(title: "Projects", items: cachedProjects)]),
+                     sections: [.init(title: "Package versions", items: cachedPackages), .init(title: "Projects", items: cachedProjects),
+                                .init(title: "Apps and bundled libraries", items: cachedProducts)]),
             SentList(kind: .withheld, count: sent.withheldCount, sections: sent.withheld.map { .init(title: $0.source, items: $0.items) }),
         ]
     }
 
     /// "project openssl" (as recorded) is the slug "openssl".
     static func projectSlug(_ item: String) -> String { item.hasPrefix("project ") ? String(item.dropFirst("project ".count)) : item }
+    /// "product zoom" (as recorded) is the key "zoom".
+    static func productKey(_ item: String) -> String { item.hasPrefix("product ") ? String(item.dropFirst("product ".count)) : item }
 }
 
 /// One of the lists behind "What leaves your Mac": what one number counts, by name.
 public struct SentList: Identifiable, Sendable, Equatable {
     public enum Kind: String, CaseIterable, Identifiable, Sendable {
-        case checked, projects, cached, withheld
+        case checked, projects, products, cached, withheld
         public var id: String { rawValue }
     }
 
@@ -269,6 +276,7 @@ public struct SentList: Identifiable, Sendable, Equatable {
         switch kind {
         case .checked: return "Package versions checked"
         case .projects: return "Projects matched from Homebrew"
+        case .products: return "Apps and bundled libraries checked"
         case .cached: return "Answered from this Mac's cache"
         case .withheld: return "Not in the public index, never sent"
         }
@@ -279,6 +287,7 @@ public struct SentList: Identifiable, Sendable, Equatable {
         switch kind {
         case .checked: return count == 1 ? "package version sent" : "package versions sent"
         case .projects: return count == 1 ? "project asked about" : "projects asked about"
+        case .products: return count == 1 ? "app or library asked about" : "apps and libraries asked about"
         case .cached: return count == 1 ? "answer from the cache" : "answers from the cache"
         case .withheld: return count == 1 ? "name that stayed on this Mac" : "names that stayed on this Mac"
         }
@@ -291,6 +300,8 @@ public struct SentList: Identifiable, Sendable, Equatable {
             return "Sent to verificationalliance.org in the last scan, exactly as written here: ecosystem, name and version. A Python package also names its Python, and a package installed on this Mac says macOS."
         case .projects:
             return "Asked about by name in the last scan: the projects the site grades that your Homebrew formulae and casks belong to. Formula and cask names are not sent."
+        case .products:
+            return "Asked about by name in the last scan: the apps and bundled libraries the public index lists, by the index's own name for each. Bundle identifiers, app file names and paths are not sent."
         case .cached:
             return "Checked in an earlier scan and answered this time from this Mac's cache, so not sent again."
         case .withheld:

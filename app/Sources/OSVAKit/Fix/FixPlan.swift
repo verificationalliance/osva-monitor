@@ -150,6 +150,11 @@ public struct FixPlan: Hashable, Sendable {
                 }
             }
 
+        case .application, .addOn:
+            // An app updates itself or through its cask, an extension through its editor or browser: the command is
+            // there to read and copy; the app does not run it for you yet.
+            return .failure(.noCommand)
+
         case .cargoInstall:
             guard let cargo = tools.firstExecutable(["~/.cargo/bin/cargo", "/opt/homebrew/bin/cargo", "/usr/local/bin/cargo"]) else {
                 return .failure(.toolNotFound("cargo"))

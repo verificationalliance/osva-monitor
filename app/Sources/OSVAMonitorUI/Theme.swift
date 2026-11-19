@@ -175,5 +175,7 @@ public enum Typeface {
     public static let chip = Font.system(size: 11, weight: .medium)
     public static let version = Font.system(size: 12, weight: .medium, design: .monospaced)
     public static let code = Font.system(size: 11, design: .monospaced)
+    /// A name as sent, one per line in a list window ("PyPI setuptools 58.0.4 · Python 3.9.6").
+    public static let listCode = Font.system(size: 12, design: .monospaced)
     public static func count(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight, design: .rounded).monospacedDigit() }
 }

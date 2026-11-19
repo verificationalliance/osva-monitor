@@ -68,6 +68,8 @@ public enum UpgradeCommand {
                              malicious: malicious, direct: direct)
             if let c = a.command { a.command = "cd \(folderArgument(folder.isEmpty ? root : folder, home: home)) && \(c)" }
             return a
+        case .application, .addOn:
+            return BundleAdvice.advice(for: origin, component: name, malicious: malicious)
         }
     }
 

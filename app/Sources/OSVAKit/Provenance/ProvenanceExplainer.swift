@@ -44,6 +44,10 @@ public struct ProvenanceExplainer: Sendable {
                 for origin in f.origins {
                     if let p = context.homebrew(origin, version: f.installedVersion), p != Provenance() { copies.append(p) }
                 }
+            case .product, .addOn:
+                for origin in f.origins {
+                    if let p = context.bundled(origin), p != Provenance() { copies.append(p) }
+                }
             }
             out[i].provenance = copies.isEmpty ? nil : copies
         }
@@ -96,6 +100,24 @@ public struct ProvenanceExplainer: Sendable {
             case .cargoInstall: return cargo(p)
             case let .folder(_, lockfile, direct): return folder(p, lockfile: lockfile, direct: direct)
             case .homebrewFormula, .homebrewCask: return homebrew(p.origin, version: p.version)
+            case .application, .addOn: return bundled(p.origin)
+            }
+        }
+
+        /// An app checked by its product record, or an extension: where it is, and who installed it when that is known.
+        func bundled(_ origin: Origin) -> Provenance? {
+            switch origin {
+            case let .application(name, bundlePath, cask):
+                var out = Provenance(path: bundlePath)
+                if let cask, let prefix = explainer.homebrewPrefixes.first(where: { LocalFiles.isDirectory($0 + "/Caskroom/" + cask) }) {
+                    let installed = HomebrewReceipts.cask(cask, prefix: prefix)?.installed
+                    out.why = "Homebrew installed \(name)" + (installed.map { " on \(explainer.day($0))" } ?? "") + " (cask \(cask))"
+                }
+                return out
+            case let .addOn(host, _, _, profile, path):
+                return Provenance(path: path, why: "An extension in \(host.title)" + (profile.map { ", profile \($0)" } ?? ""))
+            default:
+                return nil
             }
         }
 

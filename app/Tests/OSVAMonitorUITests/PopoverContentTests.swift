@@ -70,7 +70,7 @@ import OSVAKit
     @Test func notCheckedIsShownNotCountedAsClean() {
         let c = PopoverContent(report: PreviewData.report(), isScanning: false, now: now)
         #expect(c.coverage.notCheckedCount == 8 && c.coverage.notInIndexCount == 10)
-        #expect(c.coverage.notChecked.map(\.source) == ["Homebrew packages with no graded project", "Apps that do not bundle Electron"])
+        #expect(c.coverage.notChecked.map(\.source) == ["Homebrew packages with no graded project", "Apps with no security record"])
     }
 
     @Test func oneNotificationForManyFindings() {
