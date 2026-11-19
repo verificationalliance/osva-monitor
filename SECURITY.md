@@ -6,7 +6,7 @@ leaving the Mac that the documentation says does not, a way for a file on disk o
 
 - **GitHub:** [Report a vulnerability](https://github.com/verificationalliance/osva-monitor/security/advisories/new)
   (private vulnerability reporting), or
-- **Email:** team@shalyto.com.
+- **Email:** contact@verificationalliance.org.
 
 Please include the macOS version, the app version (Finder › Get Info on OSVA Monitor.app), and steps to reproduce.
 We will credit you in the advisory unless you prefer otherwise.
