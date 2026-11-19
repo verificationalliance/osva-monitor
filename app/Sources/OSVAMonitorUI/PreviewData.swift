@@ -144,6 +144,11 @@ public enum PreviewData {
     public static func settings(report: ScanReport? = report()) -> SettingsState {
         let home = NSHomeDirectory()
         return SettingsState(folders: [home + "/code/storefront", home + "/code/tools"], intervalHours: 6, notifications: true,
-                             notificationsAvailable: true, launchAtLogin: true, launchAtLoginAvailable: true, lastReport: report)
+                             notificationsAvailable: true, launchAtLogin: true, launchAtLoginAvailable: true, lastReport: report,
+                             updates: updates)
     }
+
+    /// The installed app's updater, checked this morning.
+    public static let updates = UpdateState(isAvailable: true, canCheck: true, checksAutomatically: true, version: "0.1.1",
+                                            lastChecked: now.addingTimeInterval(-3 * 3600))
 }

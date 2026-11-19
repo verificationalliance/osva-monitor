@@ -10,12 +10,13 @@ public struct SettingsState: Sendable {
     public var launchAtLogin: Bool
     public var launchAtLoginAvailable: Bool
     public var lastReport: ScanReport?
+    public var updates: UpdateState
 
     public init(folders: [String], intervalHours: Int, notifications: Bool, notificationsAvailable: Bool,
-                launchAtLogin: Bool, launchAtLoginAvailable: Bool, lastReport: ScanReport?) {
+                launchAtLogin: Bool, launchAtLoginAvailable: Bool, lastReport: ScanReport?, updates: UpdateState = .none) {
         self.folders = folders; self.intervalHours = intervalHours; self.notifications = notifications
         self.notificationsAvailable = notificationsAvailable; self.launchAtLogin = launchAtLogin
-        self.launchAtLoginAvailable = launchAtLoginAvailable; self.lastReport = lastReport
+        self.launchAtLoginAvailable = launchAtLoginAvailable; self.lastReport = lastReport; self.updates = updates
     }
 }
 
@@ -25,11 +26,15 @@ public struct SettingsActions {
     public var setInterval: (Int) -> Void
     public var setNotifications: (Bool) -> Void
     public var setLaunchAtLogin: (Bool) -> Void
+    public var checkForUpdates: () -> Void
+    public var setChecksForUpdatesAutomatically: (Bool) -> Void
 
     public init(addFolder: @escaping () -> Void, removeFolder: @escaping (String) -> Void, setInterval: @escaping (Int) -> Void,
-                setNotifications: @escaping (Bool) -> Void, setLaunchAtLogin: @escaping (Bool) -> Void) {
+                setNotifications: @escaping (Bool) -> Void, setLaunchAtLogin: @escaping (Bool) -> Void,
+                checkForUpdates: @escaping () -> Void = {}, setChecksForUpdatesAutomatically: @escaping (Bool) -> Void = { _ in }) {
         self.addFolder = addFolder; self.removeFolder = removeFolder; self.setInterval = setInterval
         self.setNotifications = setNotifications; self.setLaunchAtLogin = setLaunchAtLogin
+        self.checkForUpdates = checkForUpdates; self.setChecksForUpdatesAutomatically = setChecksForUpdatesAutomatically
     }
 
     public static var none: SettingsActions {
@@ -37,8 +42,8 @@ public struct SettingsActions {
     }
 }
 
-/// The settings window, a native grouped form: watched folders, scanning, notifications, open at login, and exactly
-/// what left the Mac in the last scan (each number opens its list).
+/// The settings window, a native grouped form: watched folders, scanning, notifications, open at login, exactly
+/// what left the Mac in the last scan (each number opens its list), and updates.
 public struct SettingsView: View {
     public static let size = CGSize(width: 540, height: 720)
 
@@ -127,6 +132,10 @@ public struct SettingsView: View {
                     Text("Nothing has been sent yet.").settingsFooter()
                 }
             }
+
+            if state.updates.isAvailable {
+                updatesSection
+            }
         }
         .formStyle(.grouped)
         .frame(width: Self.size.width, height: height)
@@ -134,6 +143,31 @@ public struct SettingsView: View {
             if let report = state.lastReport, let list = SentSummary.lists(report.sent).first(where: { $0.kind == kind }) {
                 SentListView(list: list, scanned: report.finishedAt)
             }
+        }
+    }
+
+    /// The app's own updates: its version and a check now, and the daily check, on unless turned off.
+    private var updatesSection: some View {
+        Section {
+            LabeledContent {
+                Button("Check for Updates…", action: actions.checkForUpdates).disabled(!state.updates.canCheck)
+            } label: {
+                Label {
+                    Text("OSVA Monitor \(state.updates.version)")
+                    if let line = state.updates.lastCheckedLine() { Text(line) }
+                } icon: { Image(systemName: "arrow.down.circle").symbolRenderingMode(.hierarchical) }
+            }
+            Toggle(isOn: Binding(get: { state.updates.checksAutomatically }, set: { actions.setChecksForUpdatesAutomatically($0) })) {
+                Label {
+                    Text("Check Automatically")
+                    Text("Once a day. You choose whether to install what it finds.")
+                } icon: { Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90").symbolRenderingMode(.hierarchical) }
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text("New versions come from the project's GitHub releases. One is installed only if it is signed with the OSVA Monitor update key, which this app carries. The check downloads verificationalliance.org/app/appcast.xml and tells it nothing about this Mac but the app's version.")
+                .settingsFooter()
         }
     }
 }

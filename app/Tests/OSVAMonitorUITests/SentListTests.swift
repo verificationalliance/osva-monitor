@@ -68,4 +68,15 @@ import OSVAKit
         let cut = SentList(kind: .withheld, count: 12_345, sections: [.init(title: "Folders", items: ["a 1", "b 2"])])
         #expect(SentListView.footer(cut, scanned: date, query: "", matching: 2).hasPrefix("The first 2 of \(12_345.formatted()) · last scan "))
     }
+
+    @Test func lastCheckedLine() {
+        let now = Date(timeIntervalSince1970: 1_795_089_600)
+        var state = UpdateState(isAvailable: true, canCheck: true, checksAutomatically: true, version: "0.1.1")
+        #expect(state.lastCheckedLine(now: now) == nil)
+        state.lastChecked = now.addingTimeInterval(-600)
+        #expect(state.lastCheckedLine(now: now)?.hasPrefix("Last checked today at ") == true)
+        state.lastChecked = now.addingTimeInterval(-86_400)
+        #expect(state.lastCheckedLine(now: now)?.hasPrefix("Last checked yesterday at ") == true)
+        #expect(UpdateState.none.isAvailable == false)
+    }
 }

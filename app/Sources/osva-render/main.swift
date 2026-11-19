@@ -128,6 +128,8 @@ func main() throws {
 
     let now = PreviewData.now
     let full = PreviewData.report()
+    var waiting = PreviewData.updates
+    waiting.version = "0.1.0"; waiting.waitingVersion = "0.1.1"
     /// The sheets behind "What leaves your Mac", one per list, and one narrowed by a search.
     func sheets(_ report: ScanReport, prefix: String) -> [(String, AnyView, Method)] {
         SentSummary.lists(report.sent).filter(\.canOpen).map { list in
@@ -152,6 +154,8 @@ func main() throws {
         ("popover-offline", AnyView(popover(PreviewData.report(findings: [], problems: ["Could not refresh the public index; using the copy from 2 days ago."]))), .imageRenderer),
         ("settings", AnyView(SettingsView(state: PreviewData.settings(), actions: .none)), .hostingView),
         ("settings-whole", AnyView(SettingsView(state: PreviewData.settings(), actions: .none, height: 1080)), .hostingView),
+        ("popover-update-waiting", AnyView(PopoverView(content: PopoverContent(report: PreviewData.report(findings: []), isScanning: false, now: now),
+                                                       actions: .none, updates: waiting, scrolls: false)), .imageRenderer),
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,
                                                                      launchAtLogin: false, launchAtLoginAvailable: false, lastReport: nil), actions: .none)), .hostingView),
         ("components", AnyView(ComponentSheet()), .imageRenderer),
