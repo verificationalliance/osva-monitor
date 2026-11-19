@@ -26,8 +26,12 @@ public enum FixAssessment: Equatable, Sendable {
     case offer(FixOffer)
     /// No button, and the row says why ("Homebrew still ships 1.30.6; the fix is 1.30.7 upstream.").
     case withheld(String)
-    /// No button for the full fix (why), but a proposal that runs with the person's OK: a partial fix, or an upgrade
-    /// together. Never counted in Fix all; its review lists it, unticked.
+    /// No button because running it would break something installed: a dependent's specifier, a runtime boundary, a
+    /// project's own requirement (or the copy Python loads is not the finding's). The row says why and shows no command
+    /// to copy: that command is the one that broke fastapi in 0.2.0.
+    case refused(String)
+    /// Refused for the full fix (why), as `refused`, but with a proposal that runs with the person's OK: a partial fix, or
+    /// an upgrade together. Never counted in Fix all; its review lists it, unticked.
     case propose(String, FixOffer)
     /// The upgrade needs an administrator's password (a cask's installer or kernel extension): only Terminal, where the
     /// person types it. Never counted in Fix all.
@@ -65,7 +69,7 @@ public struct FixAdvisor: Sendable {
             case let .companions(names, _): return .offer(FixOffer(plan: plan, companions: names))
             case let .blocked(line, conflicts):
                 if let offer = await proposal(finding, plan: plan, pip: pip, site: site, conflicts: conflicts) { return .propose(line + ".", offer) }
-                return .withheld(line + ".")
+                return .refused(line + ".")
             case let .unknown(why): return .withheld("Not offered: the app \(why).")
             }
         }

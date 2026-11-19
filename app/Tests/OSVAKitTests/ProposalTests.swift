@@ -161,9 +161,9 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
 
         // a target past the boundary, or no target: nothing proposed
         let past = FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(plan: #"{"target":"2.9.1","fixes":["a"],"remaining":[]}"#))
-        guard case .withheld = await past.assess(torch) else { Issue.record("a target past the boundary was proposed"); return }
+        guard case .refused = await past.assess(torch) else { Issue.record("a target past the boundary was proposed"); return }
         let none = FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(plan: #"{"target":null,"fixes":[],"remaining":[]}"#))
-        guard case .withheld = await none.assess(torch) else { Issue.record("no target, yet a proposal"); return }
+        guard case .refused = await none.assess(torch) else { Issue.record("no target, yet a proposal"); return }
     }
 
     // MARK: Upgrade together
@@ -231,7 +231,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         let mine = Self.site([("starlette", "0.48.0", [], false), ("blooper-backend", "0.1.0", ["starlette<0.49"], true)])
         let (tools2, _) = Self.tools([mine])
         let a = await FixAdvisor(tools: tools2, home: "/Users/ana", server: FakeFixServer()).assess(starlette)
-        #expect(a == .withheld("blooper-backend 0.1.0 needs starlette < 0.49 — it is a project installed for development: raise its starlette range there."))
+        #expect(a == .refused("blooper-backend 0.1.0 needs starlette < 0.49 — it is a project installed for development: raise its starlette range there."))
     }
 
     // MARK: The end state

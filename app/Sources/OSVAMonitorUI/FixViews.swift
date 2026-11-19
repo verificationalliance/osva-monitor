@@ -547,6 +547,8 @@ public struct FixProblemCard: View {
     public var run: FixRunState?
     public var waitingFor: String?
     public var canRetry: Bool
+    /// Whether its command may be copied: not one the app now refuses (FindingRow.copyable).
+    public var canCopy: Bool
     public var retry: () -> Void
     public var undo: () -> Void
     public var runInTerminal: () -> Void
@@ -554,9 +556,9 @@ public struct FixProblemCard: View {
     @State private var full = false
     @State private var copied = false
 
-    public init(outcome: FixOutcome, run: FixRunState?, waitingFor: String? = nil, canRetry: Bool, retry: @escaping () -> Void,
+    public init(outcome: FixOutcome, run: FixRunState?, waitingFor: String? = nil, canRetry: Bool, canCopy: Bool = true, retry: @escaping () -> Void,
                 undo: @escaping () -> Void, runInTerminal: @escaping () -> Void, copy: @escaping (String) -> Void) {
-        self.outcome = outcome; self.run = run; self.waitingFor = waitingFor; self.canRetry = canRetry
+        self.outcome = outcome; self.run = run; self.waitingFor = waitingFor; self.canRetry = canRetry; self.canCopy = canCopy
         self.retry = retry; self.undo = undo; self.runInTerminal = runInTerminal; self.copy = copy
     }
 
@@ -633,7 +635,7 @@ public struct FixProblemCard: View {
     }
 
     @ViewBuilder private var copyButton: some View {
-        if let command = run?.command {
+        if canCopy, let command = run?.command {
             Button {
                 copy(command)
                 copied = true

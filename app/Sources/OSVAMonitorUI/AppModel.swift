@@ -411,6 +411,7 @@ public final class AppModel {
         switch a {
         case let .offer(offer): s.availability = .offered(offer)
         case let .withheld(why): s.availability = .withheld(why); s.hold = Self.hold(finding, why)
+        case let .refused(why): s.availability = .withheld(why); s.hold = .blocked
         case let .propose(why, offer): s.availability = .withheld(why); s.proposal = offer; s.hold = .blocked
         case let .terminal(offer, why): s.availability = .terminal(offer, why)
         case .none: s.availability = .withheld(nil); s.hold = .yours
@@ -419,10 +420,9 @@ public final class AppModel {
     }
 
     /// Why a finding with no button is left, for the header: no fixed release to be had (Homebrew is behind, or the
-    /// newest is installed), something installed holds a Python package back, or it is the person's to decide.
+    /// newest is installed), or it is the person's to decide. (What something installed holds back is `refused`.)
     nonisolated static func hold(_ f: Finding, _ why: String) -> FixRowState.Hold {
         if why.hasPrefix("Homebrew still ships") || why.hasPrefix("Newest version installed") || why.hasPrefix("Homebrew has no newer") { return .noFix }
-        if case .pip? = f.commandInputs?.origin, f.upgradeCommand?.hasPrefix("brew ") == false { return .blocked }
         return .yours
     }
 
@@ -1156,7 +1156,8 @@ public final class AppModel {
                 findings.append(current); offers.append(now)
             case let .propose(_, now) where offer.proposal != nil && now.plan == plan && Self.sameKind(now.proposal, offer.proposal):
                 findings.append(current); offers.append(now)
-            case let .withheld(why) where offer.proposal == nil, let .propose(why, _) where offer.proposal == nil:
+            case let .withheld(why) where offer.proposal == nil, let .refused(why) where offer.proposal == nil,
+                 let .propose(why, _) where offer.proposal == nil:
                 apply(a, current)
                 dropped.append((current, why))
             case let .terminal(_, why):

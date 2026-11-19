@@ -691,6 +691,74 @@ import OSVAKit
         }
     }
 
+    // MARK: Refused rows
+
+    /// A row refused because its command would break something installed shows no command at all: not to copy, not in
+    /// its reason, not in what it offers instead. A dependent's specifier (with the upgrade together it offers, and, with
+    /// no site to check it, nothing instead), a runtime boundary, a project of the person's. A command the app only does
+    /// not run, and one that needs a password, are still there to copy.
+    @Test func aRefusedRowShowsNoCommand() async throws {
+        /// starlette under fastapi, torch under whisperx, werkzeug under blooper (a project installed for development).
+        func scene(site withSite: Bool) async throws -> Home {
+            let h = try setUp([], pip: [Package(name: "starlette", installed: "0.48.0", fixed: "1.3.1", group: .exploited, exploited: true),
+                                        Package(name: "torch", installed: "2.7.0", fixed: "2.13.0", severity: .critical),
+                                        Package(name: "werkzeug", installed: "3.0.1", fixed: "3.0.6")])
+            try h.pipFile("meta/fastapi-0.120.0", "starlette<0.49.0,>=0.40.0\n")
+            try h.pipFile("meta/whisperx-3.3.4", "torch>=2\n")
+            try h.pipFile("meta/blooper-0.1.0", "werkzeug<3.0.2\n")
+            for (name, version) in [("fastapi", "0.120.0"), ("whisperx", "3.3.4"), ("blooper", "0.1.0")] {
+                let p = Process(); p.executableURL = h.python; p.arguments = ["--put", name, version]; try p.run(); p.waitUntilExit()
+            }
+            let site = h.python!.deletingLastPathComponent().appendingPathComponent("site")
+            try Data(#"{"url": "file:///Users/ana/code/blooper", "dir_info": {"editable": true}}"#.utf8)
+                .write(to: site.appendingPathComponent("blooper-0.1.0.dist-info/direct_url.json"))
+            if !withSite { h.model.fixServer = nil }
+            try await assessed(h)
+            return h
+        }
+        var h = try await scene(site: true)
+        /// Every text the row can show about its fix, besides the command block itself.
+        func texts(_ f: Finding) -> [String] {
+            let s = h.model.fixes[f.id]
+            var out = [f.note].compactMap { $0 }
+            if case let .withheld(why?)? = s?.availability { out.append(why) }
+            if let p = s?.offeredProposal { out += [p.proposal?.line(p.plan), p.proposal?.asks].compactMap { $0 } }
+            return out
+        }
+        func refusedWithNoCommand(_ name: String, _ line: String) {
+            let f = h.finding(name), row = h.model.fixes[f.id] ?? FixRowState()
+            #expect(row.hold == .blocked && row.offeredFix == nil, "\(name)")
+            #expect(FindingRow.copyable(f, row) == nil, "\(name) offers its refused command to copy")
+            #expect(!texts(f).contains { $0.contains("pip install") || $0.contains(f.upgradeCommand!) }, "\(name)")
+            #expect(texts(f).first { $0.hasPrefix(line) } != nil, "\(name): \(texts(f))")
+        }
+
+        // with the site: starlette is offered together with fastapi instead
+        refusedWithNoCommand("starlette", "fastapi 0.120.0 needs starlette < 0.49.0")
+        #expect(h.model.fixes[h.id("starlette")]?.offeredProposal?.proposal?.line(h.model.fixes[h.id("starlette")]!.offeredProposal!.plan)
+                == "Update starlette with fastapi (fixes the exploited flaw)")
+        refusedWithNoCommand("torch", "torch 2.9 goes with torchaudio 2.9")
+        refusedWithNoCommand("werkzeug", "blooper 0.1.0 needs werkzeug < 3.0.2 — it is a project installed for development")
+        #expect(h.model.fixes[h.id("werkzeug")]?.offeredProposal == nil)                          // nothing safe instead
+
+        // without the site, nothing is proposed: the reason alone
+        h = try await scene(site: false)
+        refusedWithNoCommand("starlette", "fastapi 0.120.0 needs starlette < 0.49.0")
+        #expect(h.model.fixes[h.id("starlette")]?.offeredProposal == nil)
+
+        // what the app only does not run, and what needs a password, keep their commands to copy
+        let starlette = h.finding("starlette")
+        #expect(FindingRow.copyable(starlette, FixRowState(availability: .withheld("Not run for you: it changes the project's dependencies."), hold: .yours))
+                == starlette.upgradeCommand)
+        let offer = FixOffer(plan: try FixPlan.make(for: starlette, tools: ToolEnvironment(base: [:], isExecutable: { _ in true })).get())
+        #expect(FindingRow.copyable(starlette, FixRowState(availability: .terminal(offer, "Needs your administrator password."))) == starlette.upgradeCommand)
+
+        // and the row draws a command only through that one decision
+        let row = try String(contentsOf: StyleGuardTests.app.appendingPathComponent("Sources/OSVAMonitorUI/FindingRow.swift"), encoding: .utf8)
+        #expect(row.components(separatedBy: "commandBlock(command)").count - 1 == 2 && row.contains("let command = Self.copyable(finding, fix)")
+                && row.contains("canCopy: command != nil"))
+    }
+
     // MARK: The header
 
     /// What "N need action" is made of: every finding that needs action in one bucket, the buckets adding up to N.

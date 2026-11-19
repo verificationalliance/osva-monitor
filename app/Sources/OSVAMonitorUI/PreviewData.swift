@@ -179,7 +179,7 @@ public enum PreviewData {
         [FixID.axios: FixRowState(availability: .offered(offer(FixID.axios))),
          FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7."))),
          FixID.openmtp: FixRowState(availability: .offered(offer(FixID.openmtp, homebrew: "Has OpenMTP 3.2.25; 3.2.24 is installed."))),
-         FixID.starlette: FixRowState(availability: .withheld("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first.")),
+         FixID.starlette: FixRowState(availability: .withheld("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first."), hold: .blocked),
          FixID.cpython: FixRowState(availability: .withheld("Homebrew still ships 3.12.17; the fix is 3.14.11 upstream."))]
     }
 

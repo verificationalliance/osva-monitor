@@ -504,7 +504,7 @@ final class UpdateRecorder: @unchecked Sendable {
                                     isExecutable: { _ in true })
         let python = PythonEnvironment(executable: Self.pip.python, version: "3.11.14", kind: .homebrew, externallyManaged: false, userSite: nil, formula: "python@3.11")
         let f = fixable(.pip(python: python, user: false, formula: nil), "starlette", .pypi, installed: "0.48.0", fixed: "1.3.1")
-        #expect(await FixAdvisor(tools: tools, home: home).assess(f) == .withheld("fastapi 0.120.0 needs starlette < 0.49.0, and 1 more — update them first."))
+        #expect(await FixAdvisor(tools: tools, home: home).assess(f) == .refused("fastapi 0.120.0 needs starlette < 0.49.0, and 1 more — update them first."))
         // an interpreter that does not answer: not offered either
         let silent = ToolEnvironment(home: URL(fileURLWithPath: home), base: [:], runner: SwitchableRunner([:]), isExecutable: { _ in true })
         guard case let .withheld(why) = await FixAdvisor(tools: silent, home: home).assess(f) else { Issue.record("offered"); return }

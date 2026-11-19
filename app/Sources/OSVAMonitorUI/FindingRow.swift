@@ -156,25 +156,33 @@ public struct FindingRow: View {
             }
             .font(Typeface.small.weight(.medium))
         }
-        // a command that cannot bring a fix now (Homebrew behind, the newest already installed) is not shown to copy
-        if let command = fix.hold == .noFix && fix.run == nil ? nil : finding.upgradeCommand ?? fix.run?.command {
+        if finding.upgradeCommand ?? fix.run?.command != nil {
+            let command = Self.copyable(finding, fix)
             if let offer = fix.reviewable, let preview = fix.preview, !fix.isBusy {
                 FixConfirmation(offer: offer, preview: preview, waitingFor: fix.waitingFor,
                                 cancel: { actions.fix.cancel(finding) }, run: { actions.fix.run(finding) })
             } else if let run = fix.run, fix.isBusy {
                 FixRunCard(run: run) { actions.fix.stop(finding) }
             } else if let outcome = fix.outcome, outcome.isProblem, fix.run != nil {
-                commandBlock(command)
+                if let command { commandBlock(command) }
                 FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: fix.offeredFix != nil || fix.offeredProposal != nil,
-                               retry: { actions.fix.retry(finding) }, undo: { actions.fix.undo(finding) },
+                               canCopy: command != nil, retry: { actions.fix.retry(finding) }, undo: { actions.fix.undo(finding) },
                                runInTerminal: { actions.fix.runInTerminal(finding) }, copy: actions.copy)
             } else {
-                commandBlock(command)
+                if let command { commandBlock(command) }
                 fixControl
             }
-        } else if fix.hold == .noFix {
-            fixControl                                         // why: no fixed release this command can bring yet
         }
+    }
+
+    /// The command the row offers to copy, or none: not one the app refuses because running it would break something
+    /// installed (a dependent's specifier, a runtime boundary, a project's own requirement: the row says why, and offers
+    /// what is safe instead when there is something), nor one that cannot bring a fix now (Homebrew behind, the newest
+    /// already installed). A command the app only does not run for you (pipx, MacPorts, Nix, conda, a user Ruby's gem, a
+    /// lockfile), or one that needs a password, is there to copy.
+    static func copyable(_ finding: Finding, _ fix: FixRowState) -> String? {
+        if fix.hold == .blocked || fix.hold == .noFix { return nil }
+        return finding.upgradeCommand ?? fix.run?.command
     }
 
     /// The open row shows the run (or how it ended) as a card, so the one-line status is left out.
