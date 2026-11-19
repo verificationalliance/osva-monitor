@@ -106,22 +106,24 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         #expect(p.installed == "Electron 28.1.0")
     }
 
-    @Test func pipInApplesPythonAcrossAMajorVersion() throws {
+    /// 0.2.1: upgrading one package in a shared environment broke others on a real Mac (starlette 1.10 under fastapi
+    /// 0.120, which needs < 0.49; pip warned and exited 0). Not run until the app checks the dependents.
+    @Test func pipUpgradesAreNotRunForYou() throws {
         let f = fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "setuptools", .pypi, installed: "58.0.4", fixed: "78.1.1")
-        let p = try ok(plan(f))
-        #expect(p.command == "/usr/bin/python3 -m pip install --user --upgrade 'setuptools>=78.1.1'")
-        #expect(p.pip == FixPlan.Pip(python: "/usr/bin/python3", requirement: "setuptools>=78.1.1", user: true))
-        #expect(p.pathFirst == nil && p.place == "Apple's Python 3.9.6 (part of Xcode), your user site")
-        #expect(p.majorUpgrade == "A major version, 58 to 78: it may change how setuptools behaves. Check what uses it afterwards.")
+        guard case let .failure(.sharedEnvironment(why)) = plan(f) else { Issue.record("a pip upgrade was planned"); return }
+        #expect(why.contains("depend on this one"))
     }
 
-    @Test func aProjectsLockfile() throws {
+    @Test func gemUpgradesAreNotRunForYou() throws {
+        let f = fixable(.gem(gem: "/usr/bin/gem"), "nokogiri", .rubygems, installed: "1.13.8", fixed: "1.19.5")
+        let r = plan(f, tools: mac(everyTool))
+        guard case .failure(.sharedEnvironment) = r else { Issue.record("gem upgrade: \(r)"); return }
+    }
+
+    @Test func aProjectsLockfileUpgradeIsNotRunForYou() throws {
         let f = fixable(.folder(root: "/Users/ana/code", lockfile: "/Users/ana/code/shop/yarn.lock", direct: true), "axios", installed: "1.6.0", fixed: "1.15.0")
-        let p = try ok(plan(f))
-        #expect(p.command == "cd ~/code/shop && yarn add 'axios@^1.15.0'")
-        #expect(p.inProjectFolder && p.toolName == "yarn" && p.toolPath == "/opt/homebrew/bin/yarn" && p.pathFirst == nil)
-        #expect(p.place == "~/code/shop")
-        #expect(p.lockfileNote == "The project's yarn.lock changes. Run its tests before you commit it.")
+        guard case let .failure(.sharedEnvironment(why)) = plan(f) else { Issue.record("a lockfile upgrade was planned"); return }
+        #expect(why.contains("run its tests"))
     }
 
     @Test func malwareGetsARemoval() throws {
@@ -316,14 +318,16 @@ final class ArgvRecorder: CommandRunner, @unchecked Sendable {
         #expect(recorder.calls.map(\.argv) == [["/opt/homebrew/bin/brew", "upgrade", "--dry-run", "nginx"]])
     }
 
-    @Test func pipWithoutADryRunSaysSo() async throws {
+    @Test(.disabled("0.2.1 runs no pip upgrades; back with dependency-aware fixes"))
+    func pipWithoutADryRunSaysSo() async throws {
         let tools = mac(everyTool, outputs: ["/usr/bin/python3 -m pip --version": CommandResult(status: 0, stdout: Data("pip 21.2.4 from /x (python 3.9)\n".utf8), stderr: Data())])
         let p = try ok(plan(fixable(.pip(python: Fixture.applePython, user: false, formula: nil), "six", .pypi), tools: tools))
         let preview = await FixPreviewer(tools: tools).preview(p)
         #expect(preview.unavailable == "This pip (21.2.4) has no dry run: pip 22.2 added it." && preview.lines.isEmpty)
     }
 
-    @Test func pipsDryRunNeverBuildsFromSource() async throws {
+    @Test(.disabled("0.2.1 runs no pip upgrades; back with dependency-aware fixes"))
+    func pipsDryRunNeverBuildsFromSource() async throws {
         let recorder = ArgvRecorder(output: CommandResult(status: 0, stdout: Data("pip 24.0 from /x (python 3.13)\nWould install six-1.17.0\n".utf8), stderr: Data()))
         let tools = ToolEnvironment(home: URL(fileURLWithPath: home), base: [:], runner: recorder, isExecutable: { _ in true })
         let python = PythonEnvironment(executable: "/opt/homebrew/bin/python3.13", version: "3.13.1", kind: .virtualEnv, externallyManaged: false,

@@ -70,11 +70,15 @@ public struct FixPlan: Hashable, Sendable {
         /// requirements.txt: pip must run in the project's own environment, which a new Terminal window does not have.
         case needsProjectEnvironment
         case toolNotFound(String)
+        /// Upgrading one package where others depend on it (a Python's site-packages, a Ruby's gems, a project's
+        /// lockfile) can break them: pip only warns, after installing. Not run until the app checks those dependents.
+        case sharedEnvironment(String)
 
         /// What the row says, when it says anything: most refusals only mean the command is there to read and copy.
         public var explanation: String? {
             switch self {
             case let .toolNotFound(tool): return "\(tool) was not found on this Mac, so the app cannot run this for you."
+            case let .sharedEnvironment(why): return why
             default: return nil
             }
         }
@@ -135,6 +139,9 @@ public struct FixPlan: Hashable, Sendable {
                 if action == .upgrade { plan.homebrew = Homebrew(brew: b, name: f, cask: false, versionIsTheFix: false, label: f) }
             } else {
                 guard tools.isExecutable(python.executable) else { return .failure(.toolNotFound(python.label)) }
+                if action == .upgrade {
+                    return .failure(.sharedEnvironment("Not run for you: other packages in \(python.label) may depend on this one, and pip upgrades it even when that breaks them. Update it where it is used, then check that still works."))
+                }
                 plan.use(tool: python.executable, name: "pip", pathFirst: false)
                 let toUser = command.contains(" --user ")
                 plan.place = python.label + (toUser || user ? ", your user site" : "")
@@ -152,6 +159,9 @@ public struct FixPlan: Hashable, Sendable {
 
         case let .gem(gem):
             guard FixSafety.isSafePath(gem), tools.isExecutable(gem) else { return .failure(.toolNotFound("gem")) }
+            if action == .upgrade {
+                return .failure(.sharedEnvironment("Not run for you: other gems may depend on this one, and upgrading it alone can break them."))
+            }
             plan.use(tool: gem, name: "gem", pathFirst: gem == "/usr/bin/gem")
             plan.place = gem == "/usr/bin/gem" ? "Your user gem directory (the system Ruby's own gems are read-only)" : "RubyGems"
 
@@ -160,6 +170,9 @@ public struct FixPlan: Hashable, Sendable {
             let file = (lockfile as NSString).lastPathComponent
             guard let tool = projectTool[file] else { return .failure(.needsProjectEnvironment) }
             guard let path = tools.firstExecutable(projectToolLocations(tool, tools: tools)) else { return .failure(.toolNotFound(tool)) }
+            if action == .upgrade {
+                return .failure(.sharedEnvironment("Not run for you: it changes the project's dependencies. Run it in the project, then run its tests."))
+            }
             plan.use(tool: path, name: tool, pathFirst: false)
             let folder = (lockfile as NSString).deletingLastPathComponent
             plan.place = Paths.abbreviatingHome(folder.isEmpty ? root : folder, home: home)
