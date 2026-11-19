@@ -68,7 +68,8 @@ struct CaptureMode {
 
     func run(model: AppModel) {
         var full = fixtures ? PreviewData.report() : model.report
-        if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; return c } }
+        // A close-up shows only those findings: no "not checked" or "not in the index" rows half cut off at the bottom.
+        if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; c.coverage = Coverage(); return c } }
         let clean = fixtures ? PreviewData.report(findings: []) : model.report.map { r in var c = r; c.findings = []; return c }
         let fixtureSettings = fixtures ? MonitorSettings(watchedFolders: PreviewData.settings().folders) : model.settings
         if fixtureFixes != nil, fixStates == "results" {
