@@ -1,99 +1,154 @@
+<p align="center">
+  <a href="https://verificationalliance.org/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+      <img alt="Open Source Verification Alliance" src="docs/logo-light.png" width="440">
+    </picture>
+  </a>
+</p>
+
 # OSVA Monitor
 
 [![ci](https://github.com/verificationalliance/osva-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/verificationalliance/osva-monitor/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-A native macOS menu-bar app that watches the software on your Mac and tells you what the
-[Open Source Verification Alliance](https://verificationalliance.org/) knows about it: malicious packages,
-vulnerabilities exploited in the wild, critical and high flaws with the version that fixes them, each project's trust
-grade, and whether any of its code is formally verified.
+Your Mac runs a lot of open-source code you never chose by hand. The Electron inside Slack and VS Code. The Python
+that came with Xcode. Whatever Homebrew pulled in. The hundreds of packages in each project's lockfile. Some of it
+has known holes. Now and then some of it is malware.
 
-| | |
-|---|---|
-| ![Findings: a malicious package, flaws exploited in the wild, each with its fix](docs/screenshots/popover-dark.png) | ![Nothing needs action, with what could not be checked](docs/screenshots/popover-clean-dark.png) |
+OSVA Monitor lives in the menu bar, checks all of that against public vulnerability and malware data, and shows you
+the few things that need you, each with the command that fixes it on this Mac.
 
-macOS 26 or later, Apple silicon. Liquid Glass, your appearance and accent colour, no settings to learn.
+<p align="center">
+  <img src="docs/screenshots/popover-dark.png" width="380" alt="Findings: a malicious package, flaws exploited in the wild, each with its fix">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/popover-clean-dark.png" width="380" alt="Nothing needs action, with what could not be checked">
+</p>
 
-## What it watches
+## One example
 
-- **Homebrew** formulae and casks, matched to the projects the site grades (nginx, OpenSSL, curl, Python …).
-- **Apps that bundle Electron** (Slack, VS Code, Discord …), checked by the Electron version inside them.
-- **Global packages** from npm, cargo and RubyGems, and **every Python** on the Mac (Apple's, Homebrew's, python.org's)
-  with the packages installed into it.
-- **Project folders you choose**: package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock,
-  Pipfile.lock, Cargo.lock, go.sum, Gemfile.lock, composer.lock. A changed lockfile is re-checked within seconds.
+<img src="docs/screenshots/fix-plan-dark.png" width="330" align="right" alt="setuptools on Apple's Python: upgrade to 78.1.1; one flaw needs Python 3.10; one is Windows only">
+
+Apple's Python, the one that ships with Xcode, has setuptools 58.0.4. It has five known flaws. The usual advice is
+"upgrade to 84.1.0", and on this Mac that command fails: 84.1.0 needs Python 3.10, and Apple's Python is 3.9.6.
+
+OSVA Monitor works out what can actually be done here:
+
+- **78.1.1** installs on Python 3.9 and fixes the three high-severity flaws, so that is the target.
+- The flaw fixed only in 83.0.0 needs a newer Python. The app says so, instead of suggesting an upgrade that would
+  fail.
+- One flaw affects Windows only. It is listed, but it does not push you to upgrade.
+- Apple's Python is read-only, so the command installs the fixed copy into your user site, which Python loads first:
+
+```sh
+/usr/bin/python3 -m pip install --user --upgrade 'setuptools>=78.1.1'
+```
+
+Every finding works like this: the smallest upgrade that fixes what can be fixed where the package lives, and a
+command for that place, whether it is Homebrew, a project folder, a global npm install or one of your Pythons.
+
+<br clear="right">
+
+## What it looks at
+
+- **Homebrew** formulae and casks.
+- **Apps that bundle Electron**, checked by the Electron version inside them.
+- **Global packages** from npm, cargo and RubyGems, and **every Python** on the Mac (Apple's, Homebrew's,
+  python.org's) with what is installed into it.
+- **Project folders you add**: package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock,
+  Pipfile.lock, Cargo.lock, go.sum, Gemfile.lock and composer.lock. A changed lockfile is checked again within
+  seconds.
 
 ## What leaves your Mac
 
-The app downloads the site's public index (every package that has ever had an advisory or a malicious report, about
-256,000 names, and every graded project; revalidated daily) and decides **on your Mac** which of your packages are in
-it. Only those are named to the API, by
-ecosystem, name and exact version. No file paths, app names, or list of what else you have installed are sent.
-Settings › What Leaves Your Mac shows exactly what the last scan sent.
+Very little. The app downloads the site's public index, every package that has ever had an advisory or a malware
+report (about 256,000 names), and matches your packages against it on the Mac. Only the matches are sent, as
+ecosystem, name and version. No file paths, no app names, no list of what else you have. Settings shows exactly what
+the last scan sent.
 
-Packages that are not in the index are listed as *not in the index: no known problems, not proof of safety*;
-software the app cannot check at all (Homebrew packages without a graded project, apps that do not bundle Electron) is
-listed as *not checked*. Nothing is ever shown as safe because the app did not recognise it.
+Packages that are not in the index are listed as *not in the index: no known problems, not proof of safety*. Things
+the app cannot check at all are listed as *not checked*. It never calls something safe because it did not recognise
+it.
 
-## What it tells you to do
+## Proved, not only tested
 
-For each finding, the smallest upgrade that fixes what can be fixed **on this Mac**, and a command that works where the
-package actually lives:
+The decisions where a bug would mislead you are written in [Lean 4](https://lean-lang.org/), a programming language
+that is also a proof assistant. Next to the code are theorems about it. Lean checks each proof for every possible
+input, not for a sample of them, and refuses to build if one is missing or wrong.
 
-- a package in Apple's Python (part of Xcode, read-only) gets `pip install --user`, which Python loads first, and never a
-  release whose `Requires-Python` excludes that Python: on Python 3.9, setuptools 58 is told to go to 78.1.1, and the
-  flaw fixed only in 83.0.0 (which needs Python 3.10) is shown as such instead of an upgrade that would fail;
-- a package a Homebrew formula installed gets `brew upgrade <formula>`; an externally managed Python (PEP 668) gets
-  advice to use a virtual environment or pipx instead of a command pip would refuse;
-- a flaw limited to another operating system (*Windows only*) is reported but does not move an installed package; in a
-  project folder it still counts, because that code may be deployed anywhere;
-- a lockfile dependency gets the command for its package manager, run in its folder; an indirect one gets an update
-  within its parent's range, or the override to set.
+<p align="center">
+  <img src="docs/how-it-is-proved.svg" width="860" alt="Lean source with 19 theorems is compiled to C and linked into the app through a small C bridge; Lean checks every proof">
+</p>
 
-Every name, version and path in a command is shell-quoted.
+Four decisions are proved:
 
-## The verified core
+| What the app decides | What is guaranteed, for every input |
+|---|---|
+| Which of two versions is newer (`1.0rc1 < 1.0 < 1.0.post1 < 1.0.1`, `10.6p1 < 10.6p2`) | The order never contradicts itself: reflexive, antisymmetric, transitive |
+| Whether your version is affected, given the fixed version on each release branch | A warning always comes with a newer version to upgrade to. A version at or past its own branch's fix is never flagged. A version newer than every fix is never flagged |
+| Which package names may be sent | A name is sent only if it is byte for byte in the public index |
+| How a name is put into a URL | The result never contains `/ ? # @ :`, and decoding it gives the name back, so two names never collide |
 
-Every decision where a bug would mislead you goes through a small core written in **Lean 4**, with theorems that Lean
-checks for every input. Lean compiles the same definitions to C, which is linked into the app, so the code that runs
-is the code the theorems are about (`core/`).
+This is the first guarantee about affected versions, as Lean states it
+([`core/OSVACore/Affected.lean`](core/OSVACore/Affected.lean)):
 
-| Decision | Lean | Theorems |
-|---|---|---|
-| Version order (`1.0rc1 < 1.0 < 1.0.post1 < 1.0.1`, `10.6p1 < 10.6p2`) | `OSVACore/Version.lean` | reflexive, antisymmetric, transitive |
-| Is my version affected, given the fixed version per branch? | `OSVACore/Affected.lean` | a warning always has a version to upgrade to; a version at or past its branch's fix is never flagged; one newer than every fix is never flagged |
-| Privacy filter: may this package be sent? | `OSVACore/Select.lean` | marked for sending exactly when it is in the public index |
-| URL encoding of package names | `OSVACore/Encode.lean` | output never contains `/ ? # @ :`; decoding gives back the input; at most 3× as long |
+```lean
+/-- Every warning has a fixed version above the installed one. -/
+theorem affected_has_upgrade {v : Bytes} {fixed : List Bytes} (h : affected v fixed = some true) :
+    ∃ f ∈ fixed, vcmp v f = .lt
+```
 
-All 19 theorems use only Lean's standard axioms (no `sorry`, no trust in compiled code); `scripts/check-core.sh`
-re-checks them, audits their axioms and runs the C bridge's tests. What is not proved: the ~100-line C shim that
-converts bytes to Lean values (`core/ffi/osva_shim.c`), the Lean compiler and runtime, and the Swift app around the
-core (scanners, network, interface), which is covered by tests instead (`app/Tests`).
+In words: if `affected` says your version `v` is affected, then one of the fixed versions is strictly newer than
+`v`. It holds for every version string, including the strange ones nobody thought to test.
+
+**The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the
+app. There is no hand-written Swift copy that could drift away from what was proved. About 80 lines of C pass
+bytes between Swift and Lean. That bridge is the only unproved code on the path, and it has its own tests.
+
+**Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 19 proofs again. It
+then confirms that they rest only on Lean's three standard axioms (no `sorry`, nothing assumed without proof) and runs
+the bridge's tests. CI does the same on every push.
+
+**What is not proved.** The Lean compiler and runtime, the C bridge, and the rest of the app: reading Homebrew,
+lockfiles and Pythons, the network, the interface. Those are covered by tests. The data comes from OSV,
+the GitHub Advisory Database and NVD. The proofs say the app reasons correctly about that data, not that the data is
+right.
+
+The server the app talks to uses the same version order, and its implementation is tested against this Lean core on
+30,000 version pairs.
 
 ## Build
 
-Requirements: macOS 26, Xcode 26 or later, [elan](https://github.com/leanprover/elan) (the Lean version is pinned in
-`core/lean-toolchain`).
+You need macOS 26, Xcode 26 or later, and [elan](https://github.com/leanprover/elan). The Lean version is pinned in
+`core/lean-toolchain`.
 
 ```sh
-./scripts/check-core.sh        # build the Lean core, re-check every theorem, audit axioms, test the C bridge
-cd app && swift test           # the app's tests
-./scripts/build-app.sh         # → app/.build/OSVA Monitor.app (ad-hoc signed; set DEVELOPER_ID and NOTARY_PROFILE to sign and notarize)
+./scripts/check-core.sh   # build the Lean core, re-check every proof, audit axioms, test the C bridge
+cd app && swift test      # the app's tests
+./scripts/build-app.sh    # app/.build/OSVA Monitor.app, ad-hoc signed
 ```
 
-`OSVAMonitor --capture <dir> --fixtures` writes screenshots of the app's own windows (no Screen Recording permission
-needed); it waits for you to click the menu-bar shield, because macOS does not let an app open its own menu-bar panel.
+Set `DEVELOPER_ID` and `NOTARY_PROFILE` for a Developer ID signature and notarization; the script's header has the
+details. `OSVAMonitor --capture <dir> --fixtures` writes screenshots of the app's own windows. It waits for you to
+click the menu-bar shield, because macOS does not let an app open its own menu-bar panel.
 
-## The site and API
+| Folder | What is in it |
+|---|---|
+| `core/` | The Lean core (`OSVACore/*.lean`), its C header and the C bridge |
+| `app/` | The Swift package: `OSVAKit` (scanning, the API), `OSVAMonitorUI`, the app, tests |
+| `scripts/` | `check-core.sh`, `build-app.sh` |
+
+## Where the data comes from
 
 Findings come from [verificationalliance.org](https://verificationalliance.org/): its public index
 ([`data/app-index.tsv`](https://verificationalliance.org/data/app-index.tsv)) and its REST API
-([`/api/v1`](https://verificationalliance.org/api/v1/), OpenAPI at `/api/v1/openapi.json`), built from OSV, the GitHub
-Advisory Database, CVE records, CISA KEV and FIRST EPSS. Comments in the code that name `site/formalinformer/…` or
-`formalinformer/api/…` refer to the site's own repository, which is not public yet.
+([`/api/v1`](https://verificationalliance.org/api/v1/), OpenAPI at `/api/v1/openapi.json`). Those are built from OSV,
+the GitHub Advisory Database, CVE records, CISA KEV and FIRST EPSS. Comments in the code that name
+`site/formalinformer/…` or `formalinformer/api/…` refer to the site's own repository, which is not public yet.
 
 ## Security
 
-Please report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+Please report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
