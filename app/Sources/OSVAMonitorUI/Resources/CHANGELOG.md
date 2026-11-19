@@ -11,6 +11,11 @@ ChangelogTests checks both, and that scripts/build-app.sh's version has an entry
 ## 0.5.0
 
 - Asks before it starts: what it reads, what it sends, and your choices.
+- Fix all runs one command per tool, much faster.
+- Partial fixes when the full one would break something.
+- Updates packages together when one holds another back.
+- Never offers an app update that would change nothing.
+- Says what each finding needs, at a glance.
 
 ## 0.4.0
 
