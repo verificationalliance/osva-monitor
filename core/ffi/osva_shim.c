@@ -8,11 +8,14 @@
  */
 #include <lean/lean.h>
 #include <limits.h>
+#include <stdint.h>
 #include <string.h>
 #include "osva_core.h"
 
 extern uint8_t osva_lean_vcmp(lean_object *a, lean_object *b);
 extern uint8_t osva_lean_affected(lean_object *v, lean_object *fixed);
+extern uint8_t osva_lean_affected_ranges(lean_object *v, lean_object *present, lean_object *bounds);
+extern lean_object *osva_lean_upgrade_ranges(lean_object *v, lean_object *present, lean_object *bounds);
 extern lean_object *osva_lean_select(lean_object *index, lean_object *inventory);
 extern lean_object *osva_lean_encode(lean_object *s);
 extern lean_object *initialize_osvaCore_OSVACore(uint8_t builtin);
@@ -55,6 +58,50 @@ int osva_affected(const uint8_t *v, size_t nv, const uint8_t *const *fixed, cons
     if (osva_core_init() != 0) return -1;
     uint8_t r = osva_lean_affected(mk_bytes(v, nv), mk_byte_arrays(fixed, fixed_len, n_fixed));
     return r == 2 ? -1 : (int)r;                                            /* 2 = unknown */
+}
+
+/* The ranges as FFI.lean's decodeRanges reads them: bound 3k, 3k+1, 3k+2 of range k (introduced, fixed, last affected),
+ * each present when its byte in `present` is 1; an absent bound is passed as an empty array. */
+static int mk_ranges(const osva_range *ranges, size_t n, lean_object **present, lean_object **bounds) {
+    if ((n > 0 && ranges == NULL) || n > SIZE_MAX / 3) return -1;
+    lean_object *p = lean_alloc_sarray(1, 3 * n, 3 * n);
+    lean_object *b = lean_alloc_array(3 * n, 3 * n);
+    uint8_t *flags = lean_sarray_cptr(p);
+    lean_object **cells = lean_array_cptr(b);
+    for (size_t k = 0; k < n; k++) {
+        const uint8_t *ptr[3] = { ranges[k].introduced, ranges[k].fixed, ranges[k].last_affected };
+        size_t len[3] = { ranges[k].introduced_len, ranges[k].fixed_len, ranges[k].last_affected_len };
+        for (int j = 0; j < 3; j++) {
+            flags[3 * k + j] = ptr[j] != NULL;
+            cells[3 * k + j] = ptr[j] != NULL ? mk_bytes(ptr[j], len[j]) : mk_bytes(NULL, 0);
+        }
+    }
+    *present = p; *bounds = b;
+    return 0;
+}
+
+int osva_affected_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges) {
+    if (osva_core_init() != 0) return -2;
+    lean_object *present, *bounds;
+    if (mk_ranges(ranges, n_ranges, &present, &bounds) != 0) return -2;
+    uint8_t r = osva_lean_affected_ranges(mk_bytes(v, nv), present, bounds);
+    return r == 2 ? -1 : (int)r;                                            /* 2 = unknown */
+}
+
+long osva_upgrade_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges, uint8_t *out, size_t cap) {
+    if (osva_core_init() != 0 || (cap > 0 && out == NULL)) return -2;
+    lean_object *present, *bounds;
+    if (mk_ranges(ranges, n_ranges, &present, &bounds) != 0) return -2;
+    lean_object *res = osva_lean_upgrade_ranges(mk_bytes(v, nv), present, bounds);
+    size_t m = lean_sarray_size(res);
+    const uint8_t *r = lean_sarray_cptr(res);
+    long out_len;
+    if (m == 0) out_len = -1;                                               /* no upgrade */
+    else if (r[0] != 1 || m - 1 > (size_t)LONG_MAX) out_len = -2;           /* cannot happen (ffiUpgradeRanges_spec) */
+    else if (m - 1 > cap) out_len = -3;
+    else { if (m > 1) memcpy(out, r + 1, m - 1); out_len = (long)(m - 1); }
+    lean_dec(res);
+    return out_len;
 }
 
 int osva_select(const uint8_t *const *index, const size_t *index_len, size_t n_index,

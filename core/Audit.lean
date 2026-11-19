@@ -13,6 +13,15 @@ open OSVA
 #print axioms affected_not_when_fixed_on_branch
 #print axioms affected_not_when_newest
 #print axioms affected_unknown_without_fixes
+#print axioms affectedIn_unknown_iff
+#print axioms affectedIn_sound
+#print axioms affectedIn_complete
+#print axioms affectedIn_outside
+#print axioms affectedIn_fixed_above
+#print axioms upgradeIn_above
+#print axioms upgradeIn_clears
+#print axioms upgradeIn_nearest
+#print axioms upgradeIn_exists
 #print axioms select_spec
 #print axioms select_sound
 #print axioms decode_encode
@@ -22,5 +31,8 @@ open OSVA
 #print axioms encode_length
 #print axioms ffiVcmp_spec
 #print axioms ffiAffected_one_iff
+#print axioms ffiAffectedRanges_one_iff
+#print axioms ffiUpgradeRanges_spec
+#print axioms decodeRanges_get
 #print axioms ffiEncode_spec
 #print axioms ffiSelect_length

@@ -37,7 +37,8 @@ int osva_vcmp(const uint8_t *a, size_t na, const uint8_t *b, size_t nb);
 
 /*
  * Is an installed version affected, given the first fixed version the issuer names for each release branch (nginx:
- * "1.30.7", "1.31.9")? A version's branch is its first two numbers.
+ * "1.30.7", "1.31.9")? A version's branch is its first two numbers. For advisories that carry only these; prefer
+ * osva_affected_ranges when the issuer's ranges are known.
  *   affected  <=>  some fixed version is above v,  and no fixed version on v's own branch is at or below v.
  * Returns 1 (affected), 0 (not affected), -1 (unknown: no fixed versions).
  * Theorems (OSVACore/Affected.lean): an affected version always has a fixed version above it to upgrade to; a version
@@ -45,6 +46,42 @@ int osva_vcmp(const uint8_t *a, size_t na, const uint8_t *b, size_t nb);
  */
 int osva_affected(const uint8_t *v, size_t nv,
                   const uint8_t *const *fixed, const size_t *fixed_len, size_t n_fixed);
+
+/*
+ * One affected range, as an advisory's issuer publishes it: every version v with introduced <= v, and v < fixed, and
+ * v <= last_affected, in the order of osva_vcmp. A NULL pointer means that bound is absent: no introduced means from the
+ * first version, no fixed and no last_affected means every later version. A non-NULL pointer is a bound, even with
+ * length 0. Pointers are read only during the call.
+ */
+typedef struct {
+    const uint8_t *introduced;
+    size_t introduced_len;
+    const uint8_t *fixed;
+    size_t fixed_len;
+    const uint8_t *last_affected;
+    size_t last_affected_len;
+} osva_range;
+
+/*
+ * Is an installed version affected, given an advisory's affected ranges (PostgreSQL: 16 up to 16.15, 17 up to 17.11, ...)?
+ *   affected  <=>  v lies in some range.
+ * Returns 1 (affected), 0 (not affected), -1 (unknown: n_ranges is 0), -2 (bad argument: ranges is NULL while n_ranges
+ * is not 0, or n_ranges is above SIZE_MAX / 3).
+ * Theorems (OSVACore/Ranges.lean): a version is flagged exactly when it lies in one of the ranges (sound and complete),
+ * so a version outside every range is never flagged; a flagged version's range with a fixed version has it above v.
+ */
+int osva_affected_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges);
+
+/*
+ * The upgrade to propose, given the affected ranges of one advisory or of several at once: the lowest fixed version
+ * of any range that is above v and lies in none of the ranges. Writes it to out and returns its length; returns -1 if
+ * there is none, -2 on a bad argument (as osva_affected_ranges, or out NULL while cap is not 0), -3 if cap is smaller
+ * than the version (cap at least the longest fixed_len is always enough).
+ * Theorems (OSVACore/Ranges.lean): the version is above v, no range includes it (so osva_affected_ranges says 0 for it),
+ * and no other fixed version with those two properties is below it; when the range v lies in has a fixed version that
+ * no range includes, there is one.
+ */
+long osva_upgrade_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges, uint8_t *out, size_t cap);
 
 /*
  * Privacy filter. Keys are "<ecosystem>\x1f<name>". mask[i] is set to 1 if inventory key i is in the public index

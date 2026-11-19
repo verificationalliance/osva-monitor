@@ -5,6 +5,7 @@
 -/
 import OSVACore.Version
 import OSVACore.Affected
+import OSVACore.Ranges
 import OSVACore.Select
 import OSVACore.Encode
 
@@ -30,6 +31,31 @@ def ffiAffected (v : ByteArray) (fixed : Array ByteArray) : UInt8 :=
   | some true => 1
   | some false => 0
 
+/-- Bound `j` of the C caller's ranges: present when byte `j` of `present` is not 0. -/
+def boundAt (present : Bytes) (bounds : List Bytes) (j : Nat) : Option Bytes :=
+  if present.getD j 0 = 0 then none else some (bounds.getD j [])
+
+/-- The C caller's ranges: range `k` has its introduced, fixed and last affected versions at `3k`, `3k + 1`, `3k + 2`. -/
+def decodeRanges (present : Bytes) (bounds : List Bytes) : List Range :=
+  (List.range (present.length / 3)).map fun k =>
+    { introduced := boundAt present bounds (3 * k), fixed := boundAt present bounds (3 * k + 1),
+      lastAffected := boundAt present bounds (3 * k + 2) }
+
+/-- osva_affected_ranges: 1 affected, 0 not, 2 unknown. -/
+@[export osva_lean_affected_ranges]
+def ffiAffectedRanges (v present : ByteArray) (bounds : Array ByteArray) : UInt8 :=
+  match affectedIn (toBytes v) (decodeRanges (toBytes present) (bounds.toList.map toBytes)) with
+  | none => 2
+  | some true => 1
+  | some false => 0
+
+/-- osva_upgrade_ranges: empty when there is no upgrade, else 1 followed by the version. -/
+@[export osva_lean_upgrade_ranges]
+def ffiUpgradeRanges (v present : ByteArray) (bounds : Array ByteArray) : ByteArray :=
+  match upgradeIn (toBytes v) (decodeRanges (toBytes present) (bounds.toList.map toBytes)) with
+  | none => ofBytes []
+  | some u => ofBytes (1 :: u)
+
 /-- osva_select: one byte per inventory key, 1 if it may be sent. -/
 @[export osva_lean_select]
 def ffiSelect (index inventory : Array ByteArray) : ByteArray :=
@@ -44,6 +70,25 @@ theorem ffiVcmp_spec (a b : ByteArray) : ffiVcmp a b = ordCode (vcmp (toBytes a)
 theorem ffiAffected_one_iff (v : ByteArray) (fixed : Array ByteArray) :
     ffiAffected v fixed = 1 ↔ affected (toBytes v) (fixed.toList.map toBytes) = some true := by
   unfold ffiAffected; split <;> simp_all
+
+theorem ffiAffectedRanges_one_iff (v present : ByteArray) (bounds : Array ByteArray) :
+    ffiAffectedRanges v present bounds = 1 ↔
+      affectedIn (toBytes v) (decodeRanges (toBytes present) (bounds.toList.map toBytes)) = some true := by
+  unfold ffiAffectedRanges; split <;> simp_all
+
+theorem ffiUpgradeRanges_spec (v present : ByteArray) (bounds : Array ByteArray) :
+    toBytes (ffiUpgradeRanges v present bounds) =
+      match upgradeIn (toBytes v) (decodeRanges (toBytes present) (bounds.toList.map toBytes)) with
+      | none => []
+      | some u => 1 :: u := by
+  unfold ffiUpgradeRanges; split <;> simp_all [toBytes, ofBytes]
+
+/-- Range `k` is read from bounds `3k`, `3k + 1` and `3k + 2`, as osva_core.h says. -/
+theorem decodeRanges_get (present : Bytes) (bounds : List Bytes) (k : Nat) (hk : k < present.length / 3) :
+    (decodeRanges present bounds)[k]'(by simpa [decodeRanges] using hk) =
+      { introduced := boundAt present bounds (3 * k), fixed := boundAt present bounds (3 * k + 1),
+        lastAffected := boundAt present bounds (3 * k + 2) } := by
+  simp [decodeRanges]
 
 theorem ffiEncode_spec (s : ByteArray) : toBytes (ffiEncode s) = pctEncode (toBytes s) := by
   simp [ffiEncode, toBytes, ofBytes]
