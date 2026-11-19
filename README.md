@@ -54,6 +54,11 @@ command for that place, whether it is Homebrew, a project folder, a global npm i
 - **Apps that bundle Electron**, checked by the Electron version inside them.
 - **Global packages** from npm, cargo and RubyGems, and **every Python** on the Mac (Apple's, Homebrew's,
   python.org's) with what is installed into it.
+- **Go programs** and **Rust programs** on the PATH and in Homebrew's Cellar, by what they were built with: the
+  modules and Go version in a Go binary's build info, the crates cargo-auditable records. The binaries are only read,
+  never run.
+- **pipx and uv tools**, each tool's own environment, and **conda** environments (their PyPI packages).
+- **MacPorts** and **Nix**, and conda's other packages, matched to the projects the site grades.
 - **Project folders you add**: package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt, poetry.lock,
   Pipfile.lock, Cargo.lock, go.sum, Gemfile.lock and composer.lock. A changed lockfile is checked again within
   seconds.
