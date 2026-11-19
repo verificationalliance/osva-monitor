@@ -177,8 +177,13 @@ public struct FixConfirmation: View {
             case let .ready(p):
                 if let blocked = p.blocked {
                     FixNotice(symbol: "exclamationmark.triangle.fill", text: blocked.prefix(1).uppercased() + blocked.dropFirst() + ".", strong: true)
-                } else if let also = Self.also(p, plan: plan, companions: offer.companions) {
-                    Text(also).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    if let also = Self.also(p, plan: plan, companions: offer.companions) {
+                        Text(also).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let used = Self.usedBy(p.usedBy) {
+                        Text(used).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if let m = plan.majorUpgrade { FixNotice(symbol: "exclamationmark.triangle", text: m) }
@@ -202,6 +207,12 @@ public struct FixConfirmation: View {
         .fixCard()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Review the fix")
+    }
+
+    /// "Used by whisperx, pyannote.audio.": who to check afterwards, when it changes more than a patch.
+    static func usedBy(_ names: [String]) -> String? {
+        guard !names.isEmpty else { return nil }
+        return "Used by " + names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " and \(names.count - 3) more." : ".")
     }
 
     /// "Also updates openssl@3.", "Also installs idna and 2 more.", "Also updates torchaudio, which moves with it.";
@@ -504,13 +515,14 @@ public struct FixProblemCard: View {
     private var symbol: String {
         switch outcome {
         case .needsPassword: return "lock.fill"
+        case .fixedCheck: return "checkmark.circle.fill"
         case .broke, .undoFailed: return "exclamationmark.triangle.fill"
         default: return "exclamationmark.circle.fill"
         }
     }
 
     private var showsLog: Bool {
-        switch outcome { case .blocked: return false; default: return true }
+        switch outcome { case .blocked, .fixedCheck: return false; default: return true }
     }
 
     @ViewBuilder private var actions: some View {
@@ -519,6 +531,13 @@ public struct FixProblemCard: View {
             if let undo = run?.undo {
                 Button(action: self.undo) { Text("Undo").fontWeight(.semibold) }
                     .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+                    .disabled(waitingFor != nil)
+                    .help("Puts back " + undo.restores.joined(separator: ", ") + ": " + undo.command)
+            }
+        case .fixedCheck:
+            if let undo = run?.undo {
+                Button("Undo", action: self.undo)                      // there if the check finds something broken
+                    .buttonStyle(.bordered).buttonBorderShape(.capsule)
                     .disabled(waitingFor != nil)
                     .help("Puts back " + undo.restores.joined(separator: ", ") + ": " + undo.command)
             }

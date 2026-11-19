@@ -17,10 +17,14 @@ public struct FixPreview: Equatable, Sendable {
     /// For pip: every other package the dry run would install, pinned ("torchaudio==2.8.0"). They go on the command
     /// line after the fix's own pin, so the run installs exactly what the review showed.
     public var pins: [String] = []
+    /// For an upgrade beyond a patch: the installed packages that use what changes ("whisperx", "pyannote.audio"),
+    /// for the review's "Used by" line. pip's checks cannot tell whether they still work.
+    public var usedBy: [String] = []
 
     public init(source: String?, lines: [String], unavailable: String? = nil, installs: [String: String] = [:], blocked: String? = nil,
-                pins: [String] = []) {
+                pins: [String] = [], usedBy: [String] = []) {
         self.source = source; self.lines = lines; self.unavailable = unavailable; self.installs = installs; self.blocked = blocked; self.pins = pins
+        self.usedBy = usedBy
     }
 
     /// The other packages it would change, by name: "openssl@3" for a `brew upgrade nginx` that also upgrades it.

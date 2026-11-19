@@ -50,8 +50,9 @@ extension UpgradeCommand {
             func isMain(_ name: String) -> Bool { PackageNames.indexName(name, in: .pypi) == t.mainPackage }
             let deps = upgrades.filter { !isMain($0.name) && $0.target != nil }
             guard !deps.isEmpty else { return Advice(command: "pipx upgrade \(tool)") }
-            let main = upgrades.first { isMain($0.name) }?.target.map { "\(t.mainPackage)>=\($0)" } ?? t.mainPackage
-            let requirements = [main] + deps.map { "\($0.name)>=\($0.target!)" }
+            // exact pins (never ">=", which let pip take a newer release than the fix and break what needed an older one)
+            let main = upgrades.first { isMain($0.name) }?.target.map { "\(t.mainPackage)==\($0)" } ?? t.mainPackage
+            let requirements = [main] + deps.map { "\($0.name)==\($0.target!)" }
             return Advice(command: "pipx runpip \(tool) install --upgrade " + requirements.map(quote).joined(separator: " "),
                           note: "pip upgrades them together with \(t.mainPackage), within the versions it allows; if they conflict, pip changes nothing.")
         }

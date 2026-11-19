@@ -650,16 +650,55 @@ public struct PipGuard: Sendable {
         var changes = also
         changes[PythonNames.normal(pip.name)] = pip.target
         let conflicts = site.conflicts(changes)
-        guard let first = conflicts.first else { return .clear(site) }
-        // they pin it exactly, and nothing else stands in the way: they can move with it (only before the dry run)
-        if also.isEmpty, conflicts.allSatisfy(\.exact) {
-            return .companions(Array(Set(conflicts.map(\.dependent))).sorted(), site)
+        // they pin it exactly: they can move with it, in one pinned command (only before the dry run names their versions)
+        let companions = also.isEmpty ? conflicts.filter(\.exact) : []
+        let blocking = conflicts.filter { c in !companions.contains(c) }
+        if let first = blocking.first {
+            let dependents = Array(Set(blocking.map(\.dependent))).sorted()
+            let line = dependents.count == 1
+                ? "\(first.line) — \(route(first.dependent, site: site, package: pip.name))"
+                : "\(first.line), and \(dependents.count - 1) more — update them first"
+            return .blocked(line, blocking)
         }
-        let dependents = Array(Set(conflicts.map(\.dependent))).sorted()
-        let line = dependents.count == 1
-            ? "\(first.line) — \(route(first.dependent, site: site, package: pip.name))"
-            : "\(first.line), and \(dependents.count - 1) more — update them first"
-        return .blocked(line, conflicts)
+        // rule 4.5: a release known to remove what others use, while something installed uses the package
+        let moving = Set(changes.keys).union(companions.map { PythonNames.normal($0.dependent) })
+        for (key, target) in changes.sorted(by: { $0.key < $1.key }) {
+            guard let now = site.live(key), let boundary = RuntimeBoundaries.crossed(key, from: now.version, to: target, in: site) else { continue }
+            if let user = users(of: [key], in: site, except: moving).first {
+                return .blocked("\(now.name) \(boundary.version) \(boundary.change) — \(user.name) \(user.version) may rely on it", [])
+            }
+        }
+        if !companions.isEmpty { return .companions(Array(Set(companions.map(\.dependent))).sorted(), site) }
+        return .clear(site)
+    }
+
+    /// The installed distributions that depend on any of `packages` (markers and extras in use counted), other than
+    /// those in `except`: who to check after an upgrade that changes more than a patch.
+    public static func users(of packages: Set<String>, in site: PythonSite, except: Set<String> = []) -> [PythonDistribution] {
+        let extras = site.activeExtras()
+        return site.distributions.filter { d in
+            !packages.contains(d.key) && !except.contains(d.key) && d.requires.contains { line in
+                guard let r = PythonRequirement(line), packages.contains(r.key) else { return false }
+                return r.marker.map { PythonMarker.evaluate($0, environment: site.markers, extras: extras[d.key] ?? []) != false } ?? true
+            }
+        }.sorted { $0.name.lowercased() < $1.name.lowercased() }
+    }
+
+    /// Whether `from` to `to` changes more than the patch number (the first two release numbers differ).
+    public static func beyondPatch(from: String, to: String) -> Bool {
+        let a = PythonSpecifier.release(PythonSpecifier.plain(from)).prefix(2).compactMap { Int($0) }
+        let b = PythonSpecifier.release(PythonSpecifier.plain(to)).prefix(2).compactMap { Int($0) }
+        return a.count < 2 || b.count < 2 || a != b
+    }
+
+    /// "whisperx", "whisperx and pyannote.audio", "whisperx and 2 more": who to check, for one short line.
+    public static func usersLine(_ names: [String]) -> String? {
+        guard let first = names.first else { return nil }
+        switch names.count {
+        case 1: return first
+        case 2: return "\(first) and \(names[1])"
+        default: return "\(first) and \(names.count - 1) more"
+        }
     }
 
     /// What to do about one package that stands in the way, as far as the installed metadata tells: nothing needs it

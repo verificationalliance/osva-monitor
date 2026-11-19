@@ -4,6 +4,9 @@ import Foundation
 public enum FixOutcome: Equatable, Sendable {
     /// Checked again: the version installed now has no finding, and nothing that depends on it broke.
     case fixed(now: String)
+    /// The same, after more than a patch upgrade of something other packages use: pip's checks cannot tell whether
+    /// they still work, so the row says which to check ("whisperx"), and Undo stays.
+    case fixedCheck(now: String, users: String)
     /// Checked again: no longer installed (a removal, or an uninstall).
     case removed
     /// Checked again and still found; the reason the app knows.
@@ -41,6 +44,7 @@ public enum FixOutcome: Equatable, Sendable {
     public var text: String {
         switch self {
         case let .fixed(now): return "Fixed — now \(now)"
+        case let .fixedCheck(now, users): return "Fixed — now \(now) · check \(users) still " + (users.contains(" and ") ? "work" : "works")
         case .removed: return "Removed"
         case let .stillAffected(why): return "Still affected: \(why)"
         case .failed(129): return "The Terminal window was closed before the command finished"
@@ -62,13 +66,13 @@ public enum FixOutcome: Equatable, Sendable {
 
     /// Whether the finding is gone.
     public var isResolved: Bool {
-        switch self { case .fixed, .removed: return true; default: return false }
+        switch self { case .fixed, .fixedCheck, .removed: return true; default: return false }
     }
 
     /// Whether this is a problem to show with the log and a way on (Retry, Undo, Terminal).
     public var isProblem: Bool {
         switch self {
-        case .fixed, .removed, .undone: return false
+        case .fixed, .fixedCheck, .removed, .undone: return false
         default: return true
         }
     }
@@ -88,11 +92,12 @@ public enum FixOutcome: Equatable, Sendable {
 
     /// The outcome of a run in the app. Anything it broke decides first: a run that broke what depends on it is never
     /// "Fixed", whatever the package's own check says. Then what is installed, then how the command ended.
+    /// `check`: who uses what changed beyond a patch ("whisperx"): a fixed outcome says to check them.
     public static func make(ending: FixEnding, before: Finding, recheck: Scanner.Recheck, homebrew: HomebrewAvailability?,
-                            broke: String? = nil) -> FixOutcome {
+                            broke: String? = nil, check: String? = nil) -> FixOutcome {
         if let broke { return .broke(broke) }
         switch recheck {
-        case let .fixed(now): return .fixed(now: now)
+        case let .fixed(now): return check.map { .fixedCheck(now: now, users: $0) } ?? .fixed(now: now)
         case .removed: return .removed
         case let .couldNotCheck(why): return ending.succeeded ? .couldNotCheck(why) : unfinished(ending, found: nil)
         case let .stillAffected(after):

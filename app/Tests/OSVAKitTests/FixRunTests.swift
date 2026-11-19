@@ -617,6 +617,86 @@ func site(_ dists: [(String, String, [String], Bool, Bool)], in dir: URL = tempo
     }
 }
 
+// MARK: - Runtime boundaries pip cannot see (rule 4.5)
+
+@Suite struct RuntimeBoundaryTests {
+    static let markers = PythonDependentsTests.markers
+    func pip(_ name: String, _ target: String, installed: String) -> FixPlan.Pip {
+        FixPlan.Pip(python: "/x/python", requirement: "\(name)==\(target)", user: false, name: name, target: target, installed: installed)
+    }
+
+    /// The owner's Python 3.11: the server's plan for torch targets 2.13; torchaudio pins torch and would move with it;
+    /// the dry run and `pip check` are clean; pyannote.audio 3.3.2 then fails on import (torchaudio 2.9 removed
+    /// AudioMetaData). Not offered, and one line says why.
+    static func torchSite(withPyannote: Bool = true) -> PythonSite {
+        var dists: [(String, String, [String], Bool, Bool)] = [
+            ("torch", "2.7.0", [], true, false), ("torchaudio", "2.7.0", ["torch==2.7.0"], true, false),
+            ("whisperx", "3.3.4", ["torch>=2", "torchaudio>=2", "pyannote.audio==3.3.2"], true, false),
+        ]
+        if withPyannote { dists.append(("pyannote.audio", "3.3.2", ["torch>=2.0.0", "torchaudio>=2.2.0", "lightning>=2.0.1"], false, false)) }
+        return PythonSite(folders: [site(dists).path], markers: markers)
+    }
+
+    @Test func torchTo2Point13WithPyannoteIsRefused() {
+        let s = Self.torchSite()
+        guard case let .blocked(line, _) = PipGuard.verdict(s, pip: pip("torch", "2.13.0", installed: "2.7.0")) else { Issue.record("offered"); return }
+        #expect(line == "torch 2.9 goes with torchaudio 2.9, which removed AudioMetaData — pyannote.audio 3.3.2 may rely on it")
+        // and at the review, with torchaudio 2.13 from the dry run: refused all the same
+        guard case let .blocked(review, _) = PipGuard.verdict(s, pip: pip("torch", "2.13.0", installed: "2.7.0"),
+                                                               also: ["torch": "2.13.0", "torchaudio": "2.13.0"]) else { Issue.record("offered at review"); return }
+        #expect(review.hasPrefix("torch 2.9") || review.hasPrefix("torchaudio 2.9 removed AudioMetaData"))
+        // below the boundary it is offered, with torchaudio moving along, and the review names who to check
+        #expect(PipGuard.verdict(s, pip: pip("torch", "2.8.0", installed: "2.7.0")) == .companions(["torchaudio"], s))
+        let moving: Set = ["torch", "torchaudio"]
+        #expect(PipGuard.users(of: moving, in: s, except: moving).map(\.name) == ["pyannote.audio", "whisperx"])
+        #expect(PipGuard.beyondPatch(from: "2.7.0", to: "2.8.0") && !PipGuard.beyondPatch(from: "2.7.0", to: "2.7.1"))
+    }
+
+    @Test func theTableAndItsEdges() {
+        #expect(RuntimeBoundaries.crossed("torchaudio", from: "2.8.0", to: "2.9.0")?.change == "removed AudioMetaData")
+        #expect(RuntimeBoundaries.crossed("torchaudio", from: "2.9.0", to: "2.10.0") == nil)              // already past it
+        #expect(RuntimeBoundaries.crossed("Huggingface_Hub", from: "0.36.0", to: "1.0") != nil)             // normal names, padding
+        #expect(RuntimeBoundaries.crossed("setuptools", from: "80.9.0", to: "82.0.0")?.change == "removed pkg_resources")
+        #expect(RuntimeBoundaries.crossed("setuptools", from: "78.1.1", to: "81.0.0") == nil)
+        for (p, a, b) in [("starlette", "0.48.0", "1.3.1"), ("numpy", "1.26.4", "2.2.6"), ("pydantic", "1.10.13", "2.11.0"), ("urllib3", "1.26.20", "2.8.0"),
+                          ("protobuf", "3.20.3", "5.29.6"), ("pyOpenSSL", "25.1.0", "26.2.0"), ("lightning", "2.5.6", "2.6.0"),
+                          ("pytorch-lightning", "2.5.6", "2.6.6"), ("torch", "2.8.0", "2.13.0")] {
+            #expect(RuntimeBoundaries.crossed(p, from: a, to: b) != nil, "\(p) \(a) → \(b)")
+        }
+        // Pillow 13 only matters with an imageio below 2.38.2
+        let old = PythonSite(folders: [site([("imageio", "2.37.0", ["pillow>=8.3.2"], false, false), ("pillow", "12.2.0", [], false, false)]).path], markers: [:])
+        let new = PythonSite(folders: [site([("imageio", "2.38.2", ["pillow>=8.3.2"], false, false), ("pillow", "12.2.0", [], false, false)]).path], markers: [:])
+        #expect(RuntimeBoundaries.crossed("pillow", from: "12.2.0", to: "13.0.0", in: old) != nil)
+        #expect(RuntimeBoundaries.crossed("pillow", from: "12.2.0", to: "13.0.0", in: new) == nil)
+        // a boundary crossed by a package nothing depends on is fine
+        let alone = PythonSite(folders: [site([("numpy", "1.26.4", [], true, false)]).path], markers: [:])
+        guard case .clear = PipGuard.verdict(alone, pip: pip("numpy", "2.2.6", installed: "1.26.4")) else { Issue.record("numpy alone refused"); return }
+    }
+
+    /// certifi: calendar versions, used by requests; no boundary. Offered, and honest about who to check.
+    @Test func certifiStaysOffered() {
+        let s = PythonSite(folders: [site([("certifi", "2024.8.30", [], false, false), ("requests", "2.32.5", ["certifi>=2017.4.17"], true, false)]).path],
+                           markers: Self.markers)
+        guard case .clear = PipGuard.verdict(s, pip: pip("certifi", "2025.11.12", installed: "2024.8.30")) else { Issue.record("certifi refused"); return }
+        #expect(PipGuard.beyondPatch(from: "2024.8.30", to: "2025.11.12"))
+        #expect(PipGuard.users(of: ["certifi"], in: s).map(\.name) == ["requests"])
+        let f = fixable(.pip(python: Fixture.pythonOrg, user: false, formula: nil), "certifi", .pypi, installed: "2024.8.30", fixed: "2025.11.12")
+        #expect(FixOutcome.make(ending: .exited(0), before: f, recheck: .fixed(now: "2025.11.12"), homebrew: nil, check: PipGuard.usersLine(["requests"])).text
+            == "Fixed — now 2025.11.12 · check requests still works")
+        #expect(FixOutcome.fixedCheck(now: "2.8.0", users: "whisperx and pyannote.audio").text == "Fixed — now 2.8.0 · check whisperx and pyannote.audio still work")
+        #expect(FixOutcome.fixedCheck(now: "2.8.0", users: "whisperx").isResolved)
+        // a patch bump says nothing more
+        #expect(!PipGuard.beyondPatch(from: "2024.8.30", to: "2024.8.31"))
+    }
+
+    /// starlette is still refused before it runs: its dependents' specifiers say so first.
+    @Test func starletteIsStillRefused() {
+        let s = PythonSite(distributions: PythonSite.read(folders: [PythonDependentsTests.before]), markers: Self.markers)
+        guard case let .blocked(line, _) = PipGuard.verdict(s, pip: pip("starlette", "1.3.1", installed: "0.48.0")) else { Issue.record("offered"); return }
+        #expect(line == "fastapi 0.120.0 needs starlette < 0.49.0, and 1 more — update them first")
+    }
+}
+
 // MARK: - How a run in the app ended
 
 @Suite struct FixEndingTests {

@@ -72,8 +72,16 @@ public struct FindingRow: View {
 
     /// The version a fix reached, when the check found it fixed.
     private var fixedNow: String? {
-        if case let .finished(.fixed(now))? = fix.progress { return now }
-        return nil
+        switch fix.progress {
+        case let .finished(.fixed(now))?, let .finished(.fixedCheck(now, _))?: return now
+        default: return nil
+        }
+    }
+
+    /// Fixed, but beyond a patch of something others use: the row keeps a card with who to check, and Undo.
+    private var checkAfterFix: Bool {
+        if case .fixedCheck? = fix.outcome, fix.run?.undo != nil { return true }
+        return false
     }
 
     /// Installed in `.secondary`, a `.tertiary` arrow, the fixed version in `.primary`; or the plain "no fixed
@@ -104,6 +112,10 @@ public struct FindingRow: View {
         VStack(alignment: .leading, spacing: 8) {
             ProvenanceView(finding.provenance)
             if !fix.isResolved { advice }
+            if checkAfterFix, let outcome = fix.outcome {
+                FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: false, retry: {},
+                               undo: { actions.fix.undo(finding) }, runInTerminal: {}, copy: actions.copy)
+            }
             SiteLink(finding.pageLabel, url: finding.pageURL, open: actions.open)
         }
         .padding(.top, 4)
@@ -166,7 +178,7 @@ public struct FindingRow: View {
     private var showsCard: Bool {
         if fix.run != nil && fix.isBusy { return true }
         if let o = fix.outcome, o.isProblem, fix.run != nil { return true }
-        return false
+        return checkAfterFix
     }
 
     /// Retry runs the same command again: for an ending that may go better a second time, while the button is offered.

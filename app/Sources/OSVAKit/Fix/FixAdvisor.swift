@@ -81,7 +81,12 @@ public struct FixAdvisor: Sendable {
             return preview
         }
         switch await PipGuard(tools: tools).check(pip, also: preview.installs) {
-        case .clear: preview.pins = others.map { "\($0.key)==\($0.value)" }
+        case let .clear(site):
+            preview.pins = others.map { "\($0.key)==\($0.value)" }
+            if PipGuard.beyondPatch(from: pip.installed, to: pip.target) {
+                let moving = Set(preview.installs.keys)
+                preview.usedBy = PipGuard.users(of: moving, in: site, except: moving).map(\.name)
+            }
         case .companions: preview.blocked = "what pins \(pip.name) would not move with it"
         case let .blocked(line, _): preview.blocked = line
         case let .unknown(why): preview.blocked = "the app \(why)"

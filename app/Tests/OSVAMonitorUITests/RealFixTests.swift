@@ -110,7 +110,11 @@ import OSVAKit
         let end = try #require(state())
         print("outcome:", end.outcome?.text ?? "-")
         print("log:\n" + (end.run?.log.text ?? ""))
-        #expect(end.progress == .finished(.fixed(now: "1.17.0")))
+        // 1.16 to 1.17 is more than a patch: if anything installed uses six, the row also says to check it
+        switch end.outcome {
+        case .fixed(now: "1.17.0")?, .fixedCheck(now: "1.17.0", _)?: break
+        default: Issue.record("outcome: \(String(describing: end.outcome))")
+        }
         #expect(end.run?.log.lines.contains { $0.hasPrefix("Successfully installed six-1.17.0") } == true)
         #expect(snapshots >= 1)
         let installed = PythonSite.read(folders: [userSite]).first { $0.key == "six" }?.version

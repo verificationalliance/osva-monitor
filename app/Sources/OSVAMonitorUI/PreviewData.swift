@@ -143,7 +143,7 @@ public enum PreviewData {
         case "offer": return FixScene(fixes: fixOffers, resolved: [], open: Set(fixOffers.keys), shown: Array(fixOffers.keys))
         case "confirm": return FixScene(fixes: fixConfirmations, resolved: [], open: Set(fixConfirmations.keys), shown: Array(fixConfirmations.keys))
         case "running": return FixScene(fixes: fixRunning, resolved: [], open: [F.nginx, F.axios], shown: [F.nginx, F.axios, F.vscode])
-        case "done": return FixScene(fixes: fixDone, resolved: [F.nginx, F.axios], open: [F.nginx], shown: [F.nginx, F.axios])
+        case "done": return FixScene(fixes: fixDone, resolved: [F.nginx, F.axios, F.torch], open: [F.nginx, F.torch], shown: [F.nginx, F.axios, F.torch])
         case "problems": return FixScene(fixes: fixProblems, resolved: [F.starlette], open: Set(fixProblems.keys), shown: Array(fixProblems.keys))
         case "results": return FixScene(fixes: fixResults, resolved: fixResolved, open: [F.nginx, F.openmtp],
                                         shown: [F.axios, F.openssh, F.openmtp, F.nginx, F.nokogiri, F.vscode])
@@ -195,7 +195,8 @@ public enum PreviewData {
          FixID.torch: FixRowState(availability: .offered(offer(FixID.torch, companions: ["torchaudio"])),
                                   preview: .ready(FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)",
                                                              lines: ["Would install torch 2.8.0, torchaudio 2.8.0"],
-                                                             installs: ["torch": "2.8.0", "torchaudio": "2.8.0"], pins: ["torchaudio==2.8.0"]))),
+                                                             installs: ["torch": "2.8.0", "torchaudio": "2.8.0"], pins: ["torchaudio==2.8.0"],
+                                                             usedBy: ["pyannote.audio", "whisperx"]))),
          FixID.axios: FixRowState(availability: .offered(offer(FixID.axios)),
                                   preview: .ready(.none("npm has no dry run the app uses: the log shows what changes.")))]
     }
@@ -221,12 +222,19 @@ public enum PreviewData {
                      command: "brew upgrade nginx")]
     }
 
-    /// Fixed (its version rolled over), and removed.
+    /// Fixed (its version rolled over), removed, and fixed beyond a patch of something others use (who to check, and Undo).
     public static var fixDone: [String: FixRowState] {
-        [FixID.nginx: FixRowState(progress: .finished(.fixed(now: "1.30.7")),
-                                  run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-81), endedAt: now.addingTimeInterval(-2),
-                                                   log: brewLog, command: "brew upgrade nginx")),
-         FixID.axios: FixRowState(progress: .finished(.removed))]
+        let undo = PipUndo(invocation: FixInvocation(executable: pythonOrg.executable,
+                                                     arguments: ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check", "torch==2.7.0", "torchaudio==2.7.0"]),
+                           restores: ["torch 2.7.0", "torchaudio 2.7.0"])
+        return [FixID.nginx: FixRowState(progress: .finished(.fixed(now: "1.30.7")),
+                                         run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-81), endedAt: now.addingTimeInterval(-2),
+                                                          log: brewLog, command: "brew upgrade nginx")),
+                FixID.axios: FixRowState(progress: .finished(.removed)),
+                FixID.torch: FixRowState(progress: .finished(.fixedCheck(now: "2.8.0", users: "whisperx")),
+                                         run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-95), endedAt: now.addingTimeInterval(-3),
+                                                          log: FixLog(["Successfully installed torch-2.8.0 torchaudio-2.8.0"]),
+                                                          command: torch.upgradeCommand! + " torchaudio==2.8.0", undo: undo))]
     }
 
     /// How a run can end badly: it broke what depends on it (Undo), it needs a password (Terminal), it failed (Retry).

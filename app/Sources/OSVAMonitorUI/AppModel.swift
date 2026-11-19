@@ -201,6 +201,8 @@ public final class AppModel {
         var script: URL?
         /// An undo of an earlier run, not the plan's own command.
         var undo: PipUndo?
+        /// Who uses what a pip upgrade changed beyond a patch: a fixed outcome says to check them.
+        var check: String?
     }
 
     private enum RunEnd {
@@ -350,6 +352,7 @@ public final class AppModel {
         let launcher = self.launcher, limits = self.limits
         Task { [weak self] in
             var before: (site: PythonSite, problems: Set<String>)?
+            var check: String?
             if let (pip, also) = pip {
                 switch await guardian.check(pip, also: also) {
                 case let .blocked(line, _), let .unknown(line):
@@ -359,6 +362,11 @@ public final class AppModel {
                     self?.endBeforeRunning(finding, plan: plan, outcome: .blocked("what pins \(pip.name) would not move with it"))
                     return
                 case let .clear(site):
+                    if PipGuard.beyondPatch(from: pip.installed, to: pip.target) {
+                        var moving = Set(also.keys)
+                        moving.insert(PythonNames.normal(pip.name))
+                        check = PipGuard.usersLine(PipGuard.users(of: moving, in: site, except: moving).map(\.name))
+                    }
                     guard let problems = await guardian.problems(pip) else {
                         self?.endBeforeRunning(finding, plan: plan, outcome: .blocked("pip check did not answer, so nothing was changed"))
                         return
@@ -386,7 +394,7 @@ public final class AppModel {
             if let (pip, _) = pip, let before {
                 if case .couldNotStart = ending {} else { after = await guardian.after(pip, before: before.site, problemsBefore: before.problems) }
             }
-            self.ended.append((FixRun(finding: finding, plan: plan, undo: undo), .app(ending, after)))
+            self.ended.append((FixRun(finding: finding, plan: plan, undo: undo, check: check), .app(ending, after)))
             self.recheckNext()
         }
     }
@@ -467,8 +475,10 @@ public final class AppModel {
                 if case .stillAffected = recheck, ending.succeeded { homebrew = await advisor.homebrew(run.plan) }
                 var recheck = recheck
                 if let why = after?.uncheckable, case .fixed = recheck { recheck = .couldNotCheck(why) }
-                outcome = FixOutcome.make(ending: ending, before: run.finding, recheck: recheck, homebrew: homebrew, broke: after?.broke)
-                if let undo = after?.undo, after?.broke != nil { self?.fixes[run.finding.id]?.run?.undo = undo }
+                outcome = FixOutcome.make(ending: ending, before: run.finding, recheck: recheck, homebrew: homebrew, broke: after?.broke,
+                                          check: run.check)
+                // Undo stays on screen after anything that broke something, or that others use and pip cannot vouch for
+                if let undo = after?.undo, after?.broke != nil || run.check != nil { self?.fixes[run.finding.id]?.run?.undo = undo }
             }
             self?.finishRecheck(run, report: updated, recheck: recheck, outcome: outcome)
         }
