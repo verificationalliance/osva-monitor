@@ -102,36 +102,41 @@ that is also a proof assistant. Next to the code are theorems about it. Lean che
 input, not for a sample of them, and refuses to build if one is missing or wrong.
 
 <p align="center">
-  <img src="docs/how-it-is-proved.svg" width="860" alt="Lean source with 19 theorems is compiled to C and linked into the app through a small C bridge; Lean checks every proof">
+  <img src="docs/how-it-is-proved.svg" width="860" alt="Lean source with 31 theorems is compiled to C and linked into the app through a small C bridge; Lean checks every proof">
 </p>
 
-Four decisions are proved:
+These decisions are proved:
 
 | What the app decides | What is guaranteed, for every input |
 |---|---|
 | Which of two versions is newer (`1.0rc1 < 1.0 < 1.0.post1 < 1.0.1`, `10.6p1 < 10.6p2`) | The order never contradicts itself: reflexive, antisymmetric, transitive |
-| Whether your version is affected, given the fixed version on each release branch | A warning always comes with a newer version to upgrade to. A version at or past its own branch's fix is never flagged. A version newer than every fix is never flagged |
+| Whether your version is affected, given the versions the issuer lists as affected (PostgreSQL: 16 up to 16.15, 17 up to 17.11) | Your version is flagged if and only if it is in one of those ranges. The upgrade it suggests is newer than yours and in none of them |
+| The same, for an advisory that names only the fixed version on each release branch | A warning always comes with a newer version to upgrade to. A version at or past its own branch's fix is never flagged. A version newer than every fix is never flagged |
 | Which package names may be sent | A name is sent only if it is byte for byte in the public index |
 | How a name is put into a URL | The result never contains `/ ? # @ :`, and decoding it gives the name back, so two names never collide |
 
-This is the first guarantee about affected versions, as Lean states it
-([`core/OSVACore/Affected.lean`](core/OSVACore/Affected.lean)):
+This is the guarantee about affected ranges, as Lean states it
+([`core/OSVACore/Ranges.lean`](core/OSVACore/Ranges.lean)):
 
 ```lean
-/-- Every warning has a fixed version above the installed one. -/
-theorem affected_has_upgrade {v : Bytes} {fixed : List Bytes}
-    (h : affected v fixed = some true) :
-    ∃ f ∈ fixed, vcmp v f = .lt
+/-- Every warning means the version lies in one of the issuer's ranges. -/
+theorem affectedIn_sound {v : Bytes} {rs : List Range}
+    (h : affectedIn v rs = some true) :
+    ∃ r ∈ rs, InRange v r
 ```
 
-In words: if `affected` says your version `v` is affected, then one of the fixed versions is strictly newer than
-`v`. It holds for every version string, including the strange ones nobody thought to test.
+In words: if the app says your version `v` is affected, then `v` is in one of the ranges the issuer published. A
+companion theorem says the converse, so a version outside every range is never flagged. Both hold for every version
+string, including the strange ones nobody thought to test.
+
+When an issuer's record cannot be read as ranges exactly (a range given as commits, or one that contradicts its own
+fixes), the site says so, and the app falls back to the fixed version on each release branch.
 
 **The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the
-app. There is no hand-written Swift copy that could drift away from what was proved. About 80 lines of C pass
+app. There is no hand-written Swift copy that could drift away from what was proved. About 130 lines of C pass
 bytes between Swift and Lean. That bridge is the only unproved code on the path, and it has its own tests.
 
-**Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 19 proofs again. It
+**Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 31 proofs again. It
 then confirms that they rest only on Lean's three standard axioms (no `sorry`, nothing assumed without proof) and runs
 the bridge's tests. CI does the same on every push.
 

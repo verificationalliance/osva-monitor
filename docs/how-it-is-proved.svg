@@ -25,7 +25,7 @@
   <text class="t ink" x="38" y="86">Lean 4 source</text>
   <text class="s muted" x="38" y="109">version order, “am I affected?”,</text>
   <text class="s muted" x="38" y="128">privacy filter, URL encoding</text>
-  <text class="s clay" x="38" y="153">+ 19 theorems about them</text>
+  <text class="s clay" x="38" y="153">+ 31 theorems about them</text>
 
   <path class="arrow" d="M256 112 H 324"/><path class="head" d="M324 106 l10 6 l-10 6 z"/>
   <text class="l muted" x="294" y="100" text-anchor="middle">compiled</text>
