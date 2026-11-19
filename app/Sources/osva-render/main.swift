@@ -116,10 +116,18 @@ func main() throws {
     let now = PreviewData.now
     let full = PreviewData.report()
     let open: Set<String> = ["pkg|npm|axios|1.14.1", "brew|nginx|1.30.2"]
-    func popover(_ report: ScanReport?, scanning: Bool = false, progress: String = "", expanded: Set<String> = []) -> some View {
-        PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now), actions: .none,
-                    expanded: expanded, scrolls: false)
+    func popover(_ report: ScanReport?, scanning: Bool = false, progress: String = "", expanded: Set<String> = [],
+                 fixes: [String: FixRowState] = [:], resolved: [Finding] = []) -> some View {
+        PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now, resolved: resolved), actions: .none,
+                    fixes: fixes, expanded: expanded, scrolls: false)
     }
+    // The fix button, its confirmation, and how runs ended, each on the findings it applies to.
+    typealias F = PreviewData.FixID
+    func only(_ ids: [String]) -> ScanReport { PreviewData.report(findings: PreviewData.findings.filter { ids.contains($0.id) }) }
+    let offerIDs = [F.axios, F.nginx, F.cpython], confirmIDs = [F.nginx, F.setuptools, F.hacl]
+    let resultIDs = [F.axios, F.openssh, F.openmtp, F.nginx, F.nokogiri, F.vscode]
+    let resolved = PreviewData.findings.filter { PreviewData.fixResolved.contains($0.id) }
+    let afterRuns = PreviewData.report(findings: PreviewData.findings.filter { resultIDs.contains($0.id) && !PreviewData.fixResolved.contains($0.id) })
     var views: [(String, AnyView, Method)] = [
         ("popover", AnyView(popover(full, expanded: open)), .imageRenderer),
         ("popover-scanning", AnyView(popover(full, scanning: true, progress: "Checking 27 package versions…")), .imageRenderer),
@@ -133,6 +141,9 @@ func main() throws {
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,
                                                                      launchAtLogin: false, launchAtLoginAvailable: false, lastReport: nil), actions: .none)), .hostingView),
         ("components", AnyView(ComponentSheet()), .imageRenderer),
+        ("fix-offer", AnyView(popover(only(offerIDs), expanded: Set(offerIDs), fixes: PreviewData.fixOffers)), .imageRenderer),
+        ("fix-confirm", AnyView(popover(only(confirmIDs), expanded: Set(confirmIDs), fixes: PreviewData.fixConfirmations)), .imageRenderer),
+        ("fix-results", AnyView(popover(afterRuns, expanded: [F.nginx, F.openmtp], fixes: PreviewData.fixResults, resolved: resolved)), .imageRenderer),
     ]
     if let reportPath {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
@@ -146,7 +157,7 @@ func main() throws {
         let appearance = NSAppearance(named: name)!
         for (view, content, method) in views {
             try write(capture(content, appearance: appearance, method: method, scale: scale,
-                              width: view.hasPrefix("popover") ? PopoverView.width : nil), "\(view)-\(mode)", into: out)
+                              width: view.hasPrefix("popover") || view.hasPrefix("fix-") ? PopoverView.width : nil), "\(view)-\(mode)", into: out)
         }
     }
 }

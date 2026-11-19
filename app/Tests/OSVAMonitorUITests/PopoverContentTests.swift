@@ -83,6 +83,29 @@ import OSVAKit
         #expect(SystemNotifier.text(for: [fresh[1]]).title == "Exploited flaw: OpenSSH")
     }
 
+    @Test func aFixedFindingKeepsItsRowButIsNotCounted() {
+        let nginx = PreviewData.findings.first { $0.id == PreviewData.FixID.nginx }!
+        let rest = PreviewData.findings.filter { $0.id != nginx.id }
+        let c = PopoverContent(report: PreviewData.report(findings: rest), isScanning: false, now: now, resolved: [nginx])
+        let section = c.sections.first { $0.group == .criticalHigh }!
+        #expect(section.findings.map(\.id).contains(nginx.id))
+        #expect(section.count == section.findings.count - 1)
+        #expect(section.findings.map(\.id) == section.findings.sorted(by: FindingBuilder.precedes).map(\.id))   // in its place
+        #expect(c.heroCount == 8 && c.actionCount == 8)
+        // once a scan finds it again, it is listed once
+        let again = PopoverContent(report: PreviewData.report(), isScanning: false, now: now, resolved: [nginx])
+        #expect(again.sections.flatMap(\.findings).filter { $0.id == nginx.id }.count == 1 && again.heroCount == 9)
+    }
+
+    @Test func everyFixtureCommandIsOneTheAppWouldRun() {
+        // the render fixtures' commands are UpgradeCommand's own, and FixPlan offers them on a Mac with the tools
+        for f in PreviewData.findings where f.upgradeCommand != nil {
+            #expect(f.commandInputs.map { UpgradeCommand.advice($0).command } == f.upgradeCommand, "\(f.id)")
+        }
+        #expect(PreviewData.offer(PreviewData.FixID.nginx).plan.command == "brew upgrade nginx")
+        #expect(PreviewData.offer(PreviewData.FixID.axios).plan.action == .removal)
+    }
+
     @Test func notAnInstalledApp() {
         // `swift test` runs outside an app bundle: notifications and the login item must stay off, not crash.
         #expect(AppBundle.isInstalledApp == false)

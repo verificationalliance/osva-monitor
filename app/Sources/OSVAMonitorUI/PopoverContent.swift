@@ -6,7 +6,10 @@ import OSVAKit
 public struct PopoverContent: Sendable {
     public struct Section: Identifiable, Sendable {
         public var group: Finding.Group
+        /// Its rows: the findings, and those fixed since the last full scan, each where it was.
         public var findings: [Finding]
+        /// How many still stand (the heading's number): fixed rows are shown, not counted.
+        public var count: Int
         public var id: Int { group.rawValue }
     }
 
@@ -68,14 +71,18 @@ public struct PopoverContent: Sendable {
     public var progress: String
     public var hasReport: Bool
 
-    public init(report: ScanReport?, isScanning: Bool, progress: String = "", now: Date = Date()) {
+    /// `resolved` are findings fixed since the last full scan: no longer in the report, still shown in their place
+    /// (their rows say "Fixed — now …") until the next full scan.
+    public init(report: ScanReport?, isScanning: Bool, progress: String = "", now: Date = Date(), resolved: [Finding] = []) {
         self.isScanning = isScanning
         self.progress = progress
         hasReport = report != nil
         let findings = report?.findings ?? []
+        let standing = Set(findings.map(\.id))
+        let shown = findings + resolved.filter { !standing.contains($0.id) }
         sections = Finding.Group.allCases.compactMap { g in
-            let items = findings.filter { $0.group == g }
-            return items.isEmpty ? nil : Section(group: g, findings: items)
+            let items = shown.filter { $0.group == g }.sorted(by: FindingBuilder.precedes)
+            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) }.count)
         }
         actionCount = report?.actionCount ?? 0
         problem = report?.problems.first

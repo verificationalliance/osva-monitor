@@ -54,7 +54,10 @@ struct PopoverScene: View {
             copy: { command in
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(command, forType: .string)
-            }),
+            },
+            fix: FixActions(assess: { model.assessFix($0) }, begin: { model.beginFix($0) }, cancel: { model.cancelFix($0) },
+                            run: { model.runFix($0) })),
+            fixes: model.fixes,
             expanded: model.initiallyExpanded)
         .onAppear { CaptureMode.openSettings = openSettings }
     }
