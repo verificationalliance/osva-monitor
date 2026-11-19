@@ -102,9 +102,51 @@ public enum PreviewData {
 
     static func finding(_ id: String) -> Finding { findings.first { $0.id == id }! }
 
+    /// A package some project's framework needs held back: the starlette under fastapi 0.120.0 that 0.2.0 broke.
+    public static let python311 = PythonEnvironment(executable: "/opt/homebrew/bin/python3.11", version: "3.11.14", kind: .homebrew,
+                                                    externallyManaged: false, userSite: nil, formula: "python@3.11")
+    public static let starlette = finding("pkg|PyPI|starlette|0.48.0|py3.11.14", .exploited, .package(ecosystem: .pypi, name: "starlette"),
+                                          "starlette", "0.48.0", "1.3.1", .high, flaws: 6, exploited: true,
+                                          origins: [.pip(python: python311, user: false, formula: nil)],
+                                          page: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), ecosystem: .pypi)
+
+    /// The findings the fix scenes draw from: the fixtures, and starlette.
+    public static var fixFindings: [Finding] { findings + [starlette] }
+
+    static func fixFinding(_ id: String) -> Finding { fixFindings.first { $0.id == id }! }
+
+    /// What each in-app state looks like, on the findings it applies to (osva-render, CaptureMode's --fix-states).
+    public struct FixScene: Sendable {
+        public var fixes: [String: FixRowState]
+        /// Rows kept after their finding left the report (fixed, removed, or fixed but broke something).
+        public var resolved: [String]
+        public var open: Set<String>
+        /// The findings shown; the resolved ones are left out of the report and come back through `resolved`.
+        public var shown: [String]
+
+        public func report() -> ScanReport { PreviewData.report(findings: PreviewData.fixFindings.filter { shown.contains($0.id) && !resolved.contains($0.id) }) }
+        public var resolvedFindings: [Finding] { PreviewData.fixFindings.filter { resolved.contains($0.id) } }
+    }
+
+    public static let fixSceneNames = ["offer", "confirm", "running", "done", "problems", "results"]
+
+    public static func fixScene(_ name: String) -> FixScene? {
+        typealias F = FixID
+        switch name {
+        case "offer": return FixScene(fixes: fixOffers, resolved: [], open: Set(fixOffers.keys), shown: Array(fixOffers.keys))
+        case "confirm": return FixScene(fixes: fixConfirmations, resolved: [], open: Set(fixConfirmations.keys), shown: Array(fixConfirmations.keys))
+        case "running": return FixScene(fixes: fixRunning, resolved: [], open: [F.nginx, F.axios], shown: [F.nginx, F.axios, F.vscode])
+        case "done": return FixScene(fixes: fixDone, resolved: [F.nginx, F.axios], open: [F.nginx], shown: [F.nginx, F.axios])
+        case "problems": return FixScene(fixes: fixProblems, resolved: [F.starlette], open: Set(fixProblems.keys), shown: Array(fixProblems.keys))
+        case "results": return FixScene(fixes: fixResults, resolved: fixResolved, open: [F.nginx, F.openmtp],
+                                        shown: [F.axios, F.openssh, F.openmtp, F.nginx, F.nokogiri, F.vscode])
+        default: return nil
+        }
+    }
+
     /// The plan a fixture finding gets, made by FixPlan as the app makes it.
     public static func offer(_ id: String, homebrew: String? = nil) -> FixOffer {
-        guard case let .success(plan) = FixPlan.make(for: finding(id), tools: fixtureTools) else { preconditionFailure("no fix for \(id)") }
+        guard case let .success(plan) = FixPlan.make(for: fixFinding(id), tools: fixtureTools) else { preconditionFailure("no fix for \(id)") }
         return FixOffer(plan: plan, homebrew: homebrew)
     }
 
@@ -112,17 +154,20 @@ public enum PreviewData {
         public static let axios = "pkg|npm|axios|1.14.1", openssh = "brew|openssh|10.6p1", openmtp = "app|/Applications/OpenMTP.app|18.3.15"
         public static let nginx = "brew|nginx|1.30.2", nokogiri = "pkg|RubyGems|nokogiri|1.13.8", cpython = "brew|python@3.12|3.12.16"
         public static let setuptools = "pkg|PyPI|setuptools|58.0.4|py3.9.6", vscode = "app|/Applications/Visual Studio Code.app|42.10.0"
-        public static let hacl = "pkg|npm|hacl-wasm|1.4.0"
+        public static let hacl = "pkg|npm|hacl-wasm|1.4.0", starlette = "pkg|PyPI|starlette|0.48.0|py3.11.14"
     }
 
-    /// Rows opened: a Remove button, a Fix button, and none because Homebrew does not have the fix yet.
+    /// Rows opened: Remove, Update to a version, Update the app that carries the flaw; none because something depends
+    /// on the version there now, and none because Homebrew does not have the fix yet.
     public static var fixOffers: [String: FixRowState] {
         [FixID.axios: FixRowState(availability: .offered(offer(FixID.axios))),
          FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7."))),
+         FixID.openmtp: FixRowState(availability: .offered(offer(FixID.openmtp, homebrew: "Has OpenMTP 3.2.25; 3.2.24 is installed."))),
+         FixID.starlette: FixRowState(availability: .withheld("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first.")),
          FixID.cpython: FixRowState(availability: .withheld("Homebrew still ships 3.12.17; the fix is 3.14.11 upstream."))]
     }
 
-    /// The confirmation open: a `brew upgrade` with its dry run, a pip upgrade across a major version, a lockfile.
+    /// The review open: a `brew upgrade` with its dry run, a pip upgrade across a major version, a removal.
     public static var fixConfirmations: [String: FixRowState] {
         [FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7.")),
                                   preview: .ready(FixPreview(source: "brew upgrade --dry-run",
@@ -132,12 +177,72 @@ public enum PreviewData {
                                                                  nginx 1.30.2 -> 1.30.7
                                                                  """)))),
          FixID.setuptools: FixRowState(availability: .offered(offer(FixID.setuptools)),
-                                       preview: .ready(.none("This pip (21.2.4) has no dry run: pip 22.2 added it."))),
-         FixID.hacl: FixRowState(availability: .offered(offer(FixID.hacl)),
-                                 preview: .ready(.none("npm has no dry run the app uses: the Terminal window shows what changes.")))]
+                                       preview: .ready(FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)",
+                                                                  lines: ["Would install setuptools 78.1.1"], installs: ["setuptools": "78.1.1"]))),
+         FixID.axios: FixRowState(availability: .offered(offer(FixID.axios)),
+                                  preview: .ready(.none("npm has no dry run the app uses: the log shows what changes.")))]
     }
 
-    /// After runs: one under way, one being checked, two fixed (kept in place, not counted), one still affected, one failed.
+    static let brewLog = FixLog(["==> Auto-updating Homebrew...", "==> Fetching downloads for: nginx", "==> Upgrading nginx", "  1.30.2 -> 1.30.7"],
+                                partial: "==> Pouring nginx--1.30.7.arm64_tahoe.bottle.tar.gz")
+
+    /// nginx updating (a minute in, its log streaming); the next row's button waits for it.
+    public static var fixRunning: [String: FixRowState] {
+        [FixID.nginx: FixRowState(availability: .offered(offer(FixID.nginx, homebrew: "Has 1.30.7.")), progress: .running,
+                                  run: FixRunState(step: .running, doing: "Updating", startedAt: Date().addingTimeInterval(-63), log: brewLog,
+                                                   command: "brew upgrade nginx")),
+         FixID.axios: FixRowState(availability: .offered(offer(FixID.axios)), waitingFor: "nginx"),
+         FixID.vscode: FixRowState(availability: .offered(offer(FixID.vscode)), waitingFor: "nginx")]
+    }
+
+    /// The three steps of one run, for the component sheet.
+    public static func runSteps() -> [FixRunState] {
+        [FixRunState(step: .preparing, doing: "Updating", startedAt: Date().addingTimeInterval(-1), command: "brew upgrade nginx"),
+         FixRunState(step: .running, doing: "Updating", startedAt: Date().addingTimeInterval(-63), log: brewLog, command: "brew upgrade nginx"),
+         FixRunState(step: .checking, doing: "Updating", startedAt: Date().addingTimeInterval(-81), endedAt: Date().addingTimeInterval(-2),
+                     log: FixLog(brewLog.lines + ["==> Pouring nginx--1.30.7.arm64_tahoe.bottle.tar.gz", "🍺  /opt/homebrew/Cellar/nginx/1.30.7: 27 files, 2.6MB"]),
+                     command: "brew upgrade nginx")]
+    }
+
+    /// Fixed (its version rolled over), and removed.
+    public static var fixDone: [String: FixRowState] {
+        [FixID.nginx: FixRowState(progress: .finished(.fixed(now: "1.30.7")),
+                                  run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-81), endedAt: now.addingTimeInterval(-2),
+                                                   log: brewLog, command: "brew upgrade nginx")),
+         FixID.axios: FixRowState(progress: .finished(.removed))]
+    }
+
+    /// How a run can end badly: it broke what depends on it (Undo), it needs a password (Terminal), it failed (Retry).
+    public static var fixProblems: [String: FixRowState] {
+        let undo = PipUndo(invocation: FixInvocation(executable: python311.executable,
+                                                     arguments: ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check", "starlette==0.48.0"]),
+                           restores: ["starlette 0.48.0"])
+        return [
+            FixID.starlette: FixRowState(progress: .finished(.broke("fastapi 0.120.0")),
+                                         run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-14), endedAt: now.addingTimeInterval(-6),
+                                                          log: FixLog(["Collecting starlette==1.3.1", "Installing collected packages: starlette",
+                                                                       "Successfully installed starlette-1.3.1",
+                                                                       "ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.",
+                                                                       "fastapi 0.120.0 requires starlette<0.49.0,>=0.40.0, but you have starlette 1.3.1 which is incompatible."]),
+                                                          command: starlette.upgradeCommand!, undo: undo)),
+            FixID.openmtp: FixRowState(availability: .offered(offer(FixID.openmtp)), progress: .finished(.needsPassword),
+                                       run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-38), endedAt: now.addingTimeInterval(-9),
+                                                        log: FixLog(["==> Upgrading openmtp", "==> Running installer for openmtp with sudo; the password may be necessary.",
+                                                                     "sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper",
+                                                                     "sudo: a password is required"]),
+                                                        command: "brew upgrade --cask openmtp")),
+            FixID.setuptools: FixRowState(availability: .offered(offer(FixID.setuptools)), progress: .finished(.exitedWithError(1)),
+                                          run: FixRunState(step: .checking, doing: "Updating", startedAt: now.addingTimeInterval(-21), endedAt: now.addingTimeInterval(-5),
+                                                           log: FixLog(["Collecting setuptools==78.1.1",
+                                                                        "WARNING: Retrying (Retry(total=0)) after connection broken by 'NewConnectionError': /simple/setuptools/",
+                                                                        "ERROR: Could not find a version that satisfies the requirement setuptools==78.1.1 (from versions: none)",
+                                                                        "ERROR: No matching distribution found for setuptools==78.1.1"]),
+                                                           command: finding(FixID.setuptools).upgradeCommand!)),
+        ]
+    }
+
+    /// After runs: one under way in Terminal, one being checked, two fixed (kept in place, not counted), one still
+    /// affected, one failed in Terminal.
     public static let fixResults: [String: FixRowState] = [
         FixID.axios: FixRowState(progress: .finished(.removed)),
         FixID.openssh: FixRowState(progress: .running),

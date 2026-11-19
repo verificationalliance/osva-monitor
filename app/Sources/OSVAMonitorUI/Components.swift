@@ -346,6 +346,70 @@ struct WrapAtSpaces: Layout {
     }
 }
 
+/// The one hover of the panel's rows (findings, Not checked, the not-in-index lists): the row takes a little more of
+/// `Surface.hover`, which raises its text's contrast in either appearance and never lowers it. `hovering` lets the row
+/// brighten its own chevron too.
+struct RowHover: ViewModifier {
+    var hovering: Binding<Bool>?
+    @State private var hover = false
+    @Environment(\.showsHover) private var showsHover
+
+    func body(content: Content) -> some View {
+        content
+            .background { if hover || showsHover { Rectangle().fill(Surface.hover.color) } }
+            .onHover { h in hover = h; hovering?.wrappedValue = h }
+    }
+}
+
+extension EnvironmentValues {
+    /// Draws rows as if the pointer were over them (osva-render's hover sheet: off-screen there is no pointer).
+    @Entry public var showsHover = false
+}
+
+extension View {
+    func rowHover(_ hovering: Binding<Bool>? = nil) -> some View { modifier(RowHover(hovering: hovering)) }
+
+    /// A well set into its surface (a command, a log, a fix's card): `Surface.well` with a hairline, so it keeps its
+    /// edge where the well and what is around it are both near white.
+    func well(cornerRadius: CGFloat = 7) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return background { shape.fill(Surface.well.color).overlay(shape.strokeBorder(Surface.edge.color, lineWidth: 1)) }
+    }
+}
+
+/// A link out of the app, readable on any glass: `.primary` text and a small accent-coloured arrow on a
+/// `Surface.control` capsule with a hairline edge. Never system-blue text straight on the glass, which measured 1.7:1
+/// on the owner's grey glass.
+public struct SiteLink: View {
+    public var title: String
+    public var url: URL
+    public var open: (URL) -> Void
+    @State private var hover = false
+
+    public init(_ title: String, url: URL, open: @escaping (URL) -> Void) { self.title = title; self.url = url; self.open = open }
+
+    public var body: some View {
+        Button { open(url) } label: {
+            HStack(spacing: 5) {
+                Text(title).foregroundStyle(.primary)
+                Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.accentColor)
+            }
+            .font(Typeface.small.weight(.medium))
+            .padding(.horizontal, 10).padding(.vertical, 4.5)
+            .background {
+                Capsule().fill(Surface.control.color)
+                if hover { Capsule().fill(Surface.hover.color) }
+            }
+            .overlay(Capsule().strokeBorder(Surface.edge.color, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(url.absoluteString)
+        .accessibilityAddTraits(.isLink)
+    }
+}
+
 struct TightLabel: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 3) { configuration.icon.imageScale(.small); configuration.title }

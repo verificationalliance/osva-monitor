@@ -162,6 +162,24 @@ public enum Tokens {
     }
 }
 
+/// The panel's own surfaces. Each is a wash that goes the way that raises text contrast in its appearance: white under
+/// light mode's dark text, black under dark mode's light text. So a container, a hovered row or a well can only make
+/// its text easier to read, on any glass: the system's `.quinary`/`.quaternary` fills lighten in dark mode, which on
+/// grey glass over a bright wallpaper (white text at 3:1 on the owner's Mac) made a hovered row nearly unreadable.
+/// SurfaceTests model each against light, dark and mid-grey glass.
+public enum Surface {
+    /// A group's container.
+    public static let card = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.32, darkAlpha: 0.28, icAlpha: 0.55, darkICAlpha: 0.40)
+    /// A row under the pointer, over its container: a little more of the same.
+    public static let hover = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.45, darkAlpha: 0.16, icAlpha: 0.55, darkICAlpha: 0.22)
+    /// A command or a log, and the fix's review: set into the row.
+    public static let well = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.62, darkAlpha: 0.24, icAlpha: 0.80, darkICAlpha: 0.36)
+    /// A small control drawn on whatever glass is there (the site link): its label clears 4.5:1 even on mid-grey glass.
+    public static let control = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.62, darkAlpha: 0.40, icAlpha: 0.80, darkICAlpha: 0.52)
+    /// The hairline round a container, well or control.
+    public static let edge = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.09, darkAlpha: 0.11, icAlpha: 0.30, darkICAlpha: 0.32)
+}
+
 /// Type, one place. Counts use SF Pro Rounded with tabular digits.
 public enum Typeface {
     public static let heroCount = Font.system(size: 26, weight: .bold, design: .rounded).monospacedDigit()
@@ -175,5 +193,7 @@ public enum Typeface {
     public static let chip = Font.system(size: 11, weight: .medium)
     public static let version = Font.system(size: 12, weight: .medium, design: .monospaced)
     public static let code = Font.system(size: 11, design: .monospaced)
+    /// A fix's live log: small enough for a useful line, monospaced like the command.
+    public static let log = Font.system(size: 10.5, design: .monospaced)
     public static func count(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight, design: .rounded).monospacedDigit() }
 }

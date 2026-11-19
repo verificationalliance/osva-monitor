@@ -140,31 +140,69 @@ public final class AppModel {
 
     // MARK: Fixes
     //
-    // A finding with a runnable command gets a Fix button (FixAdvisor decides; for a `brew upgrade`, after asking
-    // Homebrew). Fix… opens a confirmation with the tool's dry run; Run in Terminal writes a one-use script (FixScript)
-    // into the app's private fixes/ folder and has Terminal open it. When the command ends, the script leaves a result
-    // file in fix-results/, which the app watches; the app then checks that one finding again (Scanner.recheck) and
-    // the row says what became of it. No URL scheme, no Apple Events: a web page or another app cannot start a fix.
+    // A finding with a runnable command gets a button (FixAdvisor decides: for a `brew upgrade` after asking Homebrew,
+    // for a pip upgrade after checking everything installed that depends on the package). The button opens a review
+    // with the tool's dry run; its Update runs the command inside the app (FixProcess: an argument list, no shell, no
+    // terminal), with the row showing the steps, the time and the live log. When the command ends, the app checks
+    // that one finding again (Scanner.recheck) and, after pip, the environment's own `pip check`; the row says what
+    // became of it. One fix runs at a time. Only when the tool asks for an administrator password does the app offer
+    // Terminal: a one-use script (FixScript) that leaves a result file the app watches. No URL scheme, no Apple
+    // Events: a web page or another app cannot start a fix.
 
-    /// Each finding's fix, by finding id: its button, its confirmation, how its last run went.
+    /// Each finding's fix, by finding id: its button, its review, its run, how its last run went.
     public private(set) var fixes: [String: FixRowState] = [:]
-    /// Findings fixed since the last full scan: gone from the report, still shown in their rows until then.
+    /// Findings fixed since the last full scan (or whose upgrade broke something): gone from the report, still shown
+    /// in their rows.
     public private(set) var resolved: [Finding] = []
     public private(set) var isRechecking = false
+    /// The finding whose fix is running in the app (from Preparing to the end of Checking again).
+    public private(set) var activeFix: String?
+
+    /// The rows' fix states as the popover shows them: each also knows when another fix is running.
+    public var rowFixes: [String: FixRowState] {
+        guard let busy = busyTitle else { return fixes }
+        return fixes.mapValues { s in
+            guard !s.isBusy else { return s }
+            var shown = s
+            shown.waitingFor = busy
+            return shown
+        }
+    }
+
+    /// The name of the finding whose fix is running, in the app or in Terminal.
+    var busyTitle: String? {
+        if let activeFix { return activeTitle ?? activeFix }
+        return runs.values.first?.plan.title
+    }
 
     /// Opens a script in Terminal (tests replace it).
     @ObservationIgnored public var terminal: any TerminalOpener = SystemTerminal()
+    /// Starts commands in the app (tests replace it).
+    @ObservationIgnored public var launcher: any FixLaunching = FixProcessLauncher()
+    @ObservationIgnored public var limits = FixLimits()
     @ObservationIgnored private let advisor: FixAdvisor
-    /// Runs started in this session and not yet ended, by the id in their script's result file.
+    @ObservationIgnored private var activeTitle: String?
+    @ObservationIgnored private var activeProcess: (any FixRunning)?
+    @ObservationIgnored private var stopRequested = false
+    /// The plan each finding's last run in the app used, for Retry.
+    @ObservationIgnored private var lastPlans: [String: FixPlan] = [:]
+    /// Terminal runs started in this session and not yet ended, by the id in their script's result file.
     @ObservationIgnored private var runs: [UUID: FixRun] = [:]
     /// Runs that ended and wait to be checked again (one at a time, never during a scan).
-    @ObservationIgnored private var ended: [(run: FixRun, status: Int32)] = []
+    @ObservationIgnored private var ended: [(run: FixRun, end: RunEnd)] = []
     @ObservationIgnored private var resultWatcher: FixResultWatcher?
 
     private struct FixRun {
         var finding: Finding
         var plan: FixPlan
-        var script: URL
+        var script: URL?
+        /// An undo of an earlier run, not the plan's own command.
+        var undo: PipUndo?
+    }
+
+    private enum RunEnd {
+        case terminal(Int32)
+        case app(FixEnding, PipGuard.After?)
     }
 
     private var fixDirectories: FixDirectories { FixDirectories(support: storage.directory) }
@@ -189,7 +227,8 @@ public final class AppModel {
         resultWatcher?.start()
     }
 
-    /// A row opened: decide whether it gets a Fix button. Instant, except a `brew upgrade`, which asks Homebrew first.
+    /// A row opened: decide whether it gets a button. Instant, except a `brew upgrade` (Homebrew is asked) and a pip
+    /// upgrade (what depends on the package is read).
     public func assessFix(_ finding: Finding) {
         guard !isShowingFixtures else { return }
         let state = fixes[finding.id] ?? FixRowState()
@@ -197,7 +236,7 @@ public final class AppModel {
         switch FixPlan.make(for: finding, tools: advisor.tools, home: advisor.home) {
         case let .failure(refusal):
             fixes[finding.id, default: FixRowState()].availability = .withheld(refusal.explanation)
-        case let .success(plan) where plan.homebrew == nil || plan.action == .removal:
+        case let .success(plan) where plan.action == .removal || (plan.homebrew == nil && plan.pip == nil):
             fixes[finding.id, default: FixRowState()].availability = .offered(FixOffer(plan: plan))
         case .success:
             fixes[finding.id, default: FixRowState()].availability = .checking
@@ -218,7 +257,7 @@ public final class AppModel {
         }
     }
 
-    /// Fix… pressed: the confirmation opens, and the tool is asked for a dry run.
+    /// The button pressed: the review opens, and the tool is asked for a dry run.
     public func beginFix(_ finding: Finding) {
         guard case let .offered(offer)? = fixes[finding.id]?.availability, fixes[finding.id]?.isBusy == false else { return }
         fixes[finding.id]?.preview = .loading
@@ -234,30 +273,141 @@ public final class AppModel {
         fixes[finding.id]?.preview = nil
     }
 
-    /// Run in Terminal pressed: the plan is made again from the finding as the report has it now, and runs only if it
-    /// is the one the confirmation showed.
+    /// The review's Update (or Remove): the plan is made again from the finding as the report has it now, and runs
+    /// only if it is the one the review showed, nothing blocks it, and no other fix is running.
     public func runFix(_ finding: Finding) {
-        guard !isShowingFixtures, let state = fixes[finding.id], case let .offered(offer)? = state.availability, state.preview != nil,
-              !state.isBusy else { return }
+        guard !isShowingFixtures, let state = fixes[finding.id], case let .offered(offer)? = state.availability,
+              case let .ready(preview)? = state.preview, preview.blocked == nil, !state.isBusy, busyTitle == nil else { return }
+        guard let current = currentPlan(finding, matching: offer.plan) else { return }
+        start(current.finding, plan: current.plan, also: preview.installs)
+    }
+
+    /// Retry: the same command again, after it did not finish, without the review (it was reviewed, and the plan is
+    /// still the same one; if anything changed, the review opens instead).
+    public func retryFix(_ finding: Finding) {
+        guard !isShowingFixtures, let state = fixes[finding.id], case let .offered(offer)? = state.availability, !state.isBusy,
+              busyTitle == nil, state.outcome?.isProblem == true else { return }
+        guard offer.plan == lastPlans[finding.id] else { beginFix(finding); return }
+        guard let current = currentPlan(finding, matching: offer.plan) else { return }
+        start(current.finding, plan: current.plan, also: [:])
+    }
+
+    /// The finding as the report has it now, and its plan made again, if that is still `plan`. Otherwise the row is
+    /// assessed afresh and nil returned.
+    private func currentPlan(_ finding: Finding, matching plan: FixPlan) -> (finding: Finding, plan: FixPlan)? {
         guard let current = report?.findings.first(where: { $0.id == finding.id }),
-              case let .success(plan) = FixPlan.make(for: current, tools: advisor.tools, home: advisor.home), plan == offer.plan else {
+              case let .success(now) = FixPlan.make(for: current, tools: advisor.tools, home: advisor.home), now == plan else {
             fixes[finding.id] = nil
             if let current = report?.findings.first(where: { $0.id == finding.id }) { assessFix(current) }
-            return
+            return nil
         }
+        return (current, now)
+    }
+
+    /// Stop: SIGTERM to the command's process group, SIGKILL after the grace period; before it starts, it never does.
+    public func stopFix(_ finding: Finding) {
+        guard activeFix == finding.id, fixes[finding.id]?.run?.step != .checking else { return }
+        stopRequested = true
+        fixes[finding.id]?.run?.stopping = true
+        activeProcess?.stop()
+    }
+
+    /// Undo, after a pip upgrade broke something: the exact earlier versions put back.
+    public func undoFix(_ finding: Finding) {
+        guard !isShowingFixtures, busyTitle == nil, let state = fixes[finding.id], !state.isBusy, let undo = state.run?.undo,
+              let plan = lastPlans[finding.id] else { return }
+        launch(finding, plan: plan, invocation: undo.invocation, doing: "Undoing", command: undo.command, undo: undo, pip: nil)
+    }
+
+    private func start(_ finding: Finding, plan: FixPlan, also: [String: String]) {
+        lastPlans[finding.id] = plan
+        launch(finding, plan: plan, invocation: plan.invocation, doing: plan.doing, command: plan.command, undo: nil,
+               pip: plan.action == .upgrade ? plan.pip.map { ($0, also) } : nil)
+    }
+
+    /// The run itself: Preparing (for pip, what depends on it is read again, and `pip check` noted), the command, then
+    /// Checking again (for pip, `pip check` compared), then the re-check of the finding.
+    private func launch(_ finding: Finding, plan: FixPlan, invocation: FixInvocation, doing: String, command: String, undo: PipUndo?,
+                        pip: (FixPlan.Pip, [String: String])?) {
+        let id = finding.id
+        activeFix = id
+        activeTitle = plan.title
+        stopRequested = false
+        initiallyExpanded.insert(id)                          // a panel opened again shows the run
+        fixes[id, default: FixRowState()].preview = nil
+        fixes[id]?.progress = .running
+        fixes[id]?.run = FixRunState(doing: doing, command: command)
+        let guardian = PipGuard(tools: tools)
+        let environment = FixEnvironment.make(tools: tools, executable: invocation.executable, toolName: plan.toolName)
+        let launcher = self.launcher, limits = self.limits
+        Task { [weak self] in
+            var before: (site: PythonSite, problems: Set<String>)?
+            if let (pip, also) = pip {
+                switch await guardian.check(pip, also: also) {
+                case let .blocked(line, _), let .unknown(line):
+                    self?.endBeforeRunning(finding, plan: plan, outcome: .blocked(line))
+                    return
+                case let .clear(site):
+                    guard let problems = await guardian.problems(pip) else {
+                        self?.endBeforeRunning(finding, plan: plan, outcome: .blocked("pip check did not answer, so nothing was changed"))
+                        return
+                    }
+                    before = (site, problems)
+                }
+            }
+            guard let self, self.activeFix == id else { return }
+            if self.stopRequested { self.endBeforeRunning(finding, plan: plan, outcome: .stopped(nil)); return }
+            self.fixes[id]?.run?.step = .running
+            let process = launcher.launch(invocation, environment: environment, limits: limits) { [weak self] log in
+                Task { @MainActor in
+                    guard let self, self.activeFix == id, self.fixes[id]?.run?.step == .running else { return }
+                    self.fixes[id]?.run?.log = log
+                }
+            }
+            self.activeProcess = process
+            let (ending, log) = await process.ending()
+            self.activeProcess = nil
+            self.fixes[id]?.run?.log = log
+            self.fixes[id]?.run?.endedAt = Date()
+            self.fixes[id]?.run?.stopping = false
+            self.fixes[id]?.run?.step = .checking
+            var after: PipGuard.After?
+            if let (pip, _) = pip, let before {
+                if case .couldNotStart = ending {} else { after = await guardian.after(pip, before: before.site, problemsBefore: before.problems) }
+            }
+            self.ended.append((FixRun(finding: finding, plan: plan, undo: undo), .app(ending, after)))
+            self.recheckNext()
+        }
+    }
+
+    /// Nothing ran (blocked, or stopped while preparing): the row says why, and the button is offered again.
+    private func endBeforeRunning(_ finding: Finding, plan: FixPlan, outcome: FixOutcome) {
+        let id = finding.id
+        guard activeFix == id else { return }
+        activeFix = nil; activeTitle = nil; activeProcess = nil
+        fixes[id]?.progress = .finished(outcome)
+        fixes[id]?.run?.endedAt = Date()
+        fixes[id]?.run?.stopping = false
+    }
+
+    /// Only after the tool asked for an administrator password: the command in a Terminal window, where it can ask.
+    /// The plan is made again and must be the one the row showed; the app never sees or handles the password.
+    public func runFixInTerminal(_ finding: Finding) {
+        guard !isShowingFixtures, busyTitle == nil, let state = fixes[finding.id], state.outcome == .needsPassword,
+              !state.isBusy, let plan = lastPlans[finding.id] else { return }
+        guard let current = currentPlan(finding, matching: plan) else { return }
         let run = UUID()
         let script: URL
         do {
             try fixDirectories.prepare()
             startResultWatcher()
-            script = try FixScript.write(plan, run: run, directories: fixDirectories)
+            script = try FixScript.write(current.plan, run: run, directories: fixDirectories)
         } catch {
-            fixes[finding.id]?.preview = nil
             fixes[finding.id]?.progress = .finished(.couldNotOpen(String(describing: error)))
             return
         }
-        runs[run] = FixRun(finding: current, plan: plan, script: script)
-        fixes[finding.id]?.preview = nil
+        runs[run] = FixRun(finding: current.finding, plan: current.plan, script: script)
+        fixes[finding.id]?.run = nil
         fixes[finding.id]?.progress = .running
         terminal.open(script) { [weak self] error in
             guard let error else { return }
@@ -269,30 +419,44 @@ public final class AppModel {
         }
     }
 
-    /// Something changed in fix-results/: take the results of this session's runs (FixResults says why nothing
-    /// else there can do more than this) and check each finding again.
+    /// Something changed in fix-results/: take the results of this session's Terminal runs (FixResults says why
+    /// nothing else there can do more than this) and check each finding again.
     private func collectFixResults() {
         guard !runs.isEmpty else { return }
         for result in FixResults.collect(in: fixDirectories.results, pending: runs.mapValues(\.finding.id)) {
             guard let run = runs.removeValue(forKey: result.run) else { continue }
-            try? FileManager.default.removeItem(at: run.script)              // it removes itself; in case it could not
+            if let script = run.script { try? FileManager.default.removeItem(at: script) }   // it removes itself; in case it could not
             fixes[run.finding.id, default: FixRowState()].progress = .rechecking
-            ended.append((run, result.status))
+            ended.append((run, .terminal(result.status)))
         }
         recheckNext()
     }
 
     private func recheckNext() {
         guard !isScanning, !isRechecking, !ended.isEmpty, let report else { return }
-        let (run, status) = ended.removeFirst()
+        let (run, end) = ended.removeFirst()
         isRechecking = true
         let scanner = makeScanner()
         let advisor = self.advisor
         Task { [weak self] in
             let (updated, recheck) = await scanner.recheck(run.finding, in: report)
-            var homebrew: HomebrewAvailability?
-            if case .stillAffected = recheck, status == 0 { homebrew = await advisor.homebrew(run.plan) }
-            let outcome = FixOutcome.make(status: status, before: run.finding, recheck: recheck, homebrew: homebrew)
+            let outcome: FixOutcome
+            switch end {
+            case let .terminal(status):
+                var homebrew: HomebrewAvailability?
+                if case .stillAffected = recheck, status == 0 { homebrew = await advisor.homebrew(run.plan) }
+                outcome = FixOutcome.make(status: status, before: run.finding, recheck: recheck, homebrew: homebrew)
+            case let .app(ending, after) where run.undo != nil:
+                _ = after
+                outcome = ending.succeeded ? .undone(run.undo!.restores.joined(separator: ", ")) : .undoFailed
+            case let .app(ending, after):
+                var homebrew: HomebrewAvailability?
+                if case .stillAffected = recheck, ending.succeeded { homebrew = await advisor.homebrew(run.plan) }
+                var recheck = recheck
+                if let why = after?.uncheckable, case .fixed = recheck { recheck = .couldNotCheck(why) }
+                outcome = FixOutcome.make(ending: ending, before: run.finding, recheck: recheck, homebrew: homebrew, broke: after?.broke)
+                if let undo = after?.undo, after?.broke != nil { self?.fixes[run.finding.id]?.run?.undo = undo }
+            }
             self?.finishRecheck(run, report: updated, recheck: recheck, outcome: outcome)
         }
     }
@@ -302,31 +466,37 @@ public final class AppModel {
         report = updated
         storage.save(updated)
         let id = run.finding.id
-        if outcome.isResolved {
-            resolved.removeAll { $0.id == id }
-            resolved.append(run.finding)
-            fixes[id] = FixRowState(progress: .finished(outcome))
+        var state = FixRowState(progress: .finished(outcome), run: run.script == nil ? fixes[id]?.run : nil)
+        if case .undone = outcome { state.run?.undo = nil }
+        // Still found, perhaps at a new version (a new id): its row says so, and gets its button again if one applies.
+        let now: Finding? = if case let .stillAffected(f) = recheck { f } else { updated.findings.first { $0.id == id } }
+        resolved.removeAll { $0.id == id }
+        fixes[id] = nil
+        if let now, !outcome.isResolved {
+            fixes[now.id] = state
+            if now.id != id, let plan = lastPlans.removeValue(forKey: id) { lastPlans[now.id] = plan }
+            assessFix(now)
         } else {
-            // Still found, perhaps at a new version (a new id): its row says so, and gets a Fix button again if one applies.
-            let now: Finding? = if case let .stillAffected(f) = recheck { f } else { updated.findings.first { $0.id == id } }
-            fixes[id] = nil
-            if let now {
-                fixes[now.id] = FixRowState(progress: .finished(outcome))
-                assessFix(now)
-            }
+            // gone from the report (fixed, removed, or fixed but broke what depends on it): kept in place until the
+            // next full scan
+            resolved.append(run.finding)
+            fixes[id] = state
         }
+        if activeFix == id || activeFix == now?.id { activeFix = nil; activeTitle = nil }
         recheckNext()
         runPendingScan()
     }
 
-    /// A scan replaced the findings. A full scan starts the fixes afresh (runs under way go on); after a partial one,
-    /// a fixed row whose finding is back is no longer fixed. Rows that had been assessed are assessed again.
+    /// A scan replaced the findings. A full scan starts the fixes afresh (runs under way go on, and an upgrade that
+    /// broke something keeps its row and its Undo); after a partial one, a fixed row whose finding is back is no
+    /// longer fixed. Rows that had been assessed are assessed again.
     private func scanReplacedFindings(full: Bool) {
         let findings = report?.findings ?? []
         let ids = Set(findings.map(\.id))
         if full {
-            resolved = []
-            fixes = fixes.filter { $0.value.isBusy }
+            let keep = fixes.filter { $0.value.isBusy || $0.value.run?.undo != nil }
+            resolved = resolved.filter { keep[$0.id] != nil && !ids.contains($0.id) }
+            fixes = keep
         } else {
             for f in resolved where ids.contains(f.id) { fixes[f.id] = nil }
             resolved.removeAll { ids.contains($0.id) }

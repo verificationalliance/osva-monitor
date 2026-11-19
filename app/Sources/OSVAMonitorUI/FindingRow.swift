@@ -2,8 +2,8 @@ import OSVAKit
 import SwiftUI
 
 /// One finding, as content on its group's container. Closed: name with verification mark and grade; installed →
-/// fixed version; status; where it came from; how its last fix went. Open: why, what to run (and a Fix button that
-/// runs it in Terminal after a confirmation), and a link to the site.
+/// fixed version; status; where it came from; how its last fix went. Open: why, what to run (and a button that runs it
+/// in the app after a review, with its live progress and how it ended), and a link to the site.
 public struct FindingRow: View {
     let finding: Finding
     let expanded: Bool
@@ -40,7 +40,7 @@ public struct FindingRow: View {
             if !fix.isResolved { statusChips }
             Text(finding.originSummary).font(Typeface.small).foregroundStyle(.secondary)
                 .lineLimit(expanded ? 3 : 1).truncationMode(.middle)
-            if let progress = fix.progress { FixStatusLine(progress).padding(.top, 2) }
+            if let progress = fix.progress, !(expanded && showsCard) { FixStatusLine(progress, run: fix.run).padding(.top, 2) }
             if fix.isResolved && finding.malicious {
                 // removing it is not the end: what it could read may already be gone
                 Text("Now rotate every secret it could read.").font(Typeface.small).foregroundStyle(Tokens.Malicious.text.color)
@@ -71,12 +71,21 @@ public struct FindingRow: View {
         }
     }
 
+    /// The version a fix reached, when the check found it fixed.
+    private var fixedNow: String? {
+        if case let .finished(.fixed(now))? = fix.progress { return now }
+        return nil
+    }
+
     /// Installed in `.secondary`, a `.tertiary` arrow, the fixed version in `.primary`; or the plain "no fixed
-    /// release known". Malware has no fixed version: only what is installed.
+    /// release known". Malware has no fixed version: only what is installed. Once a fix is confirmed, the installed
+    /// version rolls over to the new one and the rest goes.
     private var versionLine: some View {
         HStack(spacing: 0) {
-            Text(finding.installedLabel).foregroundStyle(.secondary)
-            if !finding.malicious {
+            Text(fixedNow ?? finding.installedLabel)
+                .foregroundStyle(fixedNow == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .contentTransition(.numericText())
+            if !finding.malicious && fixedNow == nil {
                 if let fixed = finding.fixedVersion {
                     Text(" → ").foregroundStyle(.tertiary)
                     Text(fixed).foregroundStyle(.primary)
@@ -89,7 +98,7 @@ public struct FindingRow: View {
         }
         .font(Typeface.version)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(finding.versionLine)
+        .accessibilityLabel(fixedNow.map { "Now \($0)" } ?? finding.versionLine)
     }
 
     @ViewBuilder private var details: some View {
@@ -139,9 +148,17 @@ public struct FindingRow: View {
             }
             .font(Typeface.small.weight(.medium))
         }
-        if let command = finding.upgradeCommand {
+        if let command = finding.upgradeCommand ?? fix.run?.command {
             if case let .offered(offer)? = fix.availability, let preview = fix.preview, !fix.isBusy {
-                FixConfirmation(offer: offer, preview: preview, cancel: { actions.fix.cancel(finding) }, run: { actions.fix.run(finding) })
+                FixConfirmation(offer: offer, preview: preview, waitingFor: fix.waitingFor,
+                                cancel: { actions.fix.cancel(finding) }, run: { actions.fix.run(finding) })
+            } else if let run = fix.run, fix.isBusy {
+                FixRunCard(run: run) { actions.fix.stop(finding) }
+            } else if let outcome = fix.outcome, outcome.isProblem, fix.run != nil {
+                commandBlock(command)
+                FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: canRetry(outcome),
+                               retry: { actions.fix.retry(finding) }, undo: { actions.fix.undo(finding) },
+                               runInTerminal: { actions.fix.runInTerminal(finding) }, copy: actions.copy)
             } else {
                 commandBlock(command)
                 fixControl
@@ -149,17 +166,30 @@ public struct FindingRow: View {
         }
     }
 
-    /// Under the command: the Fix button, or why there is none, or a moment while Homebrew is asked.
+    /// The open row shows the run (or how it ended) as a card, so the one-line status is left out.
+    private var showsCard: Bool {
+        if fix.run != nil && fix.isBusy { return true }
+        if let o = fix.outcome, o.isProblem, fix.run != nil { return true }
+        return false
+    }
+
+    /// Retry runs the same command again: for an ending that may go better a second time, while the button is offered.
+    private func canRetry(_ outcome: FixOutcome) -> Bool {
+        guard case .offered? = fix.availability else { return false }
+        switch outcome {
+        case .exitedWithError, .killed, .stopped, .timedOut, .couldNotStart, .couldNotCheck: return true
+        default: return false
+        }
+    }
+
+    /// Under the command: the button, or why there is none, or a moment while the app checks.
     @ViewBuilder private var fixControl: some View {
         if !fix.isBusy {
             switch fix.availability {
             case .checking?:
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Checking Homebrew…").font(Typeface.small).foregroundStyle(.secondary)
-                }
+                FixSpinnerLabel("Checking…")
             case let .offered(offer)?:
-                FixButton(removal: offer.plan.action == .removal) { actions.fix.begin(finding) }
+                FixButton(title: offer.plan.actionTitle, waitingFor: fix.waitingFor) { actions.fix.begin(finding) }
             case let .withheld(why?)?:
                 Label {
                     Text(why).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

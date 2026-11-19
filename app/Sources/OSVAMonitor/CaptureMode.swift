@@ -8,8 +8,10 @@ import SwiftUI
 /// appearance, writes `<view>-<appearance>.png` into <dir>, and quits.
 ///
 /// With --fixtures it shows the render fixtures instead of the last scan; --only <id>[,<id>…] keeps just those findings,
-/// opened (for a close-up of one fix plan); --fix-states offer|confirm|results shows the Fix buttons, the confirmations
-/// or the outcomes of runs on the fixtures (with --fixtures). Either way it does not scan, run, send anything,
+/// opened (for a close-up of one fix plan); --fix-states offer|confirm|running|done|problems|results shows that state of
+/// the in-app fix on the findings it applies to (with --fixtures): the buttons, the reviews, a run with its live log and
+/// a waiting row, a fixed and a removed row, the ways a run ends badly (broke something, needs a password, failed), and
+/// the outcomes of Terminal runs. Either way it does not scan, run, send anything,
 /// ask for notification permission, or write anything but the PNGs. It captures only its own windows, which macOS
 /// allows without Screen Recording permission.
 @MainActor
@@ -23,7 +25,7 @@ struct CaptureMode {
     /// A solid colour per appearance to put behind the panel (`--backdrop light=<hex>,dark=<hex>`, the colours of the page the screenshots go on), so the glass
     /// samples the colour of the page the screenshot will sit on instead of whatever is on this Mac's desktop.
     let backdrop: [String: NSColor]
-    /// `--fix-states offer|confirm|results`: which fixture fix states to show.
+    /// `--fix-states <scene>`: which fixture fix scene to show (PreviewData.fixSceneNames).
     let fixStates: String?
 
     /// The popover's openSettings action, registered when the popover appears.
@@ -54,16 +56,10 @@ struct CaptureMode {
         if let f = arguments.firstIndex(of: "--fix-states"), f + 1 < arguments.count { fixStates = arguments[f + 1] } else { fixStates = nil }
     }
 
-    /// The fixture fix states (PreviewData), and the findings they open.
-    private var fixtureFixes: (fixes: [String: FixRowState], resolved: [Finding], open: Set<String>)? {
-        guard fixtures else { return nil }
-        let resolved = PreviewData.findings.filter { PreviewData.fixResolved.contains($0.id) }
-        switch fixStates {
-        case "offer": return (PreviewData.fixOffers, [], Set(PreviewData.fixOffers.keys))
-        case "confirm": return (PreviewData.fixConfirmations, [], Set(PreviewData.fixConfirmations.keys))
-        case "results": return (PreviewData.fixResults, resolved, [PreviewData.FixID.nginx, PreviewData.FixID.openmtp])
-        default: return nil
-        }
+    /// The fixture fix scene (PreviewData), and the findings it opens.
+    private var fixtureFixes: (fixes: [String: FixRowState], resolved: [Finding], open: Set<String>, scene: PreviewData.FixScene)? {
+        guard fixtures, let name = fixStates, let scene = PreviewData.fixScene(name) else { return nil }
+        return (scene.fixes, scene.resolvedFindings, scene.open, scene)
     }
 
     func run(model: AppModel) {
@@ -72,9 +68,10 @@ struct CaptureMode {
         if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; c.coverage = Coverage(); return c } }
         let clean = fixtures ? PreviewData.report(findings: []) : model.report.map { r in var c = r; c.findings = []; return c }
         let fixtureSettings = fixtures ? MonitorSettings(watchedFolders: PreviewData.settings().folders) : model.settings
-        if fixtureFixes != nil, fixStates == "results" {
-            // what a scan would show after the runs: the fixed findings are no longer in it
-            full = full.map { r in var c = r; c.findings = r.findings.filter { !PreviewData.fixResolved.contains($0.id) }; return c }
+        if let scene = fixtureFixes?.scene {
+            // the scene's findings; those its runs fixed are no longer in the report, and come back as resolved rows
+            full = scene.report()
+            if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; c.coverage = Coverage(); return c } }
         }
         let fixes = fixtureFixes
         /// The findings with their fix states, or the clean panel with none.

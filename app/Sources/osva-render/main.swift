@@ -1,7 +1,10 @@
 // osva-render: draws the popover and the settings window off-screen to PNG, from fixture data (or a real report), in
 // light and dark appearance, so the UI can be checked without opening a window on anyone's screen.
 //
-//   osva-render [--out DIR] [--report last-scan.json] [--scale 2]
+//   osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only <prefix>] [--grey]
+//
+// --grey also draws each view over mid-grey (the panel's glass over a bright wallpaper, as on the owner's Mac, where
+// white text measured 3:1 against it), in both appearances: <view>-<mode>-grey.png.
 //
 // What can be drawn off-screen, as of macOS 26:
 //   - ImageRenderer draws SwiftUI's own content, but not scroll-view content or AppKit controls (buttons, toggles,
@@ -18,10 +21,11 @@ import SwiftUI
 enum Method { case imageRenderer, hostingView }
 
 @MainActor
-func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale: CGFloat, width: CGFloat? = nil) throws -> NSBitmapImageRep {
+func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale: CGFloat, width: CGFloat? = nil,
+                      backdrop: Color? = nil) throws -> NSBitmapImageRep {
     let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     let root = view
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(backdrop ?? Color(nsColor: .windowBackgroundColor))
         .environment(\.colorScheme, dark ? .dark : .light)
     var result: Result<NSBitmapImageRep, Error> = .failure(CocoaError(.fileWriteUnknown))
     appearance.performAsCurrentDrawingAppearance {
@@ -94,17 +98,58 @@ struct ComponentSheet: View {
     }
 }
 
+/// Rows with the pointer over the middle one (findings, Not checked), and the site link: hover may only raise contrast.
+struct HoverSheet: View {
+    var body: some View {
+        let ids = [PreviewData.FixID.nginx, PreviewData.FixID.openssh, PreviewData.FixID.cpython]
+        let rows = PreviewData.findings.filter { ids.contains($0.id) }
+        VStack(alignment: .leading, spacing: 14) {
+            GroupContainer(.criticalHigh, count: rows.count) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { i, f in
+                    if i > 0 { Divider().padding(.leading, 12) }
+                    FindingRow(finding: f, expanded: false, actions: .none) {}.environment(\.showsHover, i == 1)
+                }
+            }
+            GroupContainer(.notChecked, count: 8) {
+                ListDisclosureRow("Homebrew packages with no graded project", items: ["abseil 20260817.0", "ack 3.10.0"])
+                Divider().padding(.leading, 12)
+                ListDisclosureRow("Apps that do not bundle Electron", items: ["Firefox", "Xcode"]).environment(\.showsHover, true)
+            }
+            SiteLink("Open on verificationalliance.org", url: URL(string: "https://verificationalliance.org/")!) { _ in }
+        }
+        .padding(14)
+        .frame(width: PopoverView.width)
+    }
+}
+
+/// A run's three steps, and the review with its details open, one under another.
+struct FixStepSheet: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(PreviewData.runSteps().enumerated()), id: \.offset) { _, run in FixRunCard(run: run) {} }
+            if case let .offered(offer)? = PreviewData.fixConfirmations[PreviewData.FixID.nginx]?.availability,
+               let preview = PreviewData.fixConfirmations[PreviewData.FixID.nginx]?.preview {
+                FixConfirmation(offer: offer, preview: preview, details: true, cancel: {}, run: {})
+            }
+        }
+        .padding(14)
+        .frame(width: 348 + 28)
+    }
+}
+
 @MainActor
 func main() throws {
-    var out = URL(fileURLWithPath: "shots", isDirectory: true), reportPath: String?, scale: CGFloat = 2
+    var out = URL(fileURLWithPath: "shots", isDirectory: true), reportPath: String?, scale: CGFloat = 2, grey = false, onlyPrefix: String?
     var args = CommandLine.arguments.dropFirst()
     while let a = args.popFirst() {
         switch a {
         case "--out": out = URL(fileURLWithPath: args.popFirst() ?? "shots", isDirectory: true)
         case "--report": reportPath = args.popFirst()
         case "--scale": scale = CGFloat(Double(args.popFirst() ?? "2") ?? 2)
+        case "--grey": grey = true
+        case "--only": onlyPrefix = args.popFirst()
         default:
-            FileHandle.standardError.write(Data("usage: osva-render [--out DIR] [--report last-scan.json] [--scale 2]\n".utf8))
+            FileHandle.standardError.write(Data("usage: osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only <prefix>] [--grey]\n".utf8))
             exit(2)
         }
     }
@@ -121,13 +166,6 @@ func main() throws {
         PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now, resolved: resolved), actions: .none,
                     fixes: fixes, expanded: expanded, scrolls: false)
     }
-    // The fix button, its confirmation, and how runs ended, each on the findings it applies to.
-    typealias F = PreviewData.FixID
-    func only(_ ids: [String]) -> ScanReport { PreviewData.report(findings: PreviewData.findings.filter { ids.contains($0.id) }) }
-    let offerIDs = [F.axios, F.nginx, F.cpython], confirmIDs = [F.nginx, F.setuptools, F.hacl]
-    let resultIDs = [F.axios, F.openssh, F.openmtp, F.nginx, F.nokogiri, F.vscode]
-    let resolved = PreviewData.findings.filter { PreviewData.fixResolved.contains($0.id) }
-    let afterRuns = PreviewData.report(findings: PreviewData.findings.filter { resultIDs.contains($0.id) && !PreviewData.fixResolved.contains($0.id) })
     var views: [(String, AnyView, Method)] = [
         ("popover", AnyView(popover(full, expanded: open)), .imageRenderer),
         ("popover-scanning", AnyView(popover(full, scanning: true, progress: "Checking 27 package versions…")), .imageRenderer),
@@ -141,10 +179,15 @@ func main() throws {
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,
                                                                      launchAtLogin: false, launchAtLoginAvailable: false, lastReport: nil), actions: .none)), .hostingView),
         ("components", AnyView(ComponentSheet()), .imageRenderer),
-        ("fix-offer", AnyView(popover(only(offerIDs), expanded: Set(offerIDs), fixes: PreviewData.fixOffers)), .imageRenderer),
-        ("fix-confirm", AnyView(popover(only(confirmIDs), expanded: Set(confirmIDs), fixes: PreviewData.fixConfirmations)), .imageRenderer),
-        ("fix-results", AnyView(popover(afterRuns, expanded: [F.nginx, F.openmtp], fixes: PreviewData.fixResults, resolved: resolved)), .imageRenderer),
+        ("fix-steps", AnyView(FixStepSheet()), .imageRenderer),
+        ("fix-hover", AnyView(HoverSheet()), .imageRenderer),
     ]
+    // Each state of the in-app fix, on the findings it applies to (PreviewData.fixScene).
+    for name in PreviewData.fixSceneNames {
+        let scene = PreviewData.fixScene(name)!
+        views.append(("fix-\(name)", AnyView(popover(scene.report(), expanded: scene.open, fixes: scene.fixes, resolved: scene.resolvedFindings)),
+                      .imageRenderer))
+    }
     if let reportPath {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let real = try decoder.decode(ScanReport.self, from: Data(contentsOf: URL(fileURLWithPath: reportPath)))
@@ -155,9 +198,13 @@ func main() throws {
     // the setting is on, so those variants are checked by ToneTests and on the real panel.
     for (mode, name) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         let appearance = NSAppearance(named: name)!
-        for (view, content, method) in views {
-            try write(capture(content, appearance: appearance, method: method, scale: scale,
-                              width: view.hasPrefix("popover") || view.hasPrefix("fix-") ? PopoverView.width : nil), "\(view)-\(mode)", into: out)
+        for (view, content, method) in views where onlyPrefix.map(view.hasPrefix) ?? true {
+            let width = view.hasPrefix("popover") || (view.hasPrefix("fix-") && view != "fix-steps" && view != "fix-hover") ? PopoverView.width : nil
+            try write(capture(content, appearance: appearance, method: method, scale: scale, width: width), "\(view)-\(mode)", into: out)
+            if grey, method == .imageRenderer {
+                try write(capture(content, appearance: appearance, method: method, scale: scale, width: width, backdrop: Color(white: 0.54)),
+                          "\(view)-\(mode)-grey", into: out)
+            }
         }
     }
 }
