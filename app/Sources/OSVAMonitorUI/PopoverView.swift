@@ -15,21 +15,23 @@ public struct PopoverActions {
     public var openList: (NameList) -> Void
     /// What's New's Close: the card is not shown again for this version.
     public var closeWhatsNew: () -> Void
+    public var fixAll: FixAllActions
 
     public init(scanNow: @escaping () -> Void, openSettings: @escaping () -> Void, quit: @escaping () -> Void,
                 open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none,
                 checkForUpdates: @escaping () -> Void = {}, openList: @escaping (NameList) -> Void = { _ in },
-                closeWhatsNew: @escaping () -> Void = {}) {
+                closeWhatsNew: @escaping () -> Void = {}, fixAll: FixAllActions = .none) {
         self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy; self.fix = fix
-        self.checkForUpdates = checkForUpdates; self.openList = openList; self.closeWhatsNew = closeWhatsNew
+        self.checkForUpdates = checkForUpdates; self.openList = openList; self.closeWhatsNew = closeWhatsNew; self.fixAll = fixAll
     }
 
     public static var none: PopoverActions { PopoverActions(scanNow: {}, openSettings: {}, quit: {}, open: { _ in }, copy: { _ in }) }
 }
 
 /// The menu-bar panel. The panel's own window is the one sheet of Liquid Glass; everything here is content on it:
-/// after an update, what is new in it (until closed); the hero (one shield, one number, one sentence); the findings in
-/// one container per group; and the controls, which are left untinted so they follow the person's accent colour.
+/// after an update, what is new in it (until closed); the hero (one shield, one number, one sentence, and Fix all);
+/// Fix all's card while it is open; the findings in one container per group; and the controls, which are left
+/// untinted so they follow the person's accent colour.
 public struct PopoverView: View {
     public static let width: CGFloat = 400
     public static let maxListHeight: CGFloat = 480
@@ -41,11 +43,14 @@ public struct PopoverView: View {
     public var updates: UpdateState
     /// This version's changelog entry, shown once after an update until it is closed.
     public var whatsNew: Changelog.Entry?
+    /// Fix all: the header's button, and its card while one is open.
+    public var fixAll: FixAllPanel
     public var maxListHeight: CGFloat
     /// False draws the list without a scroll view (for ImageRenderer, which does not draw scroll views' content).
     public var scrolls: Bool
     @State private var expanded: Set<String>
     @State private var listHeight: CGFloat = 0
+    @State private var cardHeight: CGFloat = 0
     @State private var gearFrame: CGRect = .zero
 
     /// Lists opened from the start (`coverageOpen`: bucket titles, and "notInIndex" or "updatedElsewhere" for the quiet
@@ -53,9 +58,10 @@ public struct PopoverView: View {
     let coverageOpen: Set<String>
 
     public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], updates: UpdateState = .none,
-                whatsNew: Changelog.Entry? = nil, expanded: Set<String> = [], maxListHeight: CGFloat = PopoverView.maxListHeight,
-                scrolls: Bool = true, coverageOpen: Set<String> = []) {
+                whatsNew: Changelog.Entry? = nil, fixAll: FixAllPanel = .none, expanded: Set<String> = [],
+                maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true, coverageOpen: Set<String> = []) {
         self.content = content; self.actions = actions; self.fixes = fixes; self.updates = updates; self.whatsNew = whatsNew
+        self.fixAll = fixAll
         self.maxListHeight = maxListHeight
         self.scrolls = scrolls; self.coverageOpen = coverageOpen
         _expanded = State(initialValue: expanded)
@@ -66,9 +72,14 @@ public struct PopoverView: View {
             if let whatsNew {
                 WhatsNewCard(entry: whatsNew, close: actions.closeWhatsNew)
             }
-            HeroView(content: content).padding(.leading, 4)
+            HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open).padding(.leading, 4)
             if content.isScanning {
                 ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
+            }
+            if fixAll.batch != nil {
+                FixAllCard(panel: fixAll, actions: actions.fixAll)
+                    .background(GeometryReader { g in Color.clear.preference(key: CardHeightKey.self, value: g.size.height) })
+                    .onPreferenceChange(CardHeightKey.self) { cardHeight = $0 }
             }
             if !content.sections.isEmpty || content.coverage.notCheckedCount + content.coverage.notInIndexCount + content.coverage.updatedElsewhereCount > 0 {
                 if scrolls {
@@ -76,7 +87,7 @@ public struct PopoverView: View {
                         groups.background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
                     }
                     .scrollIndicators(.automatic)
-                    .frame(height: min(max(listHeight, 1), maxListHeight))
+                    .frame(height: min(max(listHeight, 1), listCap))
                     .onPreferenceChange(HeightKey.self) { listHeight = $0 }
                 } else {
                     groups
@@ -93,7 +104,11 @@ public struct PopoverView: View {
         .animation(.smooth(duration: 0.3), value: content.isScanning)
         .animation(.smooth(duration: 0.25), value: fixes)
         .animation(.smooth(duration: 0.25), value: whatsNew)
+        .animation(.smooth(duration: 0.25), value: fixAll)
     }
+
+    /// The list's height: less while Fix all's card is open, so the panel keeps about its height.
+    private var listCap: CGFloat { fixAll.batch == nil ? maxListHeight : max(180, maxListHeight - cardHeight) }
 
     private var groups: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -229,6 +244,8 @@ struct QuietCoverageSection: View {
 
 struct HeroView: View {
     let content: PopoverContent
+    var fixAll: FixAllPanel = .none
+    var openFixAll: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -246,8 +263,19 @@ struct HeroView: View {
                     }
                     Text(content.sentence).font(Typeface.heroSentence).foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if fixAll.count > 0 {
+                        Spacer(minLength: 8)
+                        // paused while its own review is open under it: one Fix all button on screen at a time
+                        FixButton(title: "Fix all (\(fixAll.count))", waitingFor: fixAll.waitingFor,
+                                  paused: fixAll.checking || fixAll.batch?.phase == .review, saysWhy: false, action: openFixAll)
+                            .accessibilityLabel("Fix all, \(fixAll.count)")
+                    }
                 }
                 .frame(minHeight: 32, alignment: .bottomLeading)              // the sentence alone sits level with the shield
+                if fixAll.count > 0, let why = fixAll.why {
+                    Text(why).font(Typeface.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
                 if let advice = content.advice {
                     Text(advice).font(Typeface.body).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -273,7 +301,7 @@ struct HeroView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: fixAll.count > 0 ? .contain : .combine)   // Fix all stays a button of its own
     }
 
     /// A status shield is two solid colours: a white mark on the status colour, with the system gradient, so it reads
@@ -308,6 +336,11 @@ struct HeroView: View {
         case .clean: return AnyShapeStyle(Tokens.clean.color)
         }
     }
+}
+
+private struct CardHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 private struct HeightKey: PreferenceKey {

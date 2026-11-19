@@ -79,10 +79,13 @@ struct PopoverScene: View {
                 NSApp.activate(ignoringOtherApps: true)        // a menu-bar app is not frontmost by itself
                 openWindow(id: NameListView.windowID)
             },
-            closeWhatsNew: { model.closeWhatsNew() }),
+            closeWhatsNew: { model.closeWhatsNew() },
+            fixAll: FixAllActions(open: { model.openFixAll() }, close: { model.closeFixAll() }, run: { model.runFixAll() },
+                                  stop: { model.stopFixAll() }, undo: { model.undoFix($0) })),
             fixes: model.rowFixes,
             updates: updater.state,
             whatsNew: model.whatsNew,
+            fixAll: model.fixAllPanel,
             expanded: model.initiallyExpanded)
         .onAppear { CaptureMode.openSettings = openSettings }
     }

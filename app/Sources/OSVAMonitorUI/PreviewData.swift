@@ -117,8 +117,8 @@ public enum PreviewData {
                                       .high, flaws: 6, origins: [.pip(python: pythonOrg, user: false, formula: nil)],
                                       page: SiteURL.packagePage(.pypi, "torch", version: "2.7.0"), ecosystem: .pypi)
 
-    /// The findings the fix scenes draw from: the fixtures, starlette and torch.
-    public static var fixFindings: [Finding] { findings + [starlette, torch] }
+    /// The findings the fix scenes draw from: the fixtures, starlette, torch, and jupyterlab's tornado and jinja2.
+    public static var fixFindings: [Finding] { findings + [starlette, torch, tornado, jinja2] }
 
     static func fixFinding(_ id: String) -> Finding { fixFindings.first { $0.id == id }! }
 

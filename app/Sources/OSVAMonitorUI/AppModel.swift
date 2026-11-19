@@ -83,7 +83,7 @@ public final class AppModel {
         let due = report.map { Date().timeIntervalSince($0.finishedAt) > interval } ?? true
         // A newer app scans at once, so the findings carry what it adds (0.2.0's Fix button needs a new scan).
         let scannedByOlder = report != nil && defaults.string(forKey: Self.scannedByKey) != version
-        if due || scannedByOlder { scanNow() }
+        if due || scannedByOlder { scanNow() } else { assessAllFixes() }
     }
 
     /// The app version that made the saved report.
@@ -159,6 +159,7 @@ public final class AppModel {
         }
         recheckNext()
         runPendingScan()
+        nextFixAllStep()
     }
 
     private func runPendingScan() {
@@ -185,7 +186,8 @@ public final class AppModel {
     // that one finding again (Scanner.recheck) and, after pip, the environment's own `pip check`; the row says what
     // became of it. One fix runs at a time. Only when the tool asks for an administrator password does the app offer
     // Terminal: a one-use script (FixScript) that leaves a result file the app watches. No URL scheme, no Apple
-    // Events: a web page or another app cannot start a fix.
+    // Events: a web page or another app cannot start a fix. Fix all (below) runs the rows' own fixes through this same
+    // loop, one after another, after one review.
 
     /// Each finding's fix, by finding id: its button, its review, its run, how its last run went.
     public private(set) var fixes: [String: FixRowState] = [:]
@@ -207,9 +209,10 @@ public final class AppModel {
         }
     }
 
-    /// The name of the finding whose fix is running, in the app or in Terminal.
+    /// The name of the finding whose fix is running, in the app or in Terminal, or of Fix all's step.
     var busyTitle: String? {
         if let activeFix { return activeTitle ?? activeFix }
+        if fixAll?.phase == .running { return fixAll?.currentStep?.name ?? "Fix all" }
         return runs.values.first?.plan.title
     }
 
@@ -220,6 +223,9 @@ public final class AppModel {
     @ObservationIgnored public var limits = FixLimits()
     @ObservationIgnored private let advisor: FixAdvisor
     @ObservationIgnored private var activeTitle: String?
+    /// Every finding the running command fixes (one, or a Fix all step's several): each row shows the run, and each
+    /// is checked again after it. `activeFix` is the first.
+    @ObservationIgnored private var activeMembers: Set<String> = []
     @ObservationIgnored private var activeProcess: (any FixRunning)?
     @ObservationIgnored private var stopRequested = false
     /// The plan each finding's last run in the app used, for Retry.
@@ -268,8 +274,30 @@ public final class AppModel {
     }
 
     /// A row opened: decide whether it gets a button. Instant, except a `brew upgrade` (Homebrew is asked) and a pip
-    /// upgrade (what depends on the package is read).
+    /// upgrade (what depends on the package is read). A row whose turn in `assessAllFixes` has not come yet is decided
+    /// now.
     public func assessFix(_ finding: Finding) {
+        if let i = queuedAssessments.firstIndex(where: { $0.id == finding.id }) {
+            queuedAssessments.remove(at: i)
+            if fixes[finding.id]?.availability == .checking { checkOffer(finding) }
+            return
+        }
+        decideOffer(finding, queue: false)
+    }
+
+    /// Every finding's button decided, as each row decides its own (`assessFix`), so Fix all can count them: the
+    /// instant ones at once, the rest one at a time in the background (one `brew info` or one Python read at a time).
+    public func assessAllFixes() {
+        guard !isShowingFixtures else { return }
+        queuedAssessments.removeAll()
+        for f in report?.findings ?? [] { decideOffer(f, queue: true) }
+        drainAssessments()
+    }
+
+    @ObservationIgnored private var queuedAssessments: [Finding] = []
+    @ObservationIgnored private var draining = false
+
+    private func decideOffer(_ finding: Finding, queue: Bool) {
         guard !isShowingFixtures else { return }
         let state = fixes[finding.id] ?? FixRowState()
         guard state.availability == nil, !state.isBusy, !state.isResolved else { return }
@@ -280,12 +308,33 @@ public final class AppModel {
             fixes[finding.id, default: FixRowState()].availability = .offered(FixOffer(plan: plan))
         case .success:
             fixes[finding.id, default: FixRowState()].availability = .checking
-            let advisor = self.advisor
-            Task { [weak self] in
+            if queue { queuedAssessments.append(finding) } else { checkOffer(finding) }
+        }
+    }
+
+    /// The check that decides a `brew upgrade`'s or a pip upgrade's button (FixAdvisor.assess).
+    private func checkOffer(_ finding: Finding) {
+        let advisor = self.advisor
+        Task { [weak self] in
+            let assessment = await advisor.assess(finding)
+            guard let self, self.fixes[finding.id]?.availability == .checking else { return }
+            self.fixes[finding.id]?.availability = Self.availability(assessment)
+        }
+    }
+
+    private func drainAssessments() {
+        guard !draining, !queuedAssessments.isEmpty else { return }
+        draining = true
+        let advisor = self.advisor
+        Task { [weak self] in
+            while let self, !self.queuedAssessments.isEmpty {
+                let finding = self.queuedAssessments.removeFirst()
+                guard self.fixes[finding.id]?.availability == .checking else { continue }
                 let assessment = await advisor.assess(finding)
-                guard let self, self.fixes[finding.id]?.availability == .checking else { return }
+                guard self.fixes[finding.id]?.availability == .checking else { continue }
                 self.fixes[finding.id]?.availability = Self.availability(assessment)
             }
+            self?.draining = false
         }
     }
 
@@ -346,11 +395,13 @@ public final class AppModel {
     }
 
     /// Stop: SIGTERM to the command's process group, SIGKILL after the grace period; before it starts, it never does.
+    /// Stopping a Fix all step stops Fix all: the rest never start.
     public func stopFix(_ finding: Finding) {
-        guard activeFix == finding.id, fixes[finding.id]?.run?.step != .checking else { return }
+        guard activeFix != nil, activeMembers.contains(finding.id), fixes[finding.id]?.run?.step != .checking else { return }
         stopRequested = true
-        fixes[finding.id]?.run?.stopping = true
+        for id in activeMembers { fixes[id]?.run?.stopping = true }
         activeProcess?.stop()
+        if fixAll?.phase == .running { fixAll?.stopRequested = true }
     }
 
     /// Undo, after a pip upgrade broke something: the exact earlier versions put back.
@@ -360,28 +411,39 @@ public final class AppModel {
         launch(finding, plan: plan, invocation: undo.invocation, doing: "Undoing", command: undo.command, undo: undo, pip: nil)
     }
 
-    /// `pins`: for pip, every other package its dry run would install, pinned, after the fix's own pin.
-    private func start(_ finding: Finding, plan: FixPlan, also: [String: String], pins: [String]) {
+    /// `pins`: for pip, every other package its dry run would install, pinned, after the fix's own pin. `members`: the
+    /// other findings the same command fixes (a Fix all step), each with its own plan.
+    private func start(_ finding: Finding, plan: FixPlan, also: [String: String], pins: [String], members: [(Finding, FixPlan)] = [],
+                       title: String? = nil) {
         lastPlans[finding.id] = plan
+        for (m, p) in members { lastPlans[m.id] = p }
         var invocation = plan.invocation
         invocation.arguments += pins
         let command = pins.isEmpty ? plan.command : invocation.argv.map(UpgradeCommand.quote).joined(separator: " ")
         launch(finding, plan: plan, invocation: invocation, doing: plan.doing, command: command, undo: nil,
-               pip: plan.action == .upgrade ? plan.pip.map { ($0, also) } : nil)
+               pip: plan.action == .upgrade ? plan.pip.map { ($0, also) } : nil, members: members, title: title)
     }
 
     /// The run itself: Preparing (for pip, what depends on it is read again, and `pip check` noted), the command, then
     /// Checking again (for pip, `pip check` compared), then the re-check of the finding.
+    /// A Fix all step (`title` set) keeps the time its Preparing started, and its rows stay as they are: its own card shows
+    /// the run.
     private func launch(_ finding: Finding, plan: FixPlan, invocation: FixInvocation, doing: String, command: String, undo: PipUndo?,
-                        pip: (FixPlan.Pip, [String: String])?) {
+                        pip: (FixPlan.Pip, [String: String])?, members: [(Finding, FixPlan)] = [], title: String? = nil) {
         let id = finding.id
+        let all = [(finding, plan)] + members
+        let ids = all.map(\.0.id)
+        let started = title == nil ? Date() : (fixes[id]?.run?.startedAt ?? Date())
         activeFix = id
-        activeTitle = plan.title
+        activeTitle = title ?? plan.title
+        activeMembers = Set(ids)
         stopRequested = false
-        initiallyExpanded.insert(id)                          // a panel opened again shows the run
-        fixes[id, default: FixRowState()].preview = nil
-        fixes[id]?.progress = .running
-        fixes[id]?.run = FixRunState(doing: doing, command: command)
+        if title == nil { initiallyExpanded.insert(id) }       // a panel opened again shows the run
+        for m in ids {
+            fixes[m, default: FixRowState()].preview = nil
+            fixes[m]?.progress = .running
+            fixes[m]?.run = FixRunState(doing: doing, startedAt: started, command: command)
+        }
         let guardian = PipGuard(tools: tools)
         let environment = FixEnvironment.make(tools: tools, executable: invocation.executable, toolName: plan.toolName)
         let launcher = self.launcher, limits = self.limits
@@ -411,25 +473,28 @@ public final class AppModel {
             }
             guard let self, self.activeFix == id else { return }
             if self.stopRequested { self.endBeforeRunning(finding, plan: plan, outcome: .stopped(nil)); return }
-            self.fixes[id]?.run?.step = .running
+            for m in ids { self.fixes[m]?.run?.step = .running }
             let process = launcher.launch(invocation, environment: environment, limits: limits) { [weak self] log in
                 Task { @MainActor in
                     guard let self, self.activeFix == id, self.fixes[id]?.run?.step == .running else { return }
-                    self.fixes[id]?.run?.log = log
+                    for m in ids { self.fixes[m]?.run?.log = log }
                 }
             }
             self.activeProcess = process
             let (ending, log) = await process.ending()
             self.activeProcess = nil
-            self.fixes[id]?.run?.log = log
-            self.fixes[id]?.run?.endedAt = Date()
-            self.fixes[id]?.run?.stopping = false
-            self.fixes[id]?.run?.step = .checking
+            for m in ids {
+                self.fixes[m]?.run?.log = log
+                self.fixes[m]?.run?.endedAt = Date()
+                self.fixes[m]?.run?.stopping = false
+                self.fixes[m]?.run?.step = .checking
+            }
             var after: PipGuard.After?
             if let (pip, _) = pip, let before {
                 if case .couldNotStart = ending {} else { after = await guardian.after(pip, before: before.site, problemsBefore: before.problems) }
             }
-            self.ended.append((FixRun(finding: finding, plan: plan, undo: undo, check: check), .app(ending, after)))
+            // each finding the command fixes is checked again, one at a time, and keeps its own outcome and Undo
+            for (m, p) in all { self.ended.append((FixRun(finding: m, plan: p, undo: undo, check: check), .app(ending, after))) }
             self.recheckNext()
         }
     }
@@ -438,10 +503,15 @@ public final class AppModel {
     private func endBeforeRunning(_ finding: Finding, plan: FixPlan, outcome: FixOutcome) {
         let id = finding.id
         guard activeFix == id else { return }
-        activeFix = nil; activeTitle = nil; activeProcess = nil
-        fixes[id]?.progress = .finished(outcome)
-        fixes[id]?.run?.endedAt = Date()
-        fixes[id]?.run?.stopping = false
+        let members = activeMembers.union([id])
+        activeFix = nil; activeTitle = nil; activeProcess = nil; activeMembers = []
+        for m in members {
+            fixes[m]?.progress = .finished(outcome)
+            fixes[m]?.run?.endedAt = Date()
+            fixes[m]?.run?.stopping = false
+            recordFixAll(m, outcome)
+        }
+        nextFixAllStep()
     }
 
     /// Only after the tool asked for an administrator password: the command in a Terminal window, where it can ask.
@@ -540,14 +610,18 @@ public final class AppModel {
             resolved.append(run.finding)
             fixes[id] = state
         }
-        if activeFix == id || activeFix == now?.id { activeFix = nil; activeTitle = nil }
+        activeMembers.remove(id)
+        if let now { activeMembers.remove(now.id) }
+        if activeFix != nil, activeMembers.isEmpty { activeFix = nil; activeTitle = nil }
+        recordFixAll(id, outcome)
         recheckNext()
         runPendingScan()
+        nextFixAllStep()
     }
 
     /// A scan replaced the findings. A full scan starts the fixes afresh (runs under way go on, and an upgrade that
     /// broke something keeps its row and its Undo); after a partial one, a fixed row whose finding is back is no
-    /// longer fixed. Rows that had been assessed are assessed again.
+    /// longer fixed. Every row is assessed again, so Fix all's count is current.
     private func scanReplacedFindings(full: Bool) {
         let findings = report?.findings ?? []
         let ids = Set(findings.map(\.id))
@@ -563,8 +637,247 @@ public final class AppModel {
         for id in assessed {
             fixes[id]?.availability = nil
             fixes[id]?.preview = nil
-            if let f = findings.first(where: { $0.id == id }) { assessFix(f) }
         }
+        assessAllFixes()
+    }
+
+    // MARK: Fix all
+    //
+    // One review, then every fix the rows offer (FixRowState.offeredFix, nothing else decides), one at a time, worst
+    // first, one command once however many findings it fixes. Each step is the row's own loop: Preparing checks it
+    // again (the finding as the report has it now, its plan made again, its offer decided again, the tool's dry run),
+    // then the command, pip's checks before and after, the REQUESTED cleanup, the check of each finding, its Undo. An
+    // earlier step can change the picture (a Homebrew upgrade brings a dependency along, a pip upgrade changes what
+    // depends on what): a step no longer valid is skipped with why, and checked again first if anything ran before it.
+    // A step that broke something ends Fix all there, its Undo shown. One that failed is counted, and the next runs.
+    // Terminal is never offered: a step that needs a password is counted as needing the person. At the end, the
+    // sources the steps changed are read again.
+
+    /// Fix all's review, run or summary, while one is shown.
+    public private(set) var fixAll: FixAllState?
+
+    /// What the panel shows of Fix all: the header's count (exactly the rows that offer a fix now) and why it waits,
+    /// and the batch with the current step's run.
+    public var fixAllPanel: FixAllPanel {
+        let findings = report?.findings ?? []
+        let running = fixAll?.phase == .running
+        var undo: PipUndo?
+        if let broke = fixAll?.broke { undo = fixes[broke.step.id]?.run?.undo }
+        return FixAllPanel(count: FixAll.offered(findings, fixes: fixes).count, waitingFor: busyTitle,
+                           checking: findings.contains { fixes[$0.id]?.availability == .checking }, batch: fixAll,
+                           run: running ? activeFix.flatMap { fixes[$0]?.run } : nil, undo: undo)
+    }
+
+    /// The header's Fix all: the review opens. Nothing runs from it.
+    public func openFixAll() {
+        guard !isShowingFixtures, busyTitle == nil, fixAll?.phase != .running, let report else { return }
+        let review = FixAll.review(report.findings, fixes: fixes)
+        fixAll = review.steps.isEmpty ? nil : review
+    }
+
+    /// The review's Cancel, or the summary's Close.
+    public func closeFixAll() {
+        guard fixAll?.phase != .running else { return }
+        fixAll = nil
+    }
+
+    /// The review's Fix all: it runs only if the review is still what the rows offer now (otherwise the review shows
+    /// what is true now, to be confirmed again), and nothing else is running.
+    public func runFixAll() {
+        guard !isShowingFixtures, let shown = fixAll, shown.phase == .review, busyTitle == nil, let report else { return }
+        var now = FixAll.review(report.findings, fixes: fixes)
+        guard now == shown else { fixAll = now.steps.isEmpty ? nil : now; return }
+        now.phase = .running
+        fixAll = now
+        nextFixAllStep()
+    }
+
+    /// Stop: the step under way ends as its own Stop ends it, and no other starts.
+    public func stopFixAll() {
+        guard fixAll?.phase == .running else { return }
+        fixAll?.stopRequested = true
+        if let step = fixAll?.currentStep, let first = step.findings.first(where: { activeMembers.contains($0.id) }) { stopFix(first) }
+        nextFixAllStep()
+    }
+
+    /// The next step, once the last has ended and each of its findings was checked again (never during a scan); or
+    /// the end: every step had its turn, Stop was pressed, or a step broke something.
+    private func nextFixAllStep() {
+        guard var batch = fixAll, batch.phase == .running, activeFix == nil, !isRechecking, !isScanning, ended.isEmpty else { return }
+        if let i = batch.current {
+            if batch.steps[i].status == .running { batch.steps[i].status = .done }
+            batch.current = nil
+        }
+        if batch.ending == nil, batch.stopRequested { batch.ending = .stopped }
+        guard batch.ending == nil, let i = batch.steps.firstIndex(where: { $0.status == .waiting }) else {
+            for j in batch.steps.indices where batch.steps[j].status == .waiting { batch.steps[j].status = .notRun }
+            batch.ending = batch.ending ?? .finished
+            batch.phase = .done
+            fixAll = batch
+            if batch.changedSomething { scanNow(refresh: Self.sources(batch)) }   // what a step changed beyond its findings
+            return
+        }
+        batch.current = i
+        batch.steps[i].status = .running
+        fixAll = batch
+        runFixAllStep(batch.steps[i])
+    }
+
+    /// The sources the steps that ran changed: each finding's own, and Homebrew's for what a `brew` command updated.
+    static func sources(_ batch: FixAllState) -> Set<SourceKind> {
+        var kinds = Set<SourceKind>()
+        for step in batch.steps where step.status == .done {
+            kinds.formUnion(step.findings.flatMap(\.origins).map(\.kind))
+            if step.plan.toolName == "brew" || kinds.contains(.electron) { kinds.insert(.homebrew) }
+        }
+        return kinds
+    }
+
+    /// One step. Preparing checks it again, as the row's own Update would be checked, and more: after an earlier step
+    /// ran, each finding is checked again first (Scanner.recheck, as after a run), and one that step already fixed is
+    /// done, one it changed left to its row; then each finding as the report has it now, with its plan made again;
+    /// the first one's offer decided again (Homebrew asked, a Python's dependents read), which holds for the others
+    /// (the same command); the tool's dry run. Then it runs, through `start`.
+    private func runFixAllStep(_ step: FixAllState.Step) {
+        let first = step.findings[0]
+        activeFix = first.id
+        activeTitle = step.name
+        activeMembers = Set(step.findings.map(\.id))
+        stopRequested = false
+        for (f, offer) in zip(step.findings, step.offers) {
+            fixes[f.id, default: FixRowState()].preview = nil
+            fixes[f.id]?.progress = .running
+            fixes[f.id]?.run = FixRunState(doing: offer.plan.doing, command: offer.plan.command)
+        }
+        let advisor = self.advisor
+        let recheckFirst = fixAll?.changedSomething == true
+        Task { [weak self] in
+            guard let self else { return }
+            var members = Array(zip(step.findings, step.offers))
+            if recheckFirst { members = await self.recheckBeforeStep(members) }
+            var ready: [(Finding, FixOffer)] = [], dropped: [(Finding, String)] = []
+            for (f, offer) in members where !self.stopRequested {
+                guard let current = self.report?.findings.first(where: { $0.id == f.id }),
+                      case let .success(plan) = FixPlan.make(for: current, tools: advisor.tools, home: advisor.home), plan == offer.plan else {
+                    dropped.append((f, "It changed since the review")); continue
+                }
+                guard ready.isEmpty else { ready.append((current, offer)); continue }
+                switch await advisor.assess(current) {
+                case let .offer(now) where now.plan == plan: ready.append((current, now))
+                case let .withheld(why):
+                    self.fixes[f.id]?.availability = .withheld(why)
+                    dropped.append((current, why))
+                case .offer: dropped.append((current, "It changed since the review"))
+                case .none: dropped.append((current, "The app no longer offers it"))
+                }
+            }
+            guard self.activeFix == first.id else { return }
+            if self.stopRequested { self.endFixAllStep(stopped: true); return }
+            var preview: FixPreview?
+            if let (_, offer) = ready.first {
+                let p = await advisor.preview(offer)                                 // the review's own dry run
+                if let blocked = p.blocked {
+                    dropped += ready.map { ($0.0, blocked.prefix(1).uppercased() + blocked.dropFirst()) }
+                    ready = []
+                } else {
+                    preview = p
+                }
+            }
+            guard self.activeFix == first.id else { return }
+            if self.stopRequested { self.endFixAllStep(stopped: true); return }
+            for (f, why) in dropped { self.leaveAlone(f, why: why) }                 // the rows say why
+            guard let (runFor, offer) = ready.first, let preview else {
+                if let i = self.fixAll?.current {
+                    let earlier = self.fixAll?.steps[i].outcomes.values.allSatisfy(\.isResolved) == true
+                    self.fixAll?.steps[i].status = .skipped(dropped.first.map { Self.clause($0.1) }
+                                                            ?? (earlier ? "Fixed by an earlier step" : "It changed since the review"))
+                }
+                self.endFixAllStep(stopped: false)
+                return
+            }
+            self.fixAll?.changedSomething = true
+            self.start(runFor, plan: offer.plan, also: preview.installs, pins: preview.pins,
+                       members: ready.dropFirst().map { ($0.0, $0.1.plan) }, title: step.name)
+        }
+    }
+
+    /// A step ends before its command runs: Stop was pressed while it was preparing (its rows say Stopped, and Retry
+    /// is there), or nothing in it was left to run.
+    private func endFixAllStep(stopped: Bool) {
+        for id in activeMembers where stopped {
+            fixes[id]?.progress = .finished(.stopped(nil))
+            fixes[id]?.run?.endedAt = Date()
+            fixes[id]?.run?.stopping = false
+            recordFixAll(id, .stopped(nil))
+        }
+        activeFix = nil; activeTitle = nil; activeMembers = []
+        nextFixAllStep()
+    }
+
+    /// After an earlier step ran: each of this step's findings checked again, as after a run (never during a scan).
+    /// One that step fixed or removed is done, its row saying so; one it moved to another version that is still
+    /// affected is left to its row, which offers what fits it now. The rest go on to the step's own checks.
+    private func recheckBeforeStep(_ members: [(Finding, FixOffer)]) async -> [(Finding, FixOffer)] {
+        var still: [(Finding, FixOffer)] = []
+        for (f, offer) in members {
+            while isScanning || isRechecking { try? await Task.sleep(for: .milliseconds(200)) }
+            guard !stopRequested, let report else { still.append((f, offer)); continue }
+            isRechecking = true                                // a scan asked for now waits, as for any re-check
+            let (updated, recheck) = await makeScanner().recheck(f, in: report)
+            isRechecking = false
+            self.report = updated
+            storage.save(updated)
+            switch recheck {
+            case let .fixed(now): settle(f, .fixed(now: now))
+            case .removed: settle(f, .removed)
+            case let .stillAffected(now) where now.id != f.id:
+                settle(f, .blocked("It changed since the review: now \(now.installedLabel)"), now: now)
+            case .stillAffected, .couldNotCheck: still.append((f, offer))
+            }
+        }
+        runPendingScan()
+        return still
+    }
+
+    /// A step's finding an earlier step fixed, removed or moved: its row says so, as after its own run.
+    private func settle(_ finding: Finding, _ outcome: FixOutcome, now: Finding? = nil) {
+        activeMembers.remove(finding.id)
+        fixes[finding.id] = nil
+        resolved.removeAll { $0.id == finding.id }
+        if let now {
+            fixes[now.id] = FixRowState(progress: .finished(outcome))
+            assessFix(now)
+        } else {
+            resolved.append(finding)
+            fixes[finding.id] = FixRowState(progress: .finished(outcome))
+        }
+        recordFixAll(finding.id, outcome)
+    }
+
+    /// Not run: the row says why, and decides its button afresh.
+    private func leaveAlone(_ finding: Finding, why: String) {
+        let outcome = FixOutcome.blocked(Self.clause(why))
+        fixes[finding.id, default: FixRowState()].progress = .finished(outcome)
+        fixes[finding.id]?.run = nil
+        let decided: Bool
+        if case .withheld? = fixes[finding.id]?.availability { decided = true } else { decided = false }   // just now, by Preparing
+        if !decided {
+            fixes[finding.id]?.availability = nil
+            if let current = report?.findings.first(where: { $0.id == finding.id }) { assessFix(current) }
+        }
+        recordFixAll(finding.id, outcome)
+    }
+
+    /// "Homebrew still ships 1.30.6; the fix is 1.30.7 upstream." as a clause: "Not run: Homebrew still ships …".
+    static func clause(_ s: String) -> String { s.hasSuffix(".") ? String(s.dropLast()) : s }
+
+    /// A step's finding ended: its outcome kept for the summary. One that broke something ends Fix all after this step.
+    private func recordFixAll(_ id: String, _ outcome: FixOutcome) {
+        guard var batch = fixAll, batch.phase == .running, let i = batch.current,
+              batch.steps[i].findings.contains(where: { $0.id == id }) else { return }
+        batch.steps[i].outcomes[id] = outcome
+        if case let .broke(what) = outcome, batch.ending == nil { batch.ending = .broke(step: i, what: what) }
+        fixAll = batch
     }
 
     // MARK: Folders

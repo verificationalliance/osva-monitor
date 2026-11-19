@@ -130,7 +130,8 @@ import OSVAKit
                           "FixButton", "FixConfirmation", "FixStatusLine", "FixRunCard", "FixProblemCard", "FixLogView", "FixStepLine",
                           "FixElapsed", "SiteLink", "RowHover", "ProvenanceView", "FactRow", "NameListView", "NameRow",
                           "ListDisclosureRow", "QuietCoverageSection", "AppIcon", "PanelCard", "WhatsNewCard", "ChangelogLines",
-                          "WhatsNewSection"] {
+                          "WhatsNewSection", "FixAllCard", "FixAllReview", "FixAllStepLine", "FixAllSkipLine", "FixAllProgress",
+                          "FixAllSummary", "FixNotice", "FixDisclosure"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
@@ -147,7 +148,8 @@ import OSVAKit
             #expect(cards == allowed && corners == allowed, "\(file) draws a container of its own (\(cards) Surface.card, \(corners) ConcentricRectangle)")
         }
         let users = Self.sources("OSVAMonitorUI").filter { $0.1.contains(".panelCard(") }.map(\.0)
-        #expect(Set(users).isSuperset(of: ["Components.swift", "PopoverView.swift", "Updates.swift", "WhatsNewViews.swift"]), "\(users)")
+        #expect(Set(users).isSuperset(of: ["Components.swift", "PopoverView.swift", "Updates.swift", "WhatsNewViews.swift", "FixAllViews.swift"]),
+                "\(users)")
     }
 
     /// Hover and links have one implementation each: a row's hover is RowHover (Surface.hover, never a lightening
