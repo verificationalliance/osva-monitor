@@ -117,7 +117,7 @@ struct CaptureMode {
                     Self.openSettings?()
                     try await settle(seconds: 1.5)
                     // the one visible window that is neither the status item nor the panel
-                    if let settings = NSApp.windows.first(where: { $0.isVisible && $0 !== panel && !isStatusBar($0) }) {
+                    if let settings = NSApp.windows.first(where: { $0.isVisible && $0 !== panel && $0 !== Self.backdropWindow && !isStatusBar($0) }) {
                         settings.makeKeyAndOrderFront(nil)
                         try await settle(seconds: 0.5)
                         try capture(settings, "settings-\(name)")
