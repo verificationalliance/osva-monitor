@@ -31,8 +31,8 @@ public struct FindingRow: View {
                         .frame(width: 20, height: 18)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .foregroundStyle(hover ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .help(expanded ? "Hide what to do" : "Show what to do")
                 .accessibilityLabel(expanded ? "Hide what to do" : "Show what to do")
             }
@@ -50,10 +50,9 @@ public struct FindingRow: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background { if hover { Rectangle().fill(.quaternary) } }
+        .rowHover($hover)
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
-        .onHover { hover = $0 }
         .accessibilityElement(children: .contain)
     }
 
@@ -104,11 +103,7 @@ public struct FindingRow: View {
     @ViewBuilder private var details: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !fix.isResolved { advice }
-            Button { actions.open(finding.pageURL) } label: {
-                Label("Open on verificationalliance.org", systemImage: "arrow.up.right")
-            }
-            .buttonStyle(.link)
-            .font(Typeface.small)
+            SiteLink("Open on verificationalliance.org", url: finding.pageURL, open: actions.open)
         }
         .padding(.top, 4)
         .transition(.opacity)
@@ -217,7 +212,7 @@ public struct FindingRow: View {
                     .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .symbolRenderingMode(.hierarchical)
             .foregroundStyle(copied ? .primary : .secondary)
             .help(copied ? "Copied" : "Copy the command")

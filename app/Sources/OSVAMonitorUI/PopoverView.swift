@@ -145,7 +145,9 @@ struct NotInIndexSection: View {
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .font(Typeface.small)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 4).padding(.vertical, 3)
+            .rowHover()
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.smooth(duration: 0.25)) { open.toggle() } }
             .accessibilityElement(children: .combine)
@@ -157,7 +159,10 @@ struct NotInIndexSection: View {
                         ListDisclosureRow(bucket.source, items: bucket.items)
                     }
                 }
-                .background(.quinary, in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+                .background {
+                    let shape = ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true)
+                    shape.fill(Surface.card.color).overlay(shape.stroke(Surface.edge.color, lineWidth: 2))
+                }
                 .clipShape(ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
             }
         }

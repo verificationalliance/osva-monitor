@@ -163,8 +163,8 @@ extension Finding.Group {
     public var heading: String { title }
 }
 
-/// A group: a title-case heading (glyph, name, count), then its rows in one content container on `.quinary`,
-/// separated by dividers. The malicious group is the one container with a clay wash and hairline.
+/// A group: a title-case heading (glyph, name, count), then its rows in one content container on `Surface.card` with a
+/// hairline edge, separated by dividers. The malicious group is the one container with a clay wash and hairline.
 public struct GroupContainer<Content: View>: View {
     public enum Heading: Equatable, Sendable {
         case findings(Finding.Group)
@@ -211,7 +211,7 @@ public struct GroupContainer<Content: View>: View {
             // a 2 pt stroke, half of it clipped away by the container's own shape: a 1 pt hairline inside the edge
             shape.fill(Tokens.Malicious.wash.color).overlay(shape.stroke(Tokens.Malicious.hairline.color, lineWidth: 2))
         } else {
-            shape.fill(.quinary)
+            shape.fill(Surface.card.color).overlay(shape.stroke(Surface.edge.color, lineWidth: 2))
         }
     }
 
@@ -261,6 +261,7 @@ public struct ListDisclosureRow: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .rowHover()
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(.smooth(duration: 0.25)) { open.toggle() } }
         .accessibilityElement(children: .combine)
@@ -274,7 +275,7 @@ public struct ListDisclosureRow: View {
     }
 }
 
-/// An upgrade command on a `.quaternary` block, in monospaced `.primary`. It wraps only at spaces, never inside a
+/// An upgrade command in a `Surface.well`, in monospaced `.primary`. It wraps only at spaces, never inside a
 /// word or a path; a single word wider than the block scrolls sideways instead.
 public struct CommandBlock: View {
     public var command: String
@@ -292,7 +293,7 @@ public struct CommandBlock: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 8).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .well()
         .help(command)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(command)

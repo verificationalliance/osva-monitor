@@ -123,4 +123,78 @@ import OSVAKit
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
     }
+
+    /// Hover and links have one implementation each: a row's hover is RowHover (Surface.hover, never a lightening
+    /// `.quaternary`), a link is SiteLink (never system-blue text on the glass), and no surface is a system fill that
+    /// lightens under dark mode's light text.
+    @Test func hoverAndLinksGoThroughTheirComponents() {
+        for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") {
+            #expect(!text.contains(".buttonStyle(.link)"), "\(file) draws a system link")
+            #expect(!text.contains(".fill(.quaternary)") && !text.contains(".fill(.quinary)") && !text.contains("(.quaternary, in:")
+                    && !text.contains("(.quinary, in:"), "\(file) uses a system fill that lightens in dark mode")
+            let hovers = text.components(separatedBy: ".onHover").count - 1
+            let allowed = file == "Components.swift" ? 2 : 0                     // RowHover and SiteLink
+            #expect(hovers == allowed, "\(file) has \(hovers) hover handlers of its own")
+        }
+    }
+}
+
+/// The surfaces go the way that raises text contrast, so a hover never lowers it, and the site link clears 4.5:1 on
+/// any glass, modelled: light glass from white down to mid-grey under light-mode text, dark glass from black up to the
+/// mid-grey measured behind the owner's panel (138) under dark-mode text. Text is the system label colours: black at
+/// 85% (secondary 50%) on light, white at 85% (secondary 55%) on dark.
+@Suite struct SurfaceTests {
+    static let lightGlass: [Double] = [255, 236, 200, 160, 138]
+    static let darkGlass: [Double] = [0, 30, 58, 100, 138]
+
+    /// One sRGB grey level, after laying `tone` (at its alpha) over `under`.
+    static func over(_ under: Double, _ tone: Tone, _ v: Tone.Variant) -> Double {
+        let a = tone.alpha[v] ?? 1, c = Double(tone.hex(v) & 0xFF)
+        return under * (1 - a) + c * a
+    }
+
+    static func text(on bg: Double, dark: Bool, secondary: Bool = false) -> Double {
+        let a = dark ? (secondary ? 0.55 : 0.85) : (secondary ? 0.50 : 0.85)
+        return bg * (1 - a) + (dark ? 255 : 0) * a
+    }
+
+    static func contrast(_ a: Double, _ b: Double) -> Double {
+        let hex = { (g: Double) -> UInt32 in let v = UInt32(max(0, min(255, g.rounded()))); return v << 16 | v << 8 | v }
+        return ToneTests.contrast(hex(a), hex(b))
+    }
+
+    @Test func hoverNeverLowersContrast() {
+        for v in Tone.Variant.allCases {
+            let dark = v == .dark || v == .darkIC
+            for glass in dark ? Self.darkGlass : Self.lightGlass {
+                let card = Self.over(glass, Surface.card, v), hovered = Self.over(card, Surface.hover, v)
+                for secondary in [false, true] {
+                    let before = Self.contrast(Self.text(on: card, dark: dark, secondary: secondary), card)
+                    let after = Self.contrast(Self.text(on: hovered, dark: dark, secondary: secondary), hovered)
+                    #expect(after >= before, "\(v) glass \(glass): \(before) → \(after)")
+                }
+                // and the card itself never lowers it against the bare glass
+                #expect(Self.contrast(Self.text(on: card, dark: dark), card) >= Self.contrast(Self.text(on: glass, dark: dark), glass))
+            }
+        }
+    }
+
+    @Test func theSiteLinkReadsOnAnyGlass() {
+        for v in Tone.Variant.allCases {
+            let dark = v == .dark || v == .darkIC
+            for glass in dark ? Self.darkGlass : Self.lightGlass {
+                for under in [glass, Self.over(glass, Surface.card, v)] {               // on the panel, or on a container
+                    let bg = Self.over(under, Surface.control, v)
+                    #expect(Self.contrast(Self.text(on: bg, dark: dark), bg) >= 4.5, "\(v) glass \(glass)")
+                }
+            }
+        }
+    }
+
+    @Test func primaryTextOnACardClearsMidGrey() {
+        // the owner's case: dark text colours on mid-grey glass; the card alone brings primary text to 4.5:1
+        let card = Self.over(138, Surface.card, .dark)
+        #expect(Self.contrast(Self.text(on: card, dark: true), card) >= 4.5)
+        #expect(Self.contrast(Self.text(on: 138, dark: true), 138) < 4.5)          // which the bare glass did not
+    }
 }
