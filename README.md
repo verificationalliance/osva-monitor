@@ -133,8 +133,9 @@ cd app && swift test      # the app's tests
 ```
 
 Set `DEVELOPER_ID` and `NOTARY_PROFILE` for a Developer ID signature and notarization; the script's header has the
-details. `OSVAMonitor --capture <dir> --fixtures` writes screenshots of the app's own windows. It waits for you to
-click the menu-bar shield, because macOS does not let an app open its own menu-bar panel.
+details. The app icon is `app/Resources/AppIcon.icon`, a Liquid Glass icon you edit in Icon Composer; `build-app.sh`
+compiles it with `actool`. `OSVAMonitor --capture <dir> --fixtures` writes screenshots of the app's own windows. It
+waits for you to click the menu-bar shield, because macOS does not let an app open its own menu-bar panel.
 
 | Folder | What is in it |
 |---|---|
