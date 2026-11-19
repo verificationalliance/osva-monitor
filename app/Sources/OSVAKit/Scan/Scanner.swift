@@ -75,8 +75,12 @@ public actor Scanner {
         // Apps, the libraries they bundle, and extensions are matched to the index here, on this Mac (BundleCheck).
         progress("Reading apps and extensions…")
         let bundles = BundleCheck.match(inventory, index: index)
-        let approvedProducts = filter.approve(products: bundles.productKeys)
-        let approvedProjects = filter.approve(projects: brew.map(\.project.slug) + bundles.projectSlugs + managed.map(\.project.slug))
+        // Java runtimes: by vendor, to a record the index has (JavaCheck). A Homebrew formula's or cask's JDK that is
+        // already checked as a graded project is that finding.
+        let java = JavaCheck.match(inventory.javaRuntimes, index: index, checkedBrew: Set(brew.map(\.item.name)))
+        let approvedProducts = filter.approve(products: bundles.productKeys + java.productKeys)
+        let approvedProjects = filter.approve(projects: brew.map(\.project.slug) + bundles.projectSlugs + managed.map(\.project.slug)
+                                                  + java.projectSlugs)
         let allowed = Set(approvedProjects.map(\.slug))
         let brewChecked = brew.filter { allowed.contains($0.project.slug) }
         let managedChecked = managed.filter { allowed.contains($0.project.slug) }
@@ -152,7 +156,8 @@ public actor Scanner {
         let built = FindingOrder.sorted(FindingBuilder.foldingProgramsIntoApps(
             FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: brewChecked, projects: projects,
                                                   bigIssues: bigIssues, managed: managedChecked)
-                + bundles.findings(products: products.records, projects: projects)))
+                + bundles.findings(products: products.records, projects: projects)
+                + java.findings(products: products.records, projects: projects)))
         // Where each finding's copies are and why: read from this Mac's files, after every request was made.
         let findings = await ProvenanceExplainer(tools: configuration.tools).explain(built, inventory: inventory)
         let checkedBrew = Set(brewChecked.map(\.item))
@@ -162,7 +167,9 @@ public actor Scanner {
             if case let .program(program) = p.origin { return program.formula }
             return nil
         })
-        let unmatchedBrew = notMatchedBrew.filter { !($0.kind == .formula && formulaeWithPrograms.contains($0.name)) }
+        // ... and so has a cask whose JDK is checked as a Java runtime.
+        let javaCasks = java.casks
+        let unmatchedBrew = notMatchedBrew.filter { !($0.kind == .formula && formulaeWithPrograms.contains($0.name)) && !($0.kind == .cask && javaCasks.contains($0.name)) }
         let checkedManaged = Set(managedChecked.map(\.package))
         let unmatchedManaged = inventory.managed.filter { !checkedManaged.contains($0) }
         let listedUnderHomebrew = Set(unmatchedBrew.map(\.name))
@@ -172,6 +179,7 @@ public actor Scanner {
                                      unmatchedManaged: unmatchedManaged,
                                      unchecked: inventory.unchecked.filter { $0.formula.map { !listedUnderHomebrew.contains($0) } ?? true })
         coverage.notChecked += bundles.notChecked(products: products.records, projects: projects)
+        coverage.notChecked += java.notChecked(products: products.records, projects: projects)
         coverage.updatedElsewhere = apps.updatedElsewhere
         // What stayed on this Mac counts every formula no project stands for, programs read or not: none was named.
         let withheld = Self.withheld(selection.withheld, unmatchedBrew: notMatchedBrew, unmatchedManaged: unmatchedManaged)
@@ -203,6 +211,7 @@ public actor Scanner {
         let own = Set(finding.origins.map(\.kind))
         var kinds = own
         if kinds.contains(.electron) { kinds.insert(.homebrew) }          // the apps' cask tokens come from Homebrew
+        if kinds.contains(.java) { kinds.insert(.homebrew) }              // and which cask installed a JDK
         let fresh = await takeInventory(kinds)
         var updated = report
         updated.inventory = report.inventory.replacing(kinds, with: fresh)
@@ -217,6 +226,13 @@ public actor Scanner {
         let rebuilt: [Finding]
         let now: String
         switch finding.subject {
+        case _ where finding.origins.first?.kind == .java:
+            // A Java runtime, read again where it was: an update in place (a cask's installer) keeps its folder.
+            switch await javaFindings(finding, in: updated, index: index) {
+            case let .answer(outcome?): return (report, outcome)
+            case .answer(nil): return sourceError.map { (report, .couldNotCheck($0)) } ?? (Self.replacing(finding, with: [], in: updated), .removed)
+            case let .findings(f, current): rebuilt = f; now = current
+            }
         case let .project(slug, _, installedAs):
             guard let item = updated.inventory.homebrew.first(where: { $0.name == installedAs && finding.origins.contains($0.origin) }) else {
                 return sourceError.map { (report, .couldNotCheck($0)) } ?? (Self.replacing(finding, with: [], in: updated), .removed)
@@ -231,7 +247,7 @@ public actor Scanner {
             }
             rebuilt = builder.findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)], projects: [slug: response!],
                                        bigIssues: bigIssues)
-            now = item.version
+            now = FindingBuilder.versions(item, slug: slug).shown
         case .product, .addOn:
             // An app, a library it bundles, or a malicious extension: no Fix button runs for these (FixPlan), so a fix
             // is never followed by this. The next scan reads them again.
@@ -272,6 +288,38 @@ public actor Scanner {
         updated = Self.replacing(finding, with: explained, in: updated)
         updated.sent.requests += await api.takeSentRequests()
         return (updated, explained.first.map(Recheck.stillAffected) ?? .fixed(now: now))
+    }
+
+    /// What a Java runtime's re-check found: its findings now, or the answer to give instead (nil: it is gone).
+    enum JavaRebuilt { case findings([Finding], now: String), answer(Recheck?) }
+
+    /// A Java runtime's findings, read again (JavaSource) and decided as a scan decides them, its record fresh unless
+    /// the cache's is.
+    private func javaFindings(_ finding: Finding, in updated: ScanReport, index: PublicIndex) async -> JavaRebuilt {
+        guard case let .javaRuntime(old)? = finding.origins.first else { return .answer(.couldNotCheck("not a Java runtime")) }
+        guard let runtime = updated.inventory.javaRuntimes.first(where: { $0.realPath == old.realPath || $0.path == old.path }) else {
+            return .answer(nil)
+        }
+        let brew = updated.inventory.homebrew.filter { ProjectMatcher.project(for: $0, in: index) != nil }.map(\.name)
+        let check = JavaCheck.match([runtime], index: index, checkedBrew: Set(brew))
+        guard let m = check.matches.first else { return .answer(.couldNotCheck("nothing in the public index checks \(runtime.title) now")) }
+        let filter = PrivacyFilter(index: index)
+        var projects: [String: ProjectResponse] = [:], products: [String: ProductResponse] = [:]
+        switch m.route {
+        case let .project(slug, _):
+            guard let approved = filter.approve(projects: [slug]).first else { return .answer(.couldNotCheck("\(slug) is not in the public index")) }
+            if let cached = cache.readJSON(ProjectResponse.self, "project", slug, maxAge: Freshness.project) {
+                projects[slug] = cached
+            } else {
+                do { projects[slug] = try await api.project(approved); cache.writeJSON(projects[slug]!, "project", slug) }
+                catch { return .answer(.couldNotCheck(error.localizedDescription)) }
+            }
+        case let .product(c):
+            let fetched = await BundleCheck.records(filter.approve(products: [c.product]), api: api, cache: cache, maxAge: Freshness.project) { _ in }
+            if let problem = fetched.problems.first { return .answer(.couldNotCheck(problem)) }
+            products = fetched.records
+        }
+        return .findings(check.findings(products: products, projects: projects), now: runtime.shownVersion)
     }
 
     /// The report with `old` replaced by `new` (and no finding listed twice), still in the list's order.
@@ -346,14 +394,15 @@ public actor Scanner {
             r.report.seconds = r.report.seconds ?? t.seconds
             return r
         }
-        // Homebrew first: its casks say which apps it installed, for the apps' upgrade commands.
-        var caskForApp: [String: String] = [:]
+        // Homebrew first: its casks say which apps it installed, for the apps' upgrade commands, and which JDKs.
+        var caskForApp: [String: String] = [:], caskFootprints: [CaskFootprint] = []
         if kinds.contains(.homebrew) {
             let t = await Stopwatch.time { await HomebrewSource(environment: tools).collect() }
             var r = t.value
             r.report.seconds = t.seconds
-            inventory.homebrew = r.items; caskForApp = r.caskForApp; inventory.reports.append(r.report)
+            inventory.homebrew = r.items; caskForApp = r.caskForApp; caskFootprints = r.casks; inventory.reports.append(r.report)
         }
+        let footprints = caskFootprints
         let globals = GlobalPackageSources(environment: tools)
         let roots = configuration.applicationRoots, folders = configuration.folders, casks = caskForApp
         async let npm = kinds.contains(.npm) ? await timed { await globals.npm() } : nil
@@ -369,6 +418,7 @@ public actor Scanner {
         async let conda = kinds.contains(.conda) ? CondaSource(environment: tools).collect() : nil
         async let ports = kinds.contains(.macports) ? await MacPortsSource(environment: tools).collect() : nil
         async let nix = kinds.contains(.nix) ? NixSource(environment: tools).collect() : nil
+        async let javas = kinds.contains(.java) ? await Stopwatch.time { await JavaSource(environment: tools, casks: footprints).collect() } : nil
         let cargo = kinds.contains(.cargo) ? await timed { globals.cargo() } : nil
         let electron = await apps
         inventory.otherApps = electron?.value.otherApps ?? []
@@ -397,6 +447,11 @@ public actor Scanner {
         }
         if let m = await ports { inventory.managed += m.managed; inventory.reports.append(m.report) }
         if let n = await nix { inventory.managed += n.managed; inventory.unchecked += n.unchecked; inventory.reports.append(n.report) }
+        if let j = await javas {
+            var report = j.value.report
+            report.seconds = report.seconds ?? j.seconds
+            inventory.javaRuntimes = j.value.runtimes; inventory.unchecked += j.value.unchecked; inventory.reports.append(report)
+        }
         inventory.reports.sort { $0.kind < $1.kind }
         return inventory
     }

@@ -318,6 +318,10 @@ public enum CoverageLists {
             return "Libraries found inside these apps that the site has no record of yet."
         case "Bundled libraries numbered unlike their advisories":
             return "These libraries carry their own version numbers, which their advisories do not use, so the two cannot be compared."
+        case JavaCheck.noRecord:
+            return "Java runtimes the site has no advisories for. GraalVM's are published apart from OpenJDK's, so its versions are not compared with OpenJDK's."
+        case JavaSource.unreadable:
+            return "Java runtimes whose release file gives no version the advisories could be compared with: missing, unreadable, or an early-access build."
         default:
             if source.hasSuffix(" web apps") {
                 let browser = String(source.dropLast(" web apps".count))

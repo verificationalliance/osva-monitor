@@ -42,13 +42,16 @@ public struct ProvenanceExplainer: Sendable {
                     guard let install = installs.first(where: { $0.origin == origin }) else { continue }
                     if let p = context.explain(install), p != Provenance() { copies.append(p) }
                 }
-            case .project:
+            case let .project(slug, _, _):
                 for origin in f.origins {
-                    if let p = context.located(origin) ?? context.homebrew(origin, version: f.installedVersion), p != Provenance() { copies.append(p) }
+                    guard var p = context.located(origin) ?? context.homebrew(origin, version: f.installedVersion), p != Provenance() else { continue }
+                    // Oracle's JDK is checked as OpenJDK when the index has no record of its own: said where it is explained
+                    if case let .javaRuntime(r) = origin, r.vendor == .oracle, slug == JavaCheck.openJDK { p.details.insert(ProvenanceText.oracleAsOpenJDK, at: 0) }
+                    copies.append(p)
                 }
             case .product, .addOn:
                 for origin in f.origins {
-                    if let p = context.bundled(origin), p != Provenance() { copies.append(p) }
+                    if let p = context.located(origin) ?? context.bundled(origin), p != Provenance() { copies.append(p) }
                 }
             }
             out[i].provenance = copies.isEmpty ? nil : copies
@@ -103,7 +106,7 @@ public struct ProvenanceExplainer: Sendable {
             case let .folder(_, lockfile, direct): return folder(p, lockfile: lockfile, direct: direct)
             case .homebrewFormula, .homebrewCask: return homebrew(p.origin, version: p.version)
             case .application, .addOn: return bundled(p.origin)
-            case .program, .pythonTool, .conda, .macports, .nix: return located(p.origin)
+            case .program, .pythonTool, .conda, .macports, .nix, .javaRuntime: return located(p.origin)
             }
         }
 

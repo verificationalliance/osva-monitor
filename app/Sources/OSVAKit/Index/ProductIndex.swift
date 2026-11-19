@@ -7,7 +7,9 @@ import Foundation
 ///     C  <kind>  <match>  <product>  <display name>       a library bundled inside apps
 ///
 /// `store` is vscode, openvsx, chrome or firefox. A `C` line's kind is framework (`match` is the bundle's directory
-/// name, "Sparkle.framework"), dylib (a file-name prefix, "libssl"), jre ("java") or python ("Python.framework").
+/// name, "Sparkle.framework"), dylib (a file-name prefix, "libssl"), jre or python ("Python.framework"). A jre line's
+/// match is "java" for the Java runtime an app bundles, or a vendor (`JavaVendor.rawValue`: "oracle", "graalvm") for that
+/// vendor's runtimes installed on their own (JavaCheck).
 /// The optional fifth column of an `A` line names the Info.plist key whose version the product's advisories use
 /// (CFBundleShortVersionString unless it says CFBundleVersion).
 ///

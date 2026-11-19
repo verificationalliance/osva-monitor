@@ -153,6 +153,7 @@ public struct PopoverContent: Sendable {
             case .electron: return r.count == 1 ? "1 Electron app" : "\(r.count) Electron apps"
             case .apps: return r.count == 1 ? "1\u{00A0}app" : "\(r.count.formatted())\u{00A0}apps"             // never "140 / apps"
             case .extensions: return r.count == 1 ? "1\u{00A0}extension" : "\(r.count.formatted())\u{00A0}extensions"
+            case .java: return r.count == 1 ? "1\u{00A0}JDK" : "\(r.count)\u{00A0}JDKs"
             case .folders:
                 let n = Int(r.detail.split(separator: " ").first ?? "") ?? 0
                 return n == 1 ? "1 folder" : "\(n) folders"

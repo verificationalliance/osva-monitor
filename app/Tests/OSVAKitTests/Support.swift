@@ -55,8 +55,8 @@ final class RecordedTransport: HTTPTransport, @unchecked Sendable {
         return (reply.body, response)
     }
 
-    /// Serves the site from the recorded fixtures.
-    static func site(batch: String = "api/check-batch.json") -> RecordedTransport {
+    /// Serves the site from the recorded fixtures; `projects` names another fixture for a project's record.
+    static func site(batch: String = "api/check-batch.json", projects: [String: String] = [:]) -> RecordedTransport {
         RecordedTransport { request, _ in
             let path = request.url!.path
             switch path {
@@ -66,7 +66,7 @@ final class RecordedTransport: HTTPTransport, @unchecked Sendable {
             default:
                 if path.hasPrefix("/api/v1/project/") {
                     let slug = String(path.dropFirst("/api/v1/project/".count))
-                    if let data = try? Data(contentsOf: Fixture.url("api/project-\(slug).json")) { return Reply(status: 200, body: data) }
+                    if let data = try? Data(contentsOf: Fixture.url(projects[slug] ?? "api/project-\(slug).json")) { return Reply(status: 200, body: data) }
                     return Reply(status: 404, body: Data(#"{"error":"unknown project"}"#.utf8))
                 }
                 return Reply(status: 404, body: Data(#"{"error":"not found"}"#.utf8))

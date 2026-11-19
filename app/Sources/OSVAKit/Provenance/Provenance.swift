@@ -66,6 +66,9 @@ public enum ProvenanceText {
     /// "Nothing here uses it — removing it may be better than upgrading it."
     public static let unused = "Nothing here uses it — removing it may be better than upgrading it."
 
+    /// Said of Oracle's JDK where it is explained, while the index has no record of Oracle Java SE of its own.
+    public static let oracleAsOpenJDK = "Oracle's builds share OpenJDK's HotSpot, so they are checked against OpenJDK's advisories."
+
     /// What is at the top of a chain of dependents: who asked for it.
     public enum Top: Hashable, Sendable {
         /// Your own project, installed editable or from a folder: "blooper-backend (your project)".

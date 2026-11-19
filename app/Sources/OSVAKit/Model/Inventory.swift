@@ -75,6 +75,9 @@ public enum Origin: Hashable, Codable, Sendable {
     case application(name: String, bundlePath: String, caskToken: String?)
     /// An editor or browser extension, or a package bundled inside one.
     case addOn(host: ExtensionHost, id: String, name: String, profile: String?, path: String)
+    /// A Java runtime (a JDK or a JRE) installed on its own: in /Library/Java/JavaVirtualMachines, IntelliJ IDEA's
+    /// folders, SDKMAN's, asdf's or mise's, or a Homebrew formula's keg.
+    case javaRuntime(JavaRuntime)
 
     /// A short human description: "Homebrew", "Slack", "global npm", "~/code/site/package-lock.json".
     public var label: String {
@@ -100,6 +103,7 @@ public enum Origin: Hashable, Codable, Sendable {
         case let .nix(profile, element): return "Nix \(element) · \(Paths.abbreviatingHome(profile.path))"
         case let .application(name, _, _): return name
         case let .addOn(host, _, name, _, _): return "\(name) (\(host.title))"
+        case let .javaRuntime(r): return r.location
         }
     }
 
@@ -140,6 +144,8 @@ public enum Origin: Hashable, Codable, Sendable {
         case let (.pythonTool(a), .pythonTool(b)): return a.venv == b.venv
         case let (.conda(a), .conda(b)): return a.prefix == b.prefix
         case let (.nix(a, _), .nix(b, _)): return a.path == b.path
+        // the same runtime, whatever version an update put there
+        case let (.javaRuntime(a), .javaRuntime(b)): return a.realPath == b.realPath
         default: return self == other
         }
     }
@@ -160,13 +166,14 @@ public enum Origin: Hashable, Codable, Sendable {
         case .nix: return .nix
         case .application: return .apps
         case .addOn: return .extensions
+        case .javaRuntime: return .java
         }
     }
 }
 
 /// The places OSVA Monitor looks.
 public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
-    case homebrew, macports, nix, electron, apps, extensions, go, rust, npm, pip, pipx, uv, conda, cargo, gem, folders
+    case homebrew, macports, nix, electron, apps, extensions, java, go, rust, npm, pip, pipx, uv, conda, cargo, gem, folders
 
     public var title: String {
         switch self {
@@ -174,6 +181,7 @@ public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
         case .electron: return "Electron apps"
         case .apps: return "Apps"
         case .extensions: return "Extensions"
+        case .java: return "Java"
         case .npm: return "npm"
         case .pip: return "pip"
         case .cargo: return "cargo"
@@ -260,11 +268,13 @@ public struct Inventory: Codable, Sendable, Hashable {
     public var apps: [InstalledApp] = []
     /// Editor and browser extensions (the packages bundled inside them are in `packages`).
     public var extensions: [InstalledExtension] = []
+    /// Java runtimes installed on their own (JavaSource); the ones bundled inside apps are the apps' components.
+    public var javaRuntimes: [JavaRuntime] = []
 
     public init(packages: [InstalledPackage] = [], homebrew: [HomebrewItem] = [], otherApps: [String] = [], reports: [SourceReport] = [],
-                apps: [InstalledApp] = [], extensions: [InstalledExtension] = []) {
+                apps: [InstalledApp] = [], extensions: [InstalledExtension] = [], javaRuntimes: [JavaRuntime] = []) {
         self.packages = packages; self.homebrew = homebrew; self.otherApps = otherApps; self.reports = reports
-        self.apps = apps; self.extensions = extensions
+        self.apps = apps; self.extensions = extensions; self.javaRuntimes = javaRuntimes
     }
 
     public init(from decoder: Decoder) throws {                  // reports saved before otherApps existed
@@ -277,6 +287,7 @@ public struct Inventory: Codable, Sendable, Hashable {
         unchecked = try c.decodeIfPresent([UncheckedItem].self, forKey: .unchecked) ?? []
         apps = try c.decodeIfPresent([InstalledApp].self, forKey: .apps) ?? []
         extensions = try c.decodeIfPresent([InstalledExtension].self, forKey: .extensions) ?? []
+        javaRuntimes = try c.decodeIfPresent([JavaRuntime].self, forKey: .javaRuntimes) ?? []
     }
 
     /// This inventory with the given sources replaced by `other`'s.
@@ -289,6 +300,7 @@ public struct Inventory: Codable, Sendable, Hashable {
         out.unchecked = unchecked.filter { !kinds.contains($0.kind) } + other.unchecked.filter { kinds.contains($0.kind) }
         out.apps = kinds.contains(.apps) ? other.apps : apps
         out.extensions = kinds.contains(.extensions) ? other.extensions : extensions
+        out.javaRuntimes = kinds.contains(.java) ? other.javaRuntimes : javaRuntimes
         out.reports = (reports.filter { !kinds.contains($0.kind) } + other.reports.filter { kinds.contains($0.kind) }).sorted { $0.kind < $1.kind }
         return out
     }

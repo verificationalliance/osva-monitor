@@ -62,6 +62,10 @@ public struct CaskArtifacts: Equatable, Sendable {
                 case "app": apps += strings(value).filter { $0.hasSuffix(".app") && !$0.contains("/") }
                 case "pkg": add("an installer package")
                 case "installer": add("an installer")
+                case "artifact":
+                    // a folder moved into the machine's own (a JDK into /Library/Java/JavaVirtualMachines): brew uses sudo
+                    let targets = (value as? [Any] ?? []).compactMap { ($0 as? [String: Any])?["target"] as? String }
+                    if targets.contains(where: { $0.hasPrefix("/Library/") || $0.hasPrefix("/System/") }) { add("files outside your home folder") }
                 case "uninstall", "zap":
                     for case let step as [String: Any] in (value as? [Any]) ?? [value] {
                         if step["kext"] != nil { add("a kernel extension") }
@@ -110,8 +114,16 @@ public enum HomebrewAvailability: Equatable, Sendable {
         let what = plan.cask ? "the \(info.name) cask" : info.name
         if info.disabled { return .unavailable("Homebrew has disabled \(what): brew will not install it.") }
         if info.pinned { return .unavailable("\(info.name) is pinned in Homebrew, so brew upgrade leaves it as it is. Unpin it first: brew unpin \(info.name).") }
-        guard let stable = info.stable, !stable.isEmpty else { return .unknown("Homebrew's data on this Mac has no version of \(what).") }
+        guard let rawStable = info.stable, !rawStable.isEmpty else { return .unknown("Homebrew's data on this Mac has no version of \(what).") }
         let core = Core.shared
+        // OpenJDK's formulae write Java's versions their own way (openjdk@8 is "1.8.0-512"); the finding has them as
+        // Java names them (8u512): both are compared in Java's canonical form.
+        let java = !plan.cask && JavaVersion.isHomebrewFormula(info.name)
+        func comparable(_ v: String) -> String { java ? JavaVersion.canonical(v) ?? v : v }
+        func said(_ v: String) -> String { java ? JavaVersion.shown(v) : v }
+        let stable = comparable(rawStable), fixedVersion = fixedVersion.map(comparable)
+        var info = info
+        info.installed = info.installed.map(comparable)
         if plan.cask {
             if plan.versionIsTheFix, let fixed = fixedVersion, core.compareVersions(stable, fixed) < 0 {
                 return .unavailable("Homebrew still ships \(stable); the fix is \(fixed) upstream.")
@@ -126,20 +138,20 @@ public enum HomebrewAvailability: Equatable, Sendable {
         }
         if plan.versionIsTheFix, let fixed = fixedVersion {
             if core.compareVersions(stable, fixed) < 0 {
-                return .unavailable("Homebrew still ships \(stable); the fix is \(fixed) upstream.")
+                return .unavailable("Homebrew still ships \(said(stable)); the fix is \(said(fixed)) upstream.")
             }
             // never a no-op as the fix: brew upgrade of what is already Homebrew's newest changes nothing
             if let installed = info.installed, core.compareVersions(stable, installed) <= 0 {
-                return .unavailable("\(installed) is already Homebrew's newest \(what): brew upgrade would change nothing.")
+                return .unavailable("\(said(installed)) is already Homebrew's newest \(what): brew upgrade would change nothing.")
             }
-            return .available(line: "Has \(stable).")
+            return .available(line: "Has \(said(stable)).")
         }
         // A cask or formula that carries the vulnerable thing: Homebrew can only tell whether there is a newer one.
         if let installed = info.installed, core.compareVersions(stable, installed) <= 0 {
-            return .unavailable("Homebrew has no newer \(plan.label) than \(installed), the one installed.")
+            return .unavailable("Homebrew has no newer \(plan.label) than \(said(installed)), the one installed.")
         }
-        let from = info.installed.map { "; \($0) is installed" } ?? ""
-        return .available(line: "Has \(plan.label) \(stable)\(from). Whether that brings the fix shows when the app checks again.")
+        let from = info.installed.map { "; \(said($0)) is installed" } ?? ""
+        return .available(line: "Has \(plan.label) \(said(stable))\(from). Whether that brings the fix shows when the app checks again.")
     }
 
     /// "Newest version installed; no fixed release yet. It still ships Electron 18.3.15."
@@ -198,7 +210,9 @@ public struct HomebrewInfoReader: Sendable {
     /// Why a cask's upgrade needs root, if it does: its record's steps, a launchd service installed system-wide, or an
     /// app bundle this user cannot replace.
     func root(_ artifacts: CaskArtifacts?, bundle: String?) -> String? {
-        if let first = artifacts?.privileged.first { return "its update runs \(first)" }
+        // the step a person knows by name first: a cask whose uninstall forgets receipts also runs an installer package
+        let steps = artifacts?.privileged ?? []
+        if let first = steps.first(where: { $0.hasPrefix("an installer") }) ?? steps.first { return "its update runs \(first)" }
         let services = artifacts?.services ?? []
         if services.contains(where: { s in FixSafety.isSafeName(s) && ["/Library/LaunchDaemons/", "/Library/LaunchAgents/"].contains {
             FileManager.default.fileExists(atPath: tools.system($0 + s + ".plist")) } }) {

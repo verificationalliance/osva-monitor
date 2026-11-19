@@ -21,6 +21,10 @@ public struct AdvisoryCheck: Sendable {
     public var hits: [Hit]
     /// The one upgrade that clears them all: the newest of the upgrades each path proposes.
     public var target: String?
+    /// With no upgrade known: the newest last affected version of the ranges the version lies in, when every one of
+    /// them ends at a last affected version rather than a fixed one (Oracle names the newest affected update of each
+    /// line, never the fix). Nil when one of them has no end: then nothing is fixed yet.
+    public var lastAffected: String? = nil
 
     public var advisories: [ProjectResponse.Advisory] { hits.map(\.advisory) }
     public var exploited: Bool { hits.contains { $0.advisory.kev } }
@@ -28,12 +32,20 @@ public struct AdvisoryCheck: Sendable {
 
     /// What the finding says about how it was decided: "affected" when the issuer's ranges include the version,
     /// "likely affected" when only first fixed versions were there to decide by.
-    public var note: String? {
+    public var note: String? { note() }
+
+    /// The note with each version written as `shown` writes it (Java's "8u511" for 8.0.511).
+    public func note(showing shown: (String) -> String = { $0 }) -> String? {
+        let v = shown(installed)
         if hits.allSatisfy({ $0.basis == .ranges }) {
-            return target.map { "The issuer lists \(installed) as affected and \($0) as fixed." }
-                ?? "The issuer lists \(installed) as affected. No fixed release yet."
+            if let t = target { return "The issuer lists \(v) as affected and \(shown(t)) as fixed." }
+            if let last = lastAffected {
+                if Core.shared.compareVersions(last, installed) == 0 { return "The issuer lists \(v) as the newest affected version; it names no fixed release." }
+                return "The issuer lists \(v) as affected, up to \(shown(last)); it names no fixed release."
+            }
+            return "The issuer lists \(v) as affected. No fixed release yet."
         }
-        return target.map { "Likely affected: the issuer names \($0) as fixed." }
+        return target.map { "Likely affected: the issuer names \(shown($0)) as fixed." }
     }
 
     /// Nil when no weighed advisory affects `installed`.
@@ -57,7 +69,14 @@ public struct AdvisoryCheck: Sendable {
            let up = core.upgrade(from: installed, ranges: weighed.compactMap(\.ranges).flatMap { $0 }) {
             upgrades.append(up)
         }
-        return AdvisoryCheck(installed: installed, hits: hits, target: core.newestVersion(upgrades))
+        let target = core.newestVersion(upgrades)
+        var last: String?
+        if target == nil {
+            // the ranges this version lies in, each asked of the core alone
+            let holding = hits.compactMap(\.advisory.ranges).flatMap { $0 }.filter { core.affectedness(installed: installed, ranges: [$0]) == .affected }
+            if !holding.isEmpty, holding.allSatisfy({ $0.fixed == nil && $0.lastAffected != nil }) { last = core.newestVersion(holding.compactMap(\.lastAffected)) }
+        }
+        return AdvisoryCheck(installed: installed, hits: hits, target: target, lastAffected: last)
     }
 }
 

@@ -80,6 +80,8 @@ public enum UpgradeCommand {
             return nix(profile, element: element)
         case .application, .addOn:
             return BundleAdvice.advice(for: origin, component: name, malicious: malicious)
+        case let .javaRuntime(r):
+            return java(r)
         }
     }
 

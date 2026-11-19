@@ -134,10 +134,11 @@ public struct FindingBuilder: Sendable {
         var out: [Finding] = []
         for match in brew {
             guard let project = projects[match.project.slug] else { continue }
-            let installed = match.item.version
+            let (compared, installed) = Self.versions(match.item, slug: project.slug)
+            let shown = Self.shownVersion(slug: project.slug)
             // Each advisory by the issuer's ranges when it has them, else by its first fixed versions (AdvisoryCheck).
-            guard let d = AdvisoryCheck.decide(installed, project.recent) else { continue }
-            var target = d.target, note = d.note
+            guard let d = AdvisoryCheck.decide(compared, project.recent) else { continue }
+            var target = d.target.map(shown), note = d.note(showing: shown)
             // A versioned formula never leaves its line: `brew upgrade python@3.11` cannot install 3.12.9, so a fix only on
             // another line is said, not offered as a command that would do nothing.
             let offLine = target.map { t in Self.formulaLine(match.item).map { !Self.isOnLine(t, $0) } ?? false } ?? false
@@ -146,7 +147,7 @@ public struct FindingBuilder: Sendable {
                 target = nil
             }
             out.append(Finding(
-                id: "brew|\(match.item.name)|\(installed)", group: d.exploited ? .exploited : .criticalHigh,
+                id: "brew|\(match.item.name)|\(match.item.version)", group: d.exploited ? .exploited : .criticalHigh,
                 subject: .project(slug: project.slug, name: project.name, installedAs: match.item.name), title: project.name,
                 installedVersion: installed, fixedVersion: target, severity: d.severity,
                 advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
@@ -157,6 +158,20 @@ public struct FindingBuilder: Sendable {
                 commandInputs: offLine ? nil : Self.inputs(match.item.origin, match.item.name, nil, target)))
         }
         return out
+    }
+
+    /// The version a formula is compared with its project's advisories in, and the one its row shows. OpenJDK's
+    /// advisories use Java's canonical versions (JavaVersion), so openjdk@8's "1.8.0-511" is compared as 8.0.511 and
+    /// shown as Java names it, 8u511, like the Java runtimes' own rows; every other formula's version is its own.
+    static func versions(_ item: HomebrewItem, slug: String) -> (compared: String, shown: String) {
+        guard slug == JavaCheck.openJDK, let c = JavaVersion.canonical(item.version) else { return (item.version, item.version) }
+        return (c, JavaVersion.shown(c))
+    }
+
+    /// How the project's versions are shown: Java's way for OpenJDK, as they are for the rest.
+    static func shownVersion(slug: String) -> (String) -> String {
+        if slug == JavaCheck.openJDK { return { JavaVersion.shown($0) } }
+        return { $0 }
     }
 
     /// The release line a versioned formula stays on: "python@3.11" → 3.11, "postgresql@16" → 16, "openssl@3" → 3. Nil for
@@ -205,16 +220,17 @@ public struct FindingBuilder: Sendable {
             }
             // Homebrew formulae and casks of the project
             for match in brew where match.project.slug == issue.slug {
-                let v = match.item.version
+                let (v, installed) = Self.versions(match.item, slug: issue.slug)
                 guard check.affects(v) else { continue }
                 let project = projects[issue.slug]
-                let target = fix(v)
-                mark(id: "brew|\(match.item.name)|\(v)", fix: fix) {
-                    Finding(id: "brew|\(match.item.name)|\(v)", group: group,
+                let shown = Self.shownVersion(slug: issue.slug)
+                let target = fix(v).map(shown)
+                mark(id: "brew|\(match.item.name)|\(match.item.version)", fix: { _ in target }) {
+                    Finding(id: "brew|\(match.item.name)|\(match.item.version)", group: group,
                             subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.item.name),
-                            title: project?.name ?? match.project.name, installedVersion: v, fixedVersion: target, severity: severity,
+                            title: project?.name ?? match.project.name, installedVersion: installed, fixedVersion: target, severity: severity,
                             advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                            note: check.note(v, target), bigIssue: label,
+                            note: check.note(installed, target), bigIssue: label,
                             origins: [match.item.origin], pageURL: SiteURL.projectPage(slug: issue.slug),
                             upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
                             verification: project?.verificationMark ?? .none, grade: project?.grade,

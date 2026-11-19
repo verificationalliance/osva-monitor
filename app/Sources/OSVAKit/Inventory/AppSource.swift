@@ -105,8 +105,9 @@ public enum ComponentReader {
             }
         }
 
-        // A bundled Java runtime, by its `release` file.
-        if let java = byKind[.jre]?.first {
+        // A bundled Java runtime, by its `release` file (the `C jre java` line; a vendor's own line is for the runtimes
+        // installed on their own, JavaCheck).
+        if let java = byKind[.jre]?.first(where: { $0.match == "java" }) {
             for url in javaReleases(app) {
                 let version = BoundedFile.read(url, limit: 64 << 10).flatMap { JavaRelease.version(String(decoding: $0, as: UTF8.self)) }
                 add(Found(record: java, label: java.name, version: version, path: relative(url.deletingLastPathComponent(), to: app)), file: url)

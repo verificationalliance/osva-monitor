@@ -214,6 +214,17 @@ public struct FixPlan: Hashable, Sendable {
             // there to read and copy; the app does not run it for you yet.
             return .failure(.noCommand)
 
+        case let .javaRuntime(r):
+            // A JDK its cask installed (the cask's record says it put this folder there, JavaSource): brew upgrades the
+            // cask, which asks for a password when it runs an installer (HomebrewAvailability), and the check after the
+            // run reads the JDK again. A formula's JDK is the formula's finding; anything else is updated by hand.
+            guard let cask = r.cask, inputs.name == cask else { return .failure(.noCommand) }
+            guard FixSafety.isSafeName(cask), FixSafety.isSafePath(r.path) else { return .failure(.unsafeName) }
+            guard let b = brew() else { return .failure(.toolNotFound("Homebrew")) }
+            plan.use(tool: b, name: "brew", pathFirst: true)
+            plan.place = homebrewPlace(b) + ", the \(cask) cask: \(r.title) in " + Paths.abbreviatingHome(r.folder, home: home)
+            plan.homebrew = Homebrew(brew: b, name: cask, cask: true, versionIsTheFix: false, label: cask)
+
         case .cargoInstall:
             guard let cargo = tools.firstExecutable(["~/.cargo/bin/cargo", "/opt/homebrew/bin/cargo", "/usr/local/bin/cargo"]) else {
                 return .failure(.toolNotFound("cargo"))

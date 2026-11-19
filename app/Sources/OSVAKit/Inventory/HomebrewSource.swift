@@ -8,6 +8,9 @@ public struct HomebrewSource: Sendable {
         public var items: [HomebrewItem]
         /// App bundle file name ("Visual Studio Code.app") -> the cask that installed it, for upgrade commands.
         public var caskForApp: [String: String]
+        /// What each installed cask's record says it puts in place: the Java runtimes' source tells by these which
+        /// JDK a cask installed.
+        public var casks: [CaskFootprint] = []
         public var report: SourceReport
     }
 
@@ -24,9 +27,9 @@ public struct HomebrewSource: Sendable {
         for extra in [["HOMEBREW_API_AUTO_UPDATE_SECS": "604800"], ["HOMEBREW_NO_INSTALL_FROM_API": "1"]] {
             do {
                 let r = try await environment.run(brew, ["info", "--json=v2", "--installed"], extra: extra, timeout: 180)
-                if r.status == 0, let parsed = try? Self.parse(r.stdout) {
+                if r.status == 0, let parsed = try? Self.parseInstalled(r.stdout) {
                     let formulae = parsed.items.filter { $0.kind == .formula }.count
-                    return Result(items: parsed.items, caskForApp: parsed.caskForApp,
+                    return Result(items: parsed.items, caskForApp: parsed.caskForApp, casks: parsed.casks,
                                   report: SourceReport(kind: .homebrew, available: true, count: parsed.items.count,
                                                        detail: "\(formulae) formulae, \(parsed.items.count - formulae) casks"))
                 }
@@ -41,6 +44,12 @@ public struct HomebrewSource: Sendable {
 
     /// Reads `brew info --json=v2 --installed`.
     public static func parse(_ json: Data) throws -> (items: [HomebrewItem], caskForApp: [String: String]) {
+        let parsed = try parseInstalled(json)
+        return (parsed.items, parsed.caskForApp)
+    }
+
+    /// Reads `brew info --json=v2 --installed`, with each cask's footprint.
+    public static func parseInstalled(_ json: Data) throws -> (items: [HomebrewItem], caskForApp: [String: String], casks: [CaskFootprint]) {
         guard let root = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { throw CocoaError(.propertyListReadCorrupt) }
         var items: [HomebrewItem] = []
         for f in root["formulae"] as? [[String: Any]] ?? [] {
@@ -56,7 +65,7 @@ public struct HomebrewSource: Sendable {
             items.append(HomebrewItem(kind: .formula, name: name, version: upstreamVersion(pkgVersion),
                                       urls: [f["homepage"] as? String, stable, head].compactMap { $0 }.filter { !$0.isEmpty }))
         }
-        var caskForApp: [String: String] = [:]
+        var caskForApp: [String: String] = [:], casks: [CaskFootprint] = []
         for c in root["casks"] as? [[String: Any]] ?? [] {
             guard let token = c["token"] as? String, let installed = c["installed"] as? String, !installed.isEmpty else { continue }
             // Cask versions may carry a build after a comma ("5.7.3,2320"); the first part is the version.
@@ -69,8 +78,9 @@ public struct HomebrewSource: Sendable {
                     else if let target = (app as? [String: Any])?["target"] as? String { caskForApp[(target as NSString).lastPathComponent] = token }
                 }
             }
+            if let footprint = CaskFootprint(token: token, artifacts: c["artifacts"] as? [Any] ?? []) { casks.append(footprint) }
         }
-        return (items, caskForApp)
+        return (items, caskForApp, casks)
     }
 
     private static let revisionSuffix = Regex("_[0-9]+$")
@@ -79,5 +89,37 @@ public struct HomebrewSource: Sendable {
     /// part before. This is reading Homebrew's format, not comparing versions.
     public static func upstreamVersion(_ pkgVersion: String) -> String {
         revisionSuffix.replacing(in: pkgVersion, with: "")
+    }
+}
+
+/// What a cask's record says it puts in place, beyond apps: the installer packages its uninstall removes by their
+/// receipts (`uninstall pkgutil:`), and the folders it moves into place (`artifact` targets). A JDK cask is one or the
+/// other: temurin@17 installs a package whose receipt is net.temurin.17.jdk, sapmachine-jdk moves its JDK to
+/// /Library/Java/JavaVirtualMachines/sapmachine-jdk.jdk.
+public struct CaskFootprint: Hashable, Codable, Sendable {
+    public var token: String
+    /// Receipt identifiers, exactly as written (a pattern like "com.oracle.jdk-*" is kept, and matched only exactly).
+    public var packages: [String]
+    /// Absolute targets ("~/" for the home folder).
+    public var targets: [String]
+
+    public init(token: String, packages: [String] = [], targets: [String] = []) {
+        self.token = token; self.packages = packages; self.targets = targets
+    }
+
+    /// Nil when the record names neither.
+    init?(token: String, artifacts: [Any]) {
+        func strings(_ v: Any?) -> [String] { (v as? String).map { [$0] } ?? (v as? [Any])?.compactMap { $0 as? String } ?? [] }
+        var packages: [String] = [], targets: [String] = []
+        for case let entry as [String: Any] in artifacts {
+            for step in (entry["uninstall"] as? [Any]) ?? [] {
+                for id in strings((step as? [String: Any])?["pkgutil"]) where !packages.contains(id) && id.utf8.count <= 255 { packages.append(id) }
+            }
+            for item in (entry["artifact"] as? [Any]) ?? [] {
+                if let target = (item as? [String: Any])?["target"] as? String, target.hasPrefix("/") || target.hasPrefix("~/") { targets.append(target) }
+            }
+        }
+        guard !packages.isEmpty || !targets.isEmpty else { return nil }
+        self.init(token: token, packages: Array(packages.prefix(16)), targets: Array(targets.prefix(16)))
     }
 }

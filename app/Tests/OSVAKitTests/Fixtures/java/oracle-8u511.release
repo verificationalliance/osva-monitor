@@ -1,0 +1,6 @@
+JAVA_VERSION="1.8.0_511"
+OS_NAME="Darwin"
+OS_VERSION="11.2"
+OS_ARCH="aarch64"
+SOURCE=".:git:4d3c46f6d6e2+"
+BUILD_TYPE="commercial"

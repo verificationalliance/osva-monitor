@@ -59,6 +59,10 @@ shows the command and runs nothing.
 - **Apps** in /Applications: their own version, for the apps the site has a record of, and the libraries they bundle
   (Sparkle, Qt, OpenSSL, FFmpeg, CEF, a Java runtime, Python), read from each framework's Info.plist or the library
   itself.
+- **Java runtimes** installed on their own: every JDK in /Library/Java/JavaVirtualMachines (Oracle, Temurin, Zulu,
+  Corretto, Microsoft …), IntelliJ IDEA's, SDKMAN's, asdf's and mise's, by the version in each one's release file, and
+  Homebrew's openjdk formulae. OpenJDK's builds and Oracle's JDK are checked against OpenJDK's advisories; GraalVM, whose
+  advisories are separate, is listed as not checked.
 - **Editor and browser extensions**: VS Code, Cursor, VSCodium and Windsurf; Chrome, Brave, Edge, Arc and Vivaldi;
   Firefox. Each is checked on the Mac against the list of extensions known to be malicious, and the npm packages an
   editor extension bundles are checked like any other.
