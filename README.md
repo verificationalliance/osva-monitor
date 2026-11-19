@@ -1,9 +1,15 @@
 # OSVA Monitor
 
+[![ci](https://github.com/verificationalliance/osva-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/verificationalliance/osva-monitor/actions/workflows/ci.yml)
+
 A native macOS menu-bar app that watches the software on your Mac and tells you what the
 [Open Source Verification Alliance](https://verificationalliance.org/) knows about it: malicious packages,
 vulnerabilities exploited in the wild, critical and high flaws with the version that fixes them, each project's trust
 grade, and whether any of its code is formally verified.
+
+| | |
+|---|---|
+| ![Findings: a malicious package, flaws exploited in the wild, each with its fix](docs/screenshots/popover-dark.png) | ![Nothing needs action, with what could not be checked](docs/screenshots/popover-clean-dark.png) |
 
 macOS 26 or later, Apple silicon. Liquid Glass, your appearance and accent colour, no settings to learn.
 
