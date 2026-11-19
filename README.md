@@ -80,6 +80,8 @@ cd app && swift test           # the app's tests
 ./scripts/build-app.sh         # → app/.build/OSVA Monitor.app (ad-hoc signed; set DEVELOPER_ID and NOTARY_PROFILE to sign and notarize)
 ```
 
+The app icon is `app/Resources/AppIcon.icon`, a Liquid Glass icon to edit in Icon Composer; `build-app.sh` compiles it with `actool`.
+
 `OSVAMonitor --capture <dir> --fixtures` writes screenshots of the app's own windows (no Screen Recording permission
 needed); it waits for you to click the menu-bar shield, because macOS does not let an app open its own menu-bar panel.
 

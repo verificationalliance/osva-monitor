@@ -36,6 +36,20 @@ cp "$bin_dir/OSVAMonitor" "$app/Contents/MacOS/OSVAMonitor"
 for bundle in "$bin_dir"/*.bundle; do                 # SwiftPM resource bundles, if any target gains resources
   [ -e "$bundle" ] && cp -R "$bundle" "$app/Contents/Resources/"
 done
+# The app icon, a Liquid Glass icon made in Icon Composer (app/Resources/AppIcon.icon): actool compiles it into
+# Assets.car (CFBundleIconName) and AppIcon.icns (CFBundleIconFile, for whatever still reads only that). actool exits 0
+# even when it compiled nothing, so the two files are checked for.
+icon_tmp="$(mktemp -d)"                               # actool insists on writing the keys it would add; they are below
+actool_status=0
+actool_log="$(xcrun actool "$app_src/Resources/AppIcon.icon" --compile "$app/Contents/Resources" --app-icon AppIcon \
+  --platform macosx --target-device mac --minimum-deployment-target "$min_macos" \
+  --output-partial-info-plist "$icon_tmp/AppIcon.plist" --output-format human-readable-text --errors --warnings)" \
+  || actool_status=$?
+rm -rf "$icon_tmp"
+grep -E "(error|warning):" <<<"$actool_log" >&2 || true
+for f in Assets.car AppIcon.icns; do
+  [ "$actool_status" = 0 ] && [ -s "$app/Contents/Resources/$f" ] || { echo "actool did not make $f" >&2; exit 1; }
+done
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,6 +59,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key>                  <string>OSVA Monitor</string>
   <key>CFBundleDisplayName</key>           <string>OSVA Monitor</string>
   <key>CFBundleExecutable</key>            <string>OSVAMonitor</string>
+  <key>CFBundleIconName</key>              <string>AppIcon</string>
+  <key>CFBundleIconFile</key>              <string>AppIcon</string>
   <key>CFBundlePackageType</key>           <string>APPL</string>
   <key>CFBundleShortVersionString</key>    <string>$version</string>
   <key>CFBundleVersion</key>               <string>$build_number</string>
