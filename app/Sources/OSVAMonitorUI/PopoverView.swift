@@ -9,10 +9,14 @@ public struct PopoverActions {
     public var open: (URL) -> Void
     public var copy: (String) -> Void
     public var fix: FixActions
+    /// A check for a new version of the app, the person's own (Sparkle's window shows what it finds).
+    public var checkForUpdates: () -> Void
 
     public init(scanNow: @escaping () -> Void, openSettings: @escaping () -> Void, quit: @escaping () -> Void,
-                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none) {
+                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none,
+                checkForUpdates: @escaping () -> Void = {}) {
         self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy; self.fix = fix
+        self.checkForUpdates = checkForUpdates
     }
 
     public static var none: PopoverActions { PopoverActions(scanNow: {}, openSettings: {}, quit: {}, open: { _ in }, copy: { _ in }) }
@@ -29,15 +33,18 @@ public struct PopoverView: View {
     public var actions: PopoverActions
     /// Each finding's fix: its button, its confirmation, how its last run went.
     public var fixes: [String: FixRowState]
+    public var updates: UpdateState
     public var maxListHeight: CGFloat
     /// False draws the list without a scroll view (for ImageRenderer, which does not draw scroll views' content).
     public var scrolls: Bool
     @State private var expanded: Set<String>
     @State private var listHeight: CGFloat = 0
+    @State private var gearFrame: CGRect = .zero
 
-    public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], expanded: Set<String> = [],
-                maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true) {
-        self.content = content; self.actions = actions; self.fixes = fixes; self.maxListHeight = maxListHeight; self.scrolls = scrolls
+    public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], updates: UpdateState = .none,
+                expanded: Set<String> = [], maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true) {
+        self.content = content; self.actions = actions; self.fixes = fixes; self.updates = updates; self.maxListHeight = maxListHeight
+        self.scrolls = scrolls
         _expanded = State(initialValue: expanded)
     }
 
@@ -58,6 +65,9 @@ public struct PopoverView: View {
                 } else {
                     groups
                 }
+            }
+            if let version = updates.waitingVersion {
+                UpdateWaitingRow(version: version, install: actions.checkForUpdates)
             }
             footer
         }
@@ -98,7 +108,8 @@ public struct PopoverView: View {
         if c.notInIndexCount > 0 { NotInIndexSection(coverage: c) }
     }
 
-    /// Scan Now is the one prominent control and takes the accent colour; Settings and Quit are quiet symbols.
+    /// Scan Now is the one prominent control and takes the accent colour; Settings and Quit are quiet symbols. In the
+    /// installed app the gear opens a short menu: Settings, and Check for Updates.
     private var footer: some View {
         HStack(spacing: 4) {
             Button(action: actions.scanNow) {
@@ -108,7 +119,15 @@ public struct PopoverView: View {
             .controlSize(.large)
             .disabled(content.isScanning)
             Spacer()
-            quiet("gearshape", "Settings…", action: actions.openSettings)
+            quiet("gearshape", updates.isAvailable ? "Settings and updates" : "Settings…") {
+                if updates.isAvailable {
+                    AppMenu.show(below: gearFrame, updates: updates, openSettings: actions.openSettings, checkForUpdates: actions.checkForUpdates)
+                } else {
+                    actions.openSettings()
+                }
+            }
+            .background(GeometryReader { g in Color.clear.onAppear { gearFrame = g.frame(in: .global) }
+                .onChange(of: g.frame(in: .global)) { _, f in gearFrame = f } })
             quiet("power", "Quit OSVA Monitor", action: actions.quit)
         }
     }

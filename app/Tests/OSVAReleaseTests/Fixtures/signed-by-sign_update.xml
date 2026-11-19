@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- sparkle-sign-warning:
+Signed with the OSVA Monitor update key by scripts/release.sh. Any change to this file, even to a space, breaks
+the signature at its end, and the app then ignores the feed. Change it only by running scripts/release.sh again.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>OSVA Monitor</title>
+    <link>https://verificationalliance.org/app/</link>
+    <description>New versions of OSVA Monitor, signed with its update key.</description>
+    <language>en</language>
+    <item>
+      <title>OSVA Monitor 0.1.1</title>
+      <pubDate>Thu, 19 Nov 2026 12:00:00 +0000</pubDate>
+      <sparkle:version>1001</sparkle:version>
+      <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0.0</sparkle:minimumSystemVersion>
+      <link>https://github.com/verificationalliance/osva-monitor/releases/tag/v0.1.1</link>
+      <description sparkle:format="markdown">What is new in 0.1.1 is on [its GitHub release page](https://github.com/verificationalliance/osva-monitor/releases/tag/v0.1.1).</description>
+      <enclosure url="https://github.com/verificationalliance/osva-monitor/releases/download/v0.1.1/OSVA-Monitor-0.1.1.zip" length="4508410" type="application/octet-stream" sparkle:edSignature="jvyyZtwH/QZupCSk04n5EJJOz/rg/ZVZSYBKRBOODAAN0pcPyEi7Kt7/RQbILOkZT/8d0BvHgbPxLqEK0oNbDA=="/>
+    </item>
+  </channel>
+</rss>
+<!-- sparkle-signatures:
+edSignature: rJ6hQhcPOMxYlJaWdM546L7hOfLT6Ajv1MgKC7JFYhyuD2tAFN0IB9ZTORxv41Mb4xL5ONDz1cKGj4X8IhFfBg==
+length: 1493
+-->

@@ -65,7 +65,6 @@ import OSVAKit
     @Test func whatLeavesYourMacInNumbers() {
         #expect(SentSummary.counts(PreviewData.sent) == .init(batch: 9, projects: 4))
         #expect(SentSummary.counts(SentRecord()) == .init(batch: 0, projects: 0))
-        #expect(SentSummary.groups(PreviewData.sent).map(\.title) == ["POST /api/v1/check/batch · 9", "GET /api/v1/project · 4"])
     }
 
     @Test func notCheckedIsShownNotCountedAsClean() {

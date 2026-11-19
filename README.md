@@ -73,6 +73,21 @@ it.
 
 <br clear="right">
 
+## Updates
+
+The app updates itself with [Sparkle](https://sparkle-project.org/). Once a day it downloads a short feed,
+`verificationalliance.org/app/appcast.xml`, that names the latest version. The request tells the site nothing about
+your Mac but the app's version. Settings has the switch for the daily check and a button to check now.
+
+Each release is signed with the project's update key, whose public half is built into the app: the zip on GitHub, and
+the feed itself. The app takes a new version only if both signatures check. It checks the zip before unpacking any of
+it, and it accepts only a zipped app, never an installer package. Someone who could change the web site still could not
+make the app install anything else, or put other words in its update window. The zip is also signed with the Developer
+ID and notarized by Apple, as before.
+
+`scripts/release.sh` signs a notarized zip and writes the feed. `scripts/test-update.sh` runs a whole update on a Mac,
+with a throwaway key and a feed served from the Mac itself, and checks that a changed zip or feed is refused.
+
 ## Proved, not only tested
 
 The decisions where a bug would mislead you are written in [Lean 4](https://lean-lang.org/), a programming language
@@ -141,7 +156,7 @@ waits for you to click the menu-bar shield, because macOS does not let an app op
 |---|---|
 | `core/` | The Lean core (`OSVACore/*.lean`), its C header and the C bridge |
 | `app/` | The Swift package: `OSVAKit` (scanning, the API), `OSVAMonitorUI`, the app, tests |
-| `scripts/` | `check-core.sh`, `build-app.sh` |
+| `scripts/` | `check-core.sh`, `build-app.sh`, `release.sh` (the update feed), `test-update.sh` |
 
 ## Where the data comes from
 

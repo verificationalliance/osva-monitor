@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  OSVA Monitor's Info.plist. scripts/build-app.sh copies it into the app and sets the versions and the oldest macOS;
+  Tests/OSVAReleaseTests/InfoPlistTests.swift checks the update keys.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>            <string>org.verificationalliance.osva-monitor</string>
+  <key>CFBundleName</key>                  <string>OSVA Monitor</string>
+  <key>CFBundleDisplayName</key>           <string>OSVA Monitor</string>
+  <key>CFBundleExecutable</key>            <string>OSVAMonitor</string>
+  <key>CFBundleIconName</key>              <string>AppIcon</string>
+  <key>CFBundleIconFile</key>              <string>AppIcon</string>
+  <key>CFBundlePackageType</key>           <string>APPL</string>
+  <key>CFBundleShortVersionString</key>    <string>set by build-app.sh</string>
+  <key>CFBundleVersion</key>               <string>set by build-app.sh</string>
+  <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
+  <key>CFBundleDevelopmentRegion</key>     <string>en</string>
+  <key>LSMinimumSystemVersion</key>        <string>set by build-app.sh</string>
+  <key>LSUIElement</key>                   <true/>
+  <key>LSApplicationCategoryType</key>     <string>public.app-category.developer-tools</string>
+  <key>NSHumanReadableCopyright</key>      <string>Open Source Verification Alliance, https://verificationalliance.org/</string>
+
+  <!-- Updates, by Sparkle (https://sparkle-project.org/documentation/customization/). -->
+  <key>SUFeedURL</key>                     <string>https://verificationalliance.org/app/appcast.xml</string>
+  <!-- The update key's public half. The private half signs every release zip and the feed itself. -->
+  <key>SUPublicEDKey</key>                 <string>9cEJw3YLnFNchYW7zNMy1geAw8SW2uvLC+5CT5FtAcw=</string>
+  <!-- Check once a day without asking first; Settings turns it off. -->
+  <key>SUEnableAutomaticChecks</key>       <true/>
+  <key>SUScheduledCheckInterval</key>      <integer>86400</integer>
+  <!-- Check the zip's signature before unpacking any of it, so a bad download is never even opened. -->
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <!-- Read only a feed signed with the update key: no one who can change the web site can change what the update
+       window says or where it points. -->
+  <key>SURequireSignedFeed</key>           <true/>
+  <!-- Nothing about this Mac goes with the check. -->
+  <key>SUEnableSystemProfiling</key>       <false/>
+</dict>
+</plist>
