@@ -266,6 +266,12 @@ func main() throws {
         let all = PreviewData.fixAllScene(name)!
         return ("fix-\(name)", AnyView(popover(all.scene.report(), expanded: all.scene.open, fixes: all.scene.fixes,
                                                resolved: all.scene.resolvedFindings, fixAll: all.panel)), Method.imageRenderer)
+    } + PreviewData.proposalSceneNames.map { name in
+        // rows: a partial fix and an upgrade together offered, casks with nothing newer, one that needs a password; a
+        // partial fix done
+        let p = PreviewData.proposalScene(name)!
+        return ("fix-\(name)", AnyView(popover(p.scene.report(), expanded: p.scene.open, fixes: p.scene.fixes, resolved: p.scene.resolvedFindings,
+                                               fixAll: p.panel)), Method.imageRenderer)
     } + sheets(full, prefix: "sent") + sheets(PreviewData.bundlesReport(), prefix: "sent-bundles") + coverageLists()
     // Where each copy is and why: rows open, then one with its details open; on the window background and on a mid-grey
     // like the glass of the owner's panel over their desktop (sampled from their screenshot: rgb 122).
