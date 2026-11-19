@@ -14,8 +14,9 @@ const parseDeps = new Function(app.slice(start, end) + '\nreturn (t, f) => ({ de
 
 const out = {};
 for (const dir of readdirSync(join(here, 'lockfiles')).sort()) {
-  for (const file of readdirSync(join(here, 'lockfiles', dir)).sort()) {
-    const { deps, skipped } = parseDeps(readFileSync(join(here, 'lockfiles', dir, file), 'utf8'), file);
+  for (const stored of readdirSync(join(here, 'lockfiles', dir)).sort()) {
+    const file = stored.replace(/\.fixture$/, '');   // stored as <name>.fixture so GitHub does not read test data as dependencies
+    const { deps, skipped } = parseDeps(readFileSync(join(here, 'lockfiles', dir, stored), 'utf8'), file);
     out[`${dir}/${file}`] = { dependencies: deps.map(d => [d.eco, d.name, d.version]).sort(), skipped };
   }
 }

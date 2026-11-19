@@ -4,7 +4,25 @@ import Foundation
 /// Recorded fixtures (Tests/OSVAKitTests/Fixtures).
 enum Fixture {
     static var root: URL { Bundle.module.resourceURL!.appendingPathComponent("Fixtures", isDirectory: true) }
-    static func url(_ path: String) -> URL { root.appendingPathComponent(path) }
+    /// Fixture lockfiles are stored as `<name>.fixture`, so GitHub's dependency graph does not read deliberately old test
+    /// data as this repository's dependencies; tests see them under their real names in a copy made once per run.
+    static let lockfiles: URL = {
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("osva-lockfiles-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("lockfiles", isDirectory: true)
+        let files = FileManager.default.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey])!
+        for case let file as URL in files where (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+            let relative = String(file.path.dropFirst(source.path.count + 1))
+            let name = relative.hasSuffix(".fixture") ? String(relative.dropLast(".fixture".count)) : relative
+            let target = copy.appendingPathComponent(name)
+            try! FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try! FileManager.default.copyItem(at: file, to: target)
+        }
+        return copy
+    }()
+    static func url(_ path: String) -> URL {
+        if path == "lockfiles" || path.hasPrefix("lockfiles/") { return lockfiles.appendingPathComponent(String(path.dropFirst("lockfiles".count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))) }
+        return root.appendingPathComponent(path)
+    }
     static func data(_ path: String) -> Data { try! Data(contentsOf: url(path)) }
     static func text(_ path: String) -> String { String(decoding: data(path), as: UTF8.self) }
     static let index: PublicIndex = try! PublicIndex.decode(data("api/app-index.tsv"))
