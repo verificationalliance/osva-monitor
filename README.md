@@ -42,11 +42,15 @@ OSVA Monitor works out what can actually be done here:
 <br clear="right">
 
 ```sh
-/usr/bin/python3 -m pip install --user --upgrade 'setuptools>=78.1.1'
+/usr/bin/python3 -m pip install --user --upgrade setuptools==78.1.1
 ```
 
 Every finding works like this: the smallest upgrade that fixes what can be fixed where the package lives, and a
 command for that place, whether it is Homebrew, a project folder, a global npm install or one of your Pythons.
+Where it can, the app runs that command itself: you review what will change, watch the log, and can stop it, and the
+finding is checked again after. A pip upgrade is checked against what depends on the package, before and after, and
+one that breaks something can be undone. Apple's Python changes only with Xcode or macOS, so for this one the app
+shows the command and runs nothing.
 
 ## What it looks at
 
