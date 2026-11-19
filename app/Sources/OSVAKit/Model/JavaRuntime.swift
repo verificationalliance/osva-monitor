@@ -36,6 +36,12 @@ public enum JavaVendor: String, Codable, Sendable, CaseIterable {
     /// the same sources and is checked against them too, when the index has no record of Oracle Java SE of its own.
     public var sharesOpenJDK: Bool { self != .graalvm && self != .semeru }
 
+    /// How the vendor numbers its own builds, when it patches without moving JAVA_VERSION (Corretto 27.0.1.1.4 still says
+    /// 27.0.1): the distributor's name in an advisory's `fixed_builds`, and IMPLEMENTOR_VERSION's prefix before the build.
+    public var buildScheme: (dist: String, prefix: String)? {
+        self == .corretto ? ("Amazon Corretto", "Corretto-") : nil
+    }
+
     /// Why it is not checked against OpenJDK's advisories.
     public var notOpenJDK: String? {
         switch self {
@@ -158,6 +164,8 @@ public struct JavaRuntime: Hashable, Codable, Sendable {
     public var build: String?
     /// IMPLEMENTOR (or the Info.plist's JVMVendor), as written.
     public var implementor: String?
+    /// IMPLEMENTOR_VERSION, as written ("Corretto-27.0.1.1.4", "Temurin-17.0.20+8").
+    public var implementorVersion: String? = nil
     /// "JDK" or "JRE" (the release file's IMAGE_TYPE; a JDK unless it says otherwise).
     public var image: String
     /// The Homebrew formula whose keg it is.
@@ -170,6 +178,12 @@ public struct JavaRuntime: Hashable, Codable, Sendable {
         self.path = path; self.home = home; self.realPath = realPath; self.place = place; self.vendor = vendor; self.version = version
         self.canonical = canonical; self.build = build; self.implementor = implementor; self.image = image; self.formula = formula
         self.cask = cask
+    }
+
+    /// The vendor's own build, when it numbers builds its own way (`JavaVendor.buildScheme`): "27.0.1.1.4".
+    public var vendorBuild: String? {
+        guard let scheme = vendor.buildScheme, let v = implementorVersion, v.hasPrefix(scheme.prefix) else { return nil }
+        return JavaRelease.plausible(String(v.dropFirst(scheme.prefix.count)))
     }
 
     /// The version as Java names it: "17.0.20", "8u511".

@@ -84,17 +84,41 @@ public struct JavaCheck: Sendable {
             guard let record = products[c.product] else { return nil }
             (subject, recent, page) = (.product(key: c.product, name: record.name), record.recent, record.sourceURL ?? SiteURL.home)
         }
-        guard let d = AdvisoryCheck.decide(r.canonical, recent) else { return nil }
+        let vendor = Self.vendorFixes(r, recent)
+        guard let d = AdvisoryCheck.decide(r.canonical, vendor.recent) else { return nil }
         let origin = Origin.javaRuntime(r)
+        // the issuer names no fix, the vendor's own record does: its build is the fix this row names
+        let target = d.target.map(JavaVersion.shown) ?? vendor.fix
+        let vendorNote = d.target == nil ? vendor.fix.flatMap { fix in r.vendor.buildScheme.map { "\($0.dist)'s changelog lists the fix in \(r.vendor.title) \(fix)." } } : nil
         let inputs = UpgradeCommand.Inputs(origin: origin, name: r.cask ?? r.formula ?? r.vendor.rawValue, ecosystem: nil, target: nil, malicious: false)
         let advice = UpgradeCommand.advice(inputs)
         return Finding(
             id: "java|\(r.realPath)|\(r.canonical)", group: d.exploited ? .exploited : .criticalHigh, subject: subject, title: r.title,
-            installedVersion: r.shownVersion, fixedVersion: d.target.map(JavaVersion.shown), severity: d.severity,
+            installedVersion: r.shownVersion, fixedVersion: target, severity: d.severity,
             advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
-            note: [d.note(showing: JavaVersion.shown), advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil,
+            note: [d.note(showing: JavaVersion.shown), vendorNote, vendor.cleared, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil,
             origins: [origin], pageURL: page, upgradeCommand: advice.command, verification: mark, grade: grade,
             commandInputs: advice.command == nil ? nil : inputs)
+    }
+
+    /// The advisories a vendor's own build already fixes, set aside: an advisory whose `fixed_builds` names a build of
+    /// this vendor on this runtime's line, at or below the runtime's own build (by the verified core's order), does not
+    /// apply to it, whatever its JAVA_VERSION says. Below that build it stands, and that build is the fix to name.
+    /// Every other vendor, and a runtime whose build is not known, is decided by the advisory's ranges alone.
+    static func vendorFixes(_ r: JavaRuntime, _ recent: [ProjectResponse.Advisory])
+        -> (recent: [ProjectResponse.Advisory], fix: String?, cleared: String?) {
+        guard let scheme = r.vendor.buildScheme, let build = r.vendorBuild else { return (recent, nil, nil) }
+        let core = Core.shared, line = ComponentReader.majorOf(build)
+        var kept: [ProjectResponse.Advisory] = [], fixes: [String] = [], cleared: [String] = []
+        for a in recent {
+            let builds = a.fixedBuilds.filter { $0.dist == scheme.dist && ComponentReader.majorOf($0.build) == line && FixSafety.isSafeVersion($0.build) }
+            guard let first = core.sortedVersions(builds.map(\.build)).first else { kept.append(a); continue }
+            if core.compareVersions(build, first) >= 0 { cleared.append(a.cve ?? a.id); continue }
+            kept.append(a); fixes.append(first)
+        }
+        let said = cleared.isEmpty ? nil
+            : "\(r.vendor.title) \(build) has \(scheme.dist)'s fix for \(cleared.joined(separator: ", ")), so \(cleared.count == 1 ? "it does" : "they do") not count here."
+        return (kept, core.newestVersion(fixes), said)
     }
 
     // MARK: What was not checked

@@ -149,9 +149,20 @@ public struct ProjectResponse: Codable, Sendable {
         /// advisory: an older server, or a record it cannot read as ranges exactly (`rangesNote` says why).
         public var ranges: [AffectedRange]?
         public var rangesNote: String?
+        /// Builds a distributor's own record says contain the fix ("Amazon Corretto" 27.0.1.1.4: its changelog at that
+        /// tag lists the advisory), not necessarily the first that does. [] from servers that do not send them.
+        public var fixedBuilds: [FixedBuild]
+
+        public struct FixedBuild: Codable, Sendable, Hashable {
+            public var dist: String
+            public var build: String
+            public var url: String?
+            public init(dist: String, build: String, url: String? = nil) { self.dist = dist; self.build = build; self.url = url }
+        }
 
         enum CodingKeys: String, CodingKey {
             case id, date, title, kev, cve, ranges, severity = "sev", fixedHint = "fixed_hint", rangesNote = "ranges_note"
+            case fixedBuilds = "fixed_builds"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
@@ -164,6 +175,7 @@ public struct ProjectResponse: Codable, Sendable {
             cve = try? c.decodeIfPresent(String.self, forKey: .cve)
             ranges = try? c.decodeIfPresent([AffectedRange].self, forKey: .ranges)     // malformed reads as none: fixed_hint decides
             rangesNote = try? c.decodeIfPresent(String.self, forKey: .rangesNote)
+            fixedBuilds = (try? c.decodeIfPresent([FixedBuild].self, forKey: .fixedBuilds)) ?? []    // optional, and never fatal
         }
     }
 

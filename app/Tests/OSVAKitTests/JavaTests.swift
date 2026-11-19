@@ -135,7 +135,8 @@ enum JDK {
         #expect(oracle.vendor == .oracle && oracle.version == "1.8.0_511" && oracle.canonical == "8.0.511" && oracle.shownVersion == "8u511")
         #expect(oracle.implementor == "Oracle Corporation")
         let zulu = try #require(byName["zulu-21.jdk"])
-        #expect(zulu.vendor == .zulu && zulu.canonical == "21.0.5" && zulu.build == "21.0.5+11-LTS")
+        #expect(zulu.vendor == .zulu && zulu.canonical == "21.0.5" && zulu.build == "21.0.5+11-LTS" && zulu.implementorVersion == "Zulu21.38+21-CA")
+        #expect(zulu.vendorBuild == nil)                                         // only Corretto's builds are its own numbers here
         // GraalVM says IMPLEMENTOR="Oracle Corporation" and carries Oracle's bundle identifier: its own keys tell it apart
         let graal = try #require(byName["graalvm-21.jdk"])
         #expect(graal.vendor == .graalvm && graal.canonical == "21.0.12")
@@ -270,6 +271,44 @@ enum JDK {
 
         // today's record (ranges null: "version '8u511b33-perf' is not a version") flags none of them, and says nothing wrong
         #expect(check.findings(products: [:], projects: ["openjdk": JDK.live]).filter { $0.advisoryIDs.contains("CVE-2026-114938") }.isEmpty)
+    }
+
+    /// A distributor that patches without moving JAVA_VERSION: Corretto 27.0.1.1.4 still says 27.0.1, inside Oracle's
+    /// "up to 27.0.1.0.3". The advisory's `fixed_builds` (Amazon's changelog at that tag lists the CVE) decides for
+    /// Corretto's own build, by the core's order; every other vendor, and an older server, keeps the ranges' answer.
+    @Test func correttosOwnBuildListsItsFix() throws {
+        var json = try #require(try JSONSerialization.jsonObject(with: Fixture.data("api/project-openjdk-post-fix-2026-11-19.json")) as? [String: Any])
+        var recent = try #require(json["recent"] as? [[String: Any]])
+        let i = try #require(recent.firstIndex { $0["id"] as? String == "CVE-2026-114938" })
+        recent[i]["fixed_builds"] = [["dist": "Amazon Corretto", "build": "27.0.1.1.4", "url": "https://github.com/corretto/corretto-27/blob/27.0.1.1.4/CHANGELOG.md"]]
+        json["recent"] = recent
+        let record = try JSONDecoder().decode(ProjectResponse.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(record.recent[i].fixedBuilds == [.init(dist: "Amazon Corretto", build: "27.0.1.1.4", url: "https://github.com/corretto/corretto-27/blob/27.0.1.1.4/CHANGELOG.md")])
+        func runtime(_ version: String, _ vendor: JavaVendor, _ implementorVersion: String?) -> JavaRuntime {
+            var r = JDK.runtime(version, vendor, path: "/Library/Java/JavaVirtualMachines/\(implementorVersion ?? version).jdk")
+            r.implementorVersion = implementorVersion
+            return r
+        }
+        let runtimes = [runtime("27.0.1", .corretto, "Corretto-27.0.1.1.4"), runtime("27.0.1", .corretto, "Corretto-27.0.1.1.5"),
+                        runtime("27.0.1", .corretto, "Corretto-27.0.1.1.3"), runtime("27.0.1", .corretto, nil),
+                        runtime("17.0.20", .corretto, "Corretto-17.0.20.8.1"), runtime("27.0.1", .temurin, "Temurin-27.0.1+9")]
+        let f = JavaCheck.match(runtimes, index: Make.index).findings(products: [:], projects: ["openjdk": record])
+        // at or above the build Amazon lists: not affected by that advisory; below it, or unknown, or another line, or another vendor: affected
+        #expect(f.map { "\($0.title) \($0.origins.first.flatMap { if case let .javaRuntime(r) = $0 { return r.implementorVersion ?? "-" }; return nil } ?? "")" }
+                == ["Java (Corretto) Corretto-27.0.1.1.3", "Java (Corretto) -", "Java (Corretto) Corretto-17.0.20.8.1", "Java (Temurin) Temurin-27.0.1+9"])
+        let below = f[0]
+        #expect(below.fixedVersion == "27.0.1.1.4" && below.note == "The issuer lists 27.0.1 as affected, up to 27.0.1.0.3; it names no fixed release. "
+                + "Amazon Corretto's changelog lists the fix in Corretto 27.0.1.1.4. Install the newest Java 27 update from corretto.aws.")
+        #expect(f.dropFirst().allSatisfy { $0.fixedVersion == nil && $0.note?.contains("changelog") == false })
+        // what the vendor's build already fixes is said beside what still counts
+        let cleared = JavaCheck.vendorFixes(runtimes[0], record.recent)
+        #expect(cleared.fix == nil && cleared.recent.count == record.recent.count - 1
+                && cleared.cleared == "Corretto 27.0.1.1.4 has Amazon Corretto's fix for CVE-2026-114938, so it does not count here.")
+        // an older server, or a malformed list, is no list
+        let malformed = #"{"id":"X","sev":"HIGH","fixed_builds":"27.0.1.1.4"}"#
+        let decoded = try JSONDecoder().decode(ProjectResponse.Advisory.self, from: Data(malformed.utf8))
+        let live = JDK.live
+        #expect(decoded.fixedBuilds.isEmpty && live.recent.allSatisfy { $0.fixedBuilds.isEmpty })
     }
 
     /// GraalVM is listed as not checked, with why, never against OpenJDK's advisories; so is a runtime whose record

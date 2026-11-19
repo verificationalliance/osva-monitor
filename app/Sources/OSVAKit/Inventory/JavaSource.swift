@@ -147,8 +147,10 @@ public struct JavaSource: Sendable {
         let implementor = release["IMPLEMENTOR"] ?? (javaVM?["JVMVendor"] as? String).flatMap { ProductIndex.clean($0, max: 80) }
         let build = release["JAVA_RUNTIME_VERSION"] ?? release["IMPLEMENTOR_VERSION"]
         let image = release["IMAGE_TYPE"]?.uppercased() == "JRE" ? "JRE" : "JDK"
-        return .runtime(JavaRuntime(path: c.path.path, home: c.home.path, realPath: realPath, place: c.place, vendor: vendor, version: version,
-                                    canonical: canonical, build: build, implementor: implementor, image: image, formula: c.formula))
+        var runtime = JavaRuntime(path: c.path.path, home: c.home.path, realPath: realPath, place: c.place, vendor: vendor, version: version,
+                                  canonical: canonical, build: build, implementor: implementor, image: image, formula: c.formula)
+        runtime.implementorVersion = release["IMPLEMENTOR_VERSION"]
+        return .runtime(runtime)
     }
 }
 
