@@ -28,7 +28,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 app_src="$here/app"
 out_dir="${OUT_DIR:-$app_src/.build}"
 app="$out_dir/OSVA Monitor.app"
-version="${VERSION:-0.5.0}"
+version="${VERSION:-0.5.1}"
 min_macos="26.0"
 die() { echo "build-app.sh: $*" >&2; exit 1; }
 
