@@ -29,7 +29,7 @@ public enum PreviewData {
                      .init(source: "RubyGems", items: ["CFPropertyList 2.3.6", "did_you_mean 1.3.0", "minitest 5.11.3"]),
                      .init(source: "Folders", items: ["@next/env 14.0.0", "accepts 1.3.8", "express 4.18.2"])],
         notChecked: [.init(source: "Homebrew packages with no graded project", items: ["abseil 20260817.0", "ack 3.10.0", "aom 3.15.3", "slack 4.51.180"]),
-                     .init(source: "Apps that do not bundle Electron", items: ["Firefox", "Google Chrome", "iTerm", "Xcode"])])
+                     .init(source: "Apps with no product record", items: ["Firefox", "Google Chrome", "iTerm", "Xcode"])])
 
     public static let findings: [Finding] = {
         let home = NSHomeDirectory()

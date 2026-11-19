@@ -131,7 +131,7 @@ public struct FindingRow: View {
                 }
             }
             Button { actions.open(finding.pageURL) } label: {
-                Label("Open on verificationalliance.org", systemImage: "arrow.up.right")
+                Label(finding.pageLabel, systemImage: "arrow.up.right")
             }
             .buttonStyle(.link)
             .font(Typeface.small)

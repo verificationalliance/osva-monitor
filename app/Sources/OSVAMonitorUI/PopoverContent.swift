@@ -115,7 +115,7 @@ public struct PopoverContent: Sendable {
             switch hero {
             case .malicious:
                 sentence = n == 1 ? "needs action" : "need action"
-                advice = "Remove the malicious \(malicious == 1 ? "package" : "packages") first."
+                advice = Self.removeFirst(urgent.filter(\.malicious))
             case .high: sentence = n == 1 ? "high-severity flaw to fix" : "high-severity flaws to fix"
             default: sentence = n == 1 ? "needs action" : "need action"
             }
@@ -127,11 +127,23 @@ public struct PopoverContent: Sendable {
     /// The whole headline in words ("8 need action"), for notifications and accessibility.
     public var headline: String { [heroCount.map(String.init), sentence].compactMap { $0 }.joined(separator: " ") }
 
-    /// "Homebrew, 15 Electron apps, pip, RubyGems, 2 folders": the sources that had something.
+    /// "Remove the malicious package first.", "Remove the malicious extensions first."
+    static func removeFirst(_ malicious: [Finding]) -> String {
+        let extensions = malicious.filter(\.isExtension).count, packages = malicious.count - extensions
+        let what = [packages == 0 ? nil : packages == 1 ? "package" : "packages",
+                    extensions == 0 ? nil : extensions == 1 ? "extension" : "extensions"].compactMap { $0 }.joined(separator: " and ")
+        return "Remove the malicious \(what) first."
+    }
+
+    /// "Homebrew, 138 apps, 23 extensions, pip, RubyGems, 2 folders": the sources that had something. The apps count
+    /// includes those that bundle Electron, so they are not counted twice.
     public static func sourcesSummary(_ reports: [SourceReport]) -> String {
-        reports.filter { $0.available && $0.count > 0 }.map { r in
+        let apps = reports.contains { $0.kind == .apps && $0.available && $0.count > 0 }
+        return reports.filter { $0.available && $0.count > 0 && !(apps && $0.kind == .electron) }.map { r in
             switch r.kind {
             case .electron: return r.count == 1 ? "1 Electron app" : "\(r.count) Electron apps"
+            case .apps: return r.count == 1 ? "1\u{00A0}app" : "\(r.count.formatted())\u{00A0}apps"             // never "140 / apps"
+            case .extensions: return r.count == 1 ? "1\u{00A0}extension" : "\(r.count.formatted())\u{00A0}extensions"
             case .folders:
                 let n = Int(r.detail.split(separator: " ").first ?? "") ?? 0
                 return n == 1 ? "1 folder" : "\(n) folders"

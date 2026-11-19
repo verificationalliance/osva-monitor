@@ -91,7 +91,7 @@ public struct SettingsView: View {
                 Toggle(isOn: Binding(get: { state.notifications }, set: { actions.setNotifications($0) })) {
                     Label {
                         Text("Notifications")
-                        Text("Malicious packages, flaws exploited in the wild, and anything on the site's “patch these first” list.")
+                        Text("Malicious packages and extensions, flaws exploited in the wild, and anything on the site's “patch these first” list.")
                     } icon: { Image(systemName: "bell.badge").symbolRenderingMode(.hierarchical) }
                 }
                 .disabled(!state.notificationsAvailable)
@@ -109,13 +109,14 @@ public struct SettingsView: View {
             }
 
             Section {
-                Text("OSVA Monitor downloads the site's public index, every package that has ever had an advisory or a malicious report and every project the site grades, and decides on this Mac which installed packages are in it. Only those are named to verificationalliance.org, by name and exact version, with the projects matched from Homebrew; with a package installed on this Mac it says so (macOS), and with a Python package the version of its Python. No file paths, app names or list of what else is installed are sent.")
+                Text("OSVA Monitor downloads the site's public index (packages with an advisory or a malicious report, graded projects, apps, bundled libraries, malicious extensions) and decides on this Mac which installed things are in it. Only those are named to verificationalliance.org: packages by name and exact version (saying macOS, and a Python package's Python), projects and products by the index's own names. Extensions are checked on this Mac only. No file paths, bundle identifiers, extension IDs or list of what else is installed are sent.")
                     .font(Typeface.body).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let report = state.lastReport {
                     let counts = SentSummary.counts(report.sent)
                     LabeledContent("Package versions checked") { count(counts.batch) }
                     LabeledContent("Projects matched from Homebrew") { count(counts.projects) }
+                    LabeledContent("Apps and bundled libraries checked") { count(counts.products) }
                     LabeledContent("Answered from this Mac's cache") { count(report.sent.answeredFromCache) }
                     LabeledContent("Not in the public index, never sent") { count(report.sent.withheldCount) }
                     if !report.sent.requests.isEmpty {
@@ -166,11 +167,11 @@ private extension Text {
 
 /// The words and numbers for "What leaves your Mac".
 public enum SentSummary {
-    public struct Counts: Equatable, Sendable { public var batch: Int; public var projects: Int }
+    public struct Counts: Equatable, Sendable { public var batch: Int; public var projects: Int; public var products: Int = 0 }
 
     public static func counts(_ sent: SentRecord) -> Counts {
         func count(_ endpoint: String) -> Int { sent.requests.filter { $0.endpoint == endpoint }.reduce(0) { $0 + $1.items.count } }
-        return Counts(batch: count("POST api/v1/check/batch"), projects: count("GET api/v1/project"))
+        return Counts(batch: count("POST api/v1/check/batch"), projects: count("GET api/v1/project"), products: count("GET api/v1/product"))
     }
 
     public struct Group { public var title: String; public var items: [String] }
@@ -181,6 +182,7 @@ public enum SentSummary {
             switch r.endpoint {
             case "POST api/v1/check/batch": title = "POST /api/v1/check/batch · \(r.items.count)"
             case "GET api/v1/project": title = "GET /api/v1/project · \(r.items.count)"
+            case "GET api/v1/product": title = "GET /api/v1/product · \(r.items.count)"
             default: title = r.endpoint
             }
             return Group(title: title, items: r.items)
