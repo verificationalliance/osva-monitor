@@ -189,7 +189,7 @@ public struct GroupContainer<Content: View>: View {
             HStack(spacing: 6) {
                 glyph.font(.system(size: 12, weight: .semibold))
                 Text(title).font(Typeface.groupTitle).foregroundStyle(.primary)
-                Text(count.formatted()).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary)
+                if let n = Self.countText(count) { Text(n).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary) }
             }
             .padding(.leading, 4)
             .accessibilityElement(children: .combine)
@@ -203,6 +203,10 @@ public struct GroupContainer<Content: View>: View {
     private var title: String {
         switch heading { case let .findings(g): return g.heading; case .notChecked: return "Not checked" }
     }
+
+    /// The number beside the heading: what still needs action. None when every row it shows was fixed or removed and
+    /// stays only until the next scan ("Malicious 0" above a removed row reads as a contradiction).
+    static func countText(_ count: Int) -> String? { count > 0 ? count.formatted() : nil }
 
     private var shape: some Shape { ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true) }
 

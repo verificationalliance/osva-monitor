@@ -145,8 +145,8 @@ public enum PreviewData {
         case "running": return FixScene(fixes: fixRunning, resolved: [], open: [F.nginx, F.axios], shown: [F.nginx, F.axios, F.vscode])
         case "done": return FixScene(fixes: fixDone, resolved: [F.nginx, F.axios, F.torch], open: [F.nginx, F.torch], shown: [F.nginx, F.axios, F.torch])
         case "problems": return FixScene(fixes: fixProblems, resolved: [F.starlette], open: Set(fixProblems.keys), shown: Array(fixProblems.keys))
-        case "results": return FixScene(fixes: fixResults, resolved: fixResolved, open: [F.nginx, F.openmtp],
-                                        shown: [F.axios, F.openssh, F.openmtp, F.nginx, F.nokogiri, F.vscode])
+        case "results": return FixScene(fixes: fixResults, resolved: fixResolved, open: [F.openssh, F.torch],
+                                        shown: [F.axios, F.openssh, F.openmtp, F.nginx, F.torch])
         default: return nil
         }
     }
@@ -266,17 +266,21 @@ public enum PreviewData {
         ]
     }
 
-    /// After runs: one under way in Terminal, one being checked, two fixed (kept in place, not counted), one still
-    /// affected, one failed in Terminal.
-    public static let fixResults: [String: FixRowState] = [
-        FixID.axios: FixRowState(progress: .finished(.removed)),
-        FixID.openssh: FixRowState(progress: .running),
-        FixID.openmtp: FixRowState(progress: .finished(.stillAffected("now Electron 41.0.2; the fix is 42.11.16"))),
-        FixID.nginx: FixRowState(progress: .finished(.fixed(now: "1.30.7"))),
-        FixID.nokogiri: FixRowState(progress: .finished(.failed(1))),
-        FixID.vscode: FixRowState(progress: .rechecking),
-    ]
-    public static let fixResolved = [FixID.axios, FixID.nginx]
+    /// After runs, as a panel shows them later: one updating in the app now, one removed, two fixed (kept in place, not
+    /// counted; torch beyond a patch, so it says who to check and keeps Undo), one still affected. (The Terminal
+    /// outcomes, kept for the password fallback, are not shown here.)
+    public static var fixResults: [String: FixRowState] {
+        var results = fixDone
+        results[FixID.openssh] = FixRowState(availability: .offered(offer(FixID.openssh, homebrew: "Has 10.6p2.")), progress: .running,
+                                             run: FixRunState(step: .running, doing: "Updating", startedAt: Date().addingTimeInterval(-41),
+                                                              log: FixLog(["==> Auto-updating Homebrew...", "==> Fetching downloads for: openssh",
+                                                                           "==> Upgrading openssh", "  10.6p1 -> 10.6p2"],
+                                                                          partial: "==> Pouring openssh--10.6p2.arm64_tahoe.bottle.tar.gz"),
+                                                              command: "brew upgrade openssh"))
+        results[FixID.openmtp] = FixRowState(progress: .finished(.stillAffected("now Electron 41.0.2; the fix is 42.11.16")))
+        return results
+    }
+    public static let fixResolved = [FixID.axios, FixID.nginx, FixID.torch]
 
     public static let inventoryReports: [SourceReport] = [
         SourceReport(kind: .homebrew, available: true, count: 407, detail: "338 formulae, 69 casks"),
