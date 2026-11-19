@@ -97,7 +97,8 @@ This is the first guarantee about affected versions, as Lean states it
 
 ```lean
 /-- Every warning has a fixed version above the installed one. -/
-theorem affected_has_upgrade {v : Bytes} {fixed : List Bytes} (h : affected v fixed = some true) :
+theorem affected_has_upgrade {v : Bytes} {fixed : List Bytes}
+    (h : affected v fixed = some true) :
     ∃ f ∈ fixed, vcmp v f = .lt
 ```
 
@@ -126,7 +127,7 @@ You need macOS 26, Xcode 26 or later, and [elan](https://github.com/leanprover/e
 `core/lean-toolchain`.
 
 ```sh
-./scripts/check-core.sh   # build the Lean core, re-check every proof, audit axioms, test the C bridge
+./scripts/check-core.sh   # re-check every proof, audit the axioms, test the bridge
 cd app && swift test      # the app's tests
 ./scripts/build-app.sh    # app/.build/OSVA Monitor.app, ad-hoc signed
 ```
