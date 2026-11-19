@@ -200,9 +200,16 @@ func main() throws {
     }
     let open: Set<String> = ["pkg|npm|axios|1.14.1", "brew|nginx|1.30.2"]
     func popover(_ report: ScanReport?, scanning: Bool = false, progress: String = "", expanded: Set<String> = [],
-                 fixes: [String: FixRowState] = [:], resolved: [Finding] = [], coverageOpen: Set<String> = []) -> some View {
+                 fixes: [String: FixRowState] = [:], resolved: [Finding] = [], coverageOpen: Set<String> = [],
+                 whatsNew: Changelog.Entry? = nil) -> some View {
         PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now, resolved: resolved), actions: .none,
-                    fixes: fixes, expanded: expanded, scrolls: false, coverageOpen: coverageOpen)
+                    fixes: fixes, whatsNew: whatsNew, expanded: expanded, scrolls: false, coverageOpen: coverageOpen)
+    }
+    // What's New: the newest entry as an update shows it, and the entry with the most lines, the card at its largest.
+    let changelog = Changelog.bundled
+    guard let newest = changelog.entries.first, let longest = changelog.entries.max(by: { $0.lines.count < $1.lines.count }) else {
+        FileHandle.standardError.write(Data("osva-render: the bundled CHANGELOG.md did not read\n".utf8))
+        exit(1)
     }
     /// The windows the panel opens for long lists: every app no check covers, narrowed by a search, and the App Store's.
     func coverageLists() -> [(String, AnyView, Method)] {
@@ -228,6 +235,10 @@ func main() throws {
                                                    expanded: ["prog|" + NSHomeDirectory() + "/.cargo/bin/rg"])), .imageRenderer),
         ("settings", AnyView(SettingsView(state: PreviewData.settings(), actions: .none)), .hostingView),
         ("settings-whole", AnyView(SettingsView(state: PreviewData.settings(), actions: .none, height: 1080)), .hostingView),
+        ("popover-whats-new", AnyView(popover(full, whatsNew: newest)), .imageRenderer),
+        ("popover-whats-new-longest", AnyView(popover(PreviewData.report(findings: []), whatsNew: longest)), .imageRenderer),
+        ("settings-whats-new", AnyView(SettingsView(state: PreviewData.settings(), actions: .none, height: 1500,
+                                                    whatsNewOpen: [newest.version, longest.version])), .hostingView),
         ("popover-update-waiting", AnyView(PopoverView(content: PopoverContent(report: PreviewData.report(findings: []), isScanning: false, now: now),
                                                        actions: .none, updates: waiting, scrolls: false)), .imageRenderer),
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,

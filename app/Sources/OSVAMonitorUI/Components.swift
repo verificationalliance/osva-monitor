@@ -425,8 +425,8 @@ extension EnvironmentValues {
 }
 
 /// The panel's one container: `Surface.card` with a hairline edge, in corners concentric with the panel's own. The
-/// groups of findings, the quiet coverage lists and a waiting update each sit in one, so restyling it reaches all of
-/// them. The malicious group's is the one with a clay wash and hairline.
+/// groups of findings, the quiet coverage lists, a waiting update and What's New each sit in one, so restyling it
+/// reaches all of them. The malicious group's is the one with a clay wash and hairline.
 struct PanelCard: ViewModifier {
     enum Kind: Sendable { case plain, malicious }
     var kind: Kind

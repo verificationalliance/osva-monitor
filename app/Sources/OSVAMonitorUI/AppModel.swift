@@ -17,18 +17,27 @@ public final class AppModel {
     private let tools: ToolEnvironment
     private let transport: any HTTPTransport
     private let limiter = RateLimiter()                  // shared by every scan, so the budget holds across them
+    @ObservationIgnored private let defaults: UserDefaults
+    /// This app's version ("0.3.1"), and every version's changelog entry.
+    @ObservationIgnored private let version: String
+    @ObservationIgnored public let changelog: Changelog
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var watcher: FolderWatcher?
     @ObservationIgnored private var pendingRefresh: Set<SourceKind>?
     @ObservationIgnored private var folderDebounce: Task<Void, Never>?
 
-    /// `tools` and `transport` are this Mac's and the network's; tests pass recorded ones.
+    /// `tools` and `transport` are this Mac's and the network's, `defaults`, `version` and `changelog` this app's;
+    /// tests pass their own.
     public init(storage: Storage = Storage(directory: Paths.supportDirectory()), notifier: any Notifier = SystemNotifier(),
-                tools: ToolEnvironment = ToolEnvironment(), transport: any HTTPTransport = URLSessionTransport()) {
+                tools: ToolEnvironment = ToolEnvironment(), transport: any HTTPTransport = URLSessionTransport(),
+                defaults: UserDefaults = .standard, version: String = AppModel.appVersion, changelog: Changelog = .bundled) {
         self.storage = storage
         self.notifier = notifier
         self.tools = tools
         self.transport = transport
+        self.defaults = defaults
+        self.version = version
+        self.changelog = changelog
         advisor = FixAdvisor(tools: tools)
         settings = storage.loadSettings()
         report = storage.loadLastReport()
@@ -63,21 +72,47 @@ public final class AppModel {
         settings = fixtureSettings
     }
 
-    /// Starts the schedule and the folder watcher, and scans if the last scan is older than the interval.
+    /// Decides whether there is anything new to show, starts the schedule and the folder watcher, and scans if the
+    /// last scan is older than the interval.
     public func start() {
+        checkWhatsNew()                                   // before this version's first scan is recorded
         schedule()
         watchFolders()
         prepareFixFolders()
         Task { await notifier.requestPermission() }
         let due = report.map { Date().timeIntervalSince($0.finishedAt) > interval } ?? true
         // A newer app scans at once, so the findings carry what it adds (0.2.0's Fix button needs a new scan).
-        let scannedByOlder = report != nil && UserDefaults.standard.string(forKey: Self.scannedByKey) != Self.appVersion
+        let scannedByOlder = report != nil && defaults.string(forKey: Self.scannedByKey) != version
         if due || scannedByOlder { scanNow() }
     }
 
     /// The app version that made the saved report.
     static let scannedByKey = "lastFullScanAppVersion"
-    static var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
+    public nonisolated static var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
+
+    // MARK: What's new
+
+    /// This version's changelog entry, at the top of the panel from the first time it opens after an update until the
+    /// person closes it (WhatsNew decides).
+    public private(set) var whatsNew: Changelog.Entry?
+
+    /// At launch: show this version's entry if the app was updated to it, and on a first install note the version.
+    func checkWhatsNew() {
+        let ranBefore = defaults.string(forKey: Self.scannedByKey) != nil || storage.hasSavedState
+        switch WhatsNew.decide(current: version, lastSeen: defaults.string(forKey: WhatsNew.lastSeenKey), ranBefore: ranBefore,
+                               changelog: changelog) {
+        case let .show(entry): whatsNew = entry
+        case let .remember(v): defaults.set(v, forKey: WhatsNew.lastSeenKey)
+        case .nothing: break
+        }
+    }
+
+    /// Close: gone, and not shown again for this version.
+    public func closeWhatsNew() {
+        guard let entry = whatsNew else { return }
+        whatsNew = nil
+        defaults.set(entry.version, forKey: WhatsNew.lastSeenKey)
+    }
 
     private var interval: TimeInterval { TimeInterval(max(1, settings.scanIntervalHours) * 3600) }
 
@@ -115,7 +150,7 @@ public final class AppModel {
         isScanning = false
         progress = ""
         storage.save(result)
-        if full { UserDefaults.standard.set(Self.appVersion, forKey: Self.scannedByKey) }
+        if full { defaults.set(version, forKey: Self.scannedByKey) }
         scanReplacedFindings(full: full)
         if settings.notificationsEnabled {
             let before = Set(previous?.findings.filter(\.deservesNotification).map(\.notificationKey) ?? [])

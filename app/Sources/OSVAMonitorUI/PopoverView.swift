@@ -13,20 +13,23 @@ public struct PopoverActions {
     public var checkForUpdates: () -> Void
     /// Opens a long list of names (the apps nothing checks) in its own window.
     public var openList: (NameList) -> Void
+    /// What's New's Close: the card is not shown again for this version.
+    public var closeWhatsNew: () -> Void
 
     public init(scanNow: @escaping () -> Void, openSettings: @escaping () -> Void, quit: @escaping () -> Void,
                 open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none,
-                checkForUpdates: @escaping () -> Void = {}, openList: @escaping (NameList) -> Void = { _ in }) {
+                checkForUpdates: @escaping () -> Void = {}, openList: @escaping (NameList) -> Void = { _ in },
+                closeWhatsNew: @escaping () -> Void = {}) {
         self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy; self.fix = fix
-        self.checkForUpdates = checkForUpdates; self.openList = openList
+        self.checkForUpdates = checkForUpdates; self.openList = openList; self.closeWhatsNew = closeWhatsNew
     }
 
     public static var none: PopoverActions { PopoverActions(scanNow: {}, openSettings: {}, quit: {}, open: { _ in }, copy: { _ in }) }
 }
 
 /// The menu-bar panel. The panel's own window is the one sheet of Liquid Glass; everything here is content on it:
-/// the hero (one shield, one number, one sentence), the findings in one container per group, and the controls, which
-/// are left untinted so they follow the person's accent colour.
+/// after an update, what is new in it (until closed); the hero (one shield, one number, one sentence); the findings in
+/// one container per group; and the controls, which are left untinted so they follow the person's accent colour.
 public struct PopoverView: View {
     public static let width: CGFloat = 400
     public static let maxListHeight: CGFloat = 480
@@ -36,6 +39,8 @@ public struct PopoverView: View {
     /// Each finding's fix: its button, its confirmation, how its last run went.
     public var fixes: [String: FixRowState]
     public var updates: UpdateState
+    /// This version's changelog entry, shown once after an update until it is closed.
+    public var whatsNew: Changelog.Entry?
     public var maxListHeight: CGFloat
     /// False draws the list without a scroll view (for ImageRenderer, which does not draw scroll views' content).
     public var scrolls: Bool
@@ -48,15 +53,19 @@ public struct PopoverView: View {
     let coverageOpen: Set<String>
 
     public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], updates: UpdateState = .none,
-                expanded: Set<String> = [], maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true,
-                coverageOpen: Set<String> = []) {
-        self.content = content; self.actions = actions; self.fixes = fixes; self.updates = updates; self.maxListHeight = maxListHeight
+                whatsNew: Changelog.Entry? = nil, expanded: Set<String> = [], maxListHeight: CGFloat = PopoverView.maxListHeight,
+                scrolls: Bool = true, coverageOpen: Set<String> = []) {
+        self.content = content; self.actions = actions; self.fixes = fixes; self.updates = updates; self.whatsNew = whatsNew
+        self.maxListHeight = maxListHeight
         self.scrolls = scrolls; self.coverageOpen = coverageOpen
         _expanded = State(initialValue: expanded)
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let whatsNew {
+                WhatsNewCard(entry: whatsNew, close: actions.closeWhatsNew)
+            }
             HeroView(content: content).padding(.leading, 4)
             if content.isScanning {
                 ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
@@ -83,6 +92,7 @@ public struct PopoverView: View {
         .animation(.smooth(duration: 0.3), value: expanded)
         .animation(.smooth(duration: 0.3), value: content.isScanning)
         .animation(.smooth(duration: 0.25), value: fixes)
+        .animation(.smooth(duration: 0.25), value: whatsNew)
     }
 
     private var groups: some View {

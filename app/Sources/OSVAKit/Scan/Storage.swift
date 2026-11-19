@@ -33,6 +33,12 @@ public struct Storage: Sendable {
     public func loadLastReport() -> ScanReport? { load(ScanReport.self, "last-scan.json") }
     public func save(_ report: ScanReport) { save(report, "last-scan.json") }
 
+    /// Whether an earlier run left anything here, a scan or settings: what a first launch has not got, whichever
+    /// version of the app wrote it and whether or not it still reads.
+    public var hasSavedState: Bool {
+        ["last-scan.json", "settings.json"].contains { FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path) }
+    }
+
     private func load<T: Decodable>(_ type: T.Type, _ file: String) -> T? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent(file)) else { return nil }
         let decoder = JSONDecoder()

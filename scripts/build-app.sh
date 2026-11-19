@@ -6,7 +6,9 @@
 #   scripts/build-app.sh                 Developer ID signed, hardened runtime, notarized and stapled
 #
 # VERSION sets the version (default below), as major.minor.patch. The bundle version Sparkle compares, CFBundleVersion,
-# follows from it (1.2.3 is 1002003), so a higher version is always a newer build; BUILD_NUMBER overrides it.
+# follows from it (1.2.3 is 1002003), so a higher version is always a newer build; BUILD_NUMBER overrides it. A
+# Developer ID build needs the version's entry in app/Sources/OSVAMonitorUI/Resources/CHANGELOG.md, which the app shows
+# as What's New.
 # OUT_DIR changes where the app goes; SWIFTPM_FLAGS passes extra flags to `swift build`.
 # SIGNING_KEYCHAIN (and SIGNING_KEYCHAIN_PASSWORD_FILE) name a dedicated keychain holding the identity and the notary
 # profile: it is unlocked and appended to the search list only while signing (codesign needs that to build the
@@ -22,7 +24,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 app_src="$here/app"
 out_dir="${OUT_DIR:-$app_src/.build}"
 app="$out_dir/OSVA Monitor.app"
-version="${VERSION:-0.2.1}"
+version="${VERSION:-0.3.1}"
 min_macos="26.0"
 die() { echo "build-app.sh: $*" >&2; exit 1; }
 
@@ -34,6 +36,8 @@ if [ -n "${DEVELOPER_ID:-}" ]; then
   [ -z "${SPARKLE_PUBLIC_KEY:-}" ] || die "SPARKLE_PUBLIC_KEY is for test builds; a Developer ID build trusts only the real update key"
   [ -z "${UPDATE_TESTING:-}" ] || die "UPDATE_TESTING is for test builds, never signed with the Developer ID"
   [[ " ${swift_flags[*]-} " != *OSVA_UPDATE_TESTING* ]] || die "OSVA_UPDATE_TESTING in SWIFTPM_FLAGS: not with DEVELOPER_ID"
+  changelog="$app_src/Sources/OSVAMonitorUI/Resources/CHANGELOG.md"
+  [ "$(grep -c -x "## $version" "$changelog" || true)" = 1 ] || die "CHANGELOG.md has no entry for $version, so What's New would show nothing"
 fi
 [ "${UPDATE_TESTING:-}" != 1 ] || swift_flags+=(-Xswiftc -DOSVA_UPDATE_TESTING)
 
@@ -64,9 +68,12 @@ exe="$app/Contents/MacOS/OSVAMonitor"
 rpaths="$(otool -l "$exe" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }')"
 if grep -qx '@loader_path' <<<"$rpaths"; then install_name_tool -delete_rpath @loader_path "$exe"; fi
 if ! grep -qx '@executable_path/../Frameworks' <<<"$rpaths"; then install_name_tool -add_rpath @executable_path/../Frameworks "$exe"; fi
-for bundle in "$bin_dir"/*.bundle; do                 # SwiftPM resource bundles, if any target gains resources
+for bundle in "$bin_dir"/*.bundle; do                 # SwiftPM resource bundles: OSVAMonitorUI's has CHANGELOG.md
   [ -e "$bundle" ] && cp -R "$bundle" "$app/Contents/Resources/"
 done
+# The app finds it there (Changelog.resourceURL); without it there is no What's New.
+[ -n "$(find "$app/Contents/Resources/OSVAMonitor_OSVAMonitorUI.bundle" -name CHANGELOG.md 2>/dev/null)" ] \
+  || die "no CHANGELOG.md in the app's resources (OSVAMonitor_OSVAMonitorUI.bundle)"
 # The app icon, a Liquid Glass icon made in Icon Composer (app/Resources/AppIcon.icon): actool compiles it into
 # Assets.car (CFBundleIconName) and AppIcon.icns (CFBundleIconFile, for whatever still reads only that). actool exits 0
 # even when it compiled nothing, so the two files are checked for.
