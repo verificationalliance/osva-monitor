@@ -37,12 +37,14 @@ public struct ProvenanceExplainer: Sendable {
             case let .package(ecosystem, name):
                 let installs = byKey[Self.key(ecosystem, name, f.installedVersion)] ?? []
                 for origin in f.origins {
+                    // A program, a tool, a conda environment: its place says where and why (ProgramProvenance.swift).
+                    if let p = context.located(origin) { copies.append(p); continue }
                     guard let install = installs.first(where: { $0.origin == origin }) else { continue }
                     if let p = context.explain(install), p != Provenance() { copies.append(p) }
                 }
             case .project:
                 for origin in f.origins {
-                    if let p = context.homebrew(origin, version: f.installedVersion), p != Provenance() { copies.append(p) }
+                    if let p = context.located(origin) ?? context.homebrew(origin, version: f.installedVersion), p != Provenance() { copies.append(p) }
                 }
             case .product, .addOn:
                 for origin in f.origins {
@@ -101,6 +103,7 @@ public struct ProvenanceExplainer: Sendable {
             case let .folder(_, lockfile, direct): return folder(p, lockfile: lockfile, direct: direct)
             case .homebrewFormula, .homebrewCask: return homebrew(p.origin, version: p.version)
             case .application, .addOn: return bundled(p.origin)
+            case .program, .pythonTool, .conda, .macports, .nix: return located(p.origin)
             }
         }
 

@@ -60,6 +60,16 @@ public enum Origin: Hashable, Codable, Sendable {
     /// A lockfile inside a folder the person asked us to watch. `direct` is whether the project's manifest names the
     /// package itself (nil when there is no manifest to tell).
     case folder(root: String, lockfile: String, direct: Bool?)
+    /// A module or crate a Go or Rust program was built with (or its toolchain's standard library).
+    case program(BuiltProgram)
+    /// A package in a pipx or uv tool's environment.
+    case pythonTool(PythonTool)
+    /// A package in a conda environment.
+    case conda(env: CondaEnvironment)
+    /// A MacPorts port.
+    case macports(port: String)
+    /// A package in a Nix profile; `element` is what its upgrade command names.
+    case nix(profile: NixProfile, element: String)
     /// An app checked by its own product record or by a library bundled inside it. `caskToken` is set when Homebrew
     /// installed the app.
     case application(name: String, bundlePath: String, caskToken: String?)
@@ -81,6 +91,13 @@ public enum Origin: Hashable, Codable, Sendable {
         case let .folder(_, lockfile, direct):
             let path = Paths.abbreviatingHome(lockfile)
             switch direct { case true?: return path; case false?: return "\(path) · indirect"; case nil: return path }
+        case let .program(p): return p.originLabel
+        case let .pythonTool(t): return (t.manager == .pipx ? "pipx" : "uv tool") + (t.python.map { " · Python \($0)" } ?? "")
+        case let .conda(env):
+            let place = env.named ? "conda env \(env.name)" : "conda env \(Paths.abbreviatingHome(env.prefix))"
+            return place + (env.python.map { " · Python \($0)" } ?? "")
+        case let .macports(port): return "MacPorts \(port)"
+        case let .nix(profile, element): return "Nix \(element) · \(Paths.abbreviatingHome(profile.path))"
         case let .application(name, _, _): return name
         case let .addOn(host, _, name, _, _): return "\(name) (\(host.title))"
         }
@@ -106,6 +123,8 @@ public enum Origin: Hashable, Codable, Sendable {
     /// The Python version a pip package is installed with.
     public var pythonVersion: String? {
         if case let .pip(python, _, _) = self { return python.version }
+        if case let .pythonTool(tool) = self { return tool.python }
+        if case let .conda(env) = self { return env.python }
         return nil
     }
 
@@ -116,6 +135,11 @@ public enum Origin: Hashable, Codable, Sendable {
         case let (.pip(a, _, _), .pip(b, _, _)): return a.executable == b.executable
         case let (.folder(_, a, _), .folder(_, b, _)): return a == b
         case let (.electronApp(_, a, _), .electronApp(_, b, _)): return a == b
+        // A program is the same file, or the same formula's program of that name after an upgrade moved its keg.
+        case let (.program(a), .program(b)): return a.path == b.path || (a.formula != nil && a.formula == b.formula && a.name == b.name)
+        case let (.pythonTool(a), .pythonTool(b)): return a.venv == b.venv
+        case let (.conda(a), .conda(b)): return a.prefix == b.prefix
+        case let (.nix(a, _), .nix(b, _)): return a.path == b.path
         default: return self == other
         }
     }
@@ -129,6 +153,11 @@ public enum Origin: Hashable, Codable, Sendable {
         case .cargoInstall: return .cargo
         case .gem: return .gem
         case .folder: return .folders
+        case let .program(p): return p.language == .go ? .go : .rust
+        case let .pythonTool(t): return t.manager == .pipx ? .pipx : .uv
+        case .conda: return .conda
+        case .macports: return .macports
+        case .nix: return .nix
         case .application: return .apps
         case .addOn: return .extensions
         }
@@ -137,7 +166,7 @@ public enum Origin: Hashable, Codable, Sendable {
 
 /// The places OSVA Monitor looks.
 public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
-    case homebrew, electron, apps, extensions, npm, pip, cargo, gem, folders
+    case homebrew, macports, nix, electron, apps, extensions, go, rust, npm, pip, pipx, uv, conda, cargo, gem, folders
 
     public var title: String {
         switch self {
@@ -150,6 +179,13 @@ public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
         case .cargo: return "cargo"
         case .gem: return "RubyGems"
         case .folders: return "Folders"
+        case .macports: return "MacPorts"
+        case .nix: return "Nix"
+        case .go: return "Go programs"
+        case .rust: return "Rust programs"
+        case .pipx: return "pipx"
+        case .uv: return "uv tools"
+        case .conda: return "conda"
         }
     }
 
@@ -200,9 +236,12 @@ public struct SourceReport: Hashable, Codable, Sendable {
     /// "338 formulae, 69 casks", "npm not found", "2 folders, 7 lockfiles".
     public var detail: String
     public var error: String?
+    /// How long the source took, in seconds (nil in reports saved before it was measured).
+    public var seconds: Double?
 
-    public init(kind: SourceKind, available: Bool, count: Int, detail: String, error: String? = nil) {
+    public init(kind: SourceKind, available: Bool, count: Int, detail: String, error: String? = nil, seconds: Double? = nil) {
         self.kind = kind; self.available = available; self.count = count; self.detail = detail; self.error = error
+        self.seconds = seconds
     }
 }
 
@@ -213,6 +252,10 @@ public struct Inventory: Codable, Sendable, Hashable {
     /// Apps in /Applications and ~/Applications that do not bundle Electron: not checked.
     public var otherApps: [String] = []
     public var reports: [SourceReport] = []
+    /// MacPorts ports, Nix packages and conda's non-PyPI packages: matched to graded projects through the index.
+    public var managed: [ManagedPackage] = []
+    /// What the sources found and could not check at all.
+    public var unchecked: [UncheckedItem] = []
     /// Every app in /Applications and ~/Applications, for its product record and the libraries it bundles.
     public var apps: [InstalledApp] = []
     /// Editor and browser extensions (the packages bundled inside them are in `packages`).
@@ -230,6 +273,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         homebrew = try c.decode([HomebrewItem].self, forKey: .homebrew)
         otherApps = try c.decodeIfPresent([String].self, forKey: .otherApps) ?? []
         reports = try c.decode([SourceReport].self, forKey: .reports)
+        managed = try c.decodeIfPresent([ManagedPackage].self, forKey: .managed) ?? []          // reports saved before these
+        unchecked = try c.decodeIfPresent([UncheckedItem].self, forKey: .unchecked) ?? []
         apps = try c.decodeIfPresent([InstalledApp].self, forKey: .apps) ?? []
         extensions = try c.decodeIfPresent([InstalledExtension].self, forKey: .extensions) ?? []
     }
@@ -240,6 +285,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         out.packages = packages.filter { !kinds.contains($0.origin.kind) } + other.packages.filter { kinds.contains($0.origin.kind) }
         out.homebrew = kinds.contains(.homebrew) ? other.homebrew : homebrew
         out.otherApps = kinds.contains(.electron) ? other.otherApps : otherApps
+        out.managed = managed.filter { !kinds.contains($0.origin.kind) } + other.managed.filter { kinds.contains($0.origin.kind) }
+        out.unchecked = unchecked.filter { !kinds.contains($0.kind) } + other.unchecked.filter { kinds.contains($0.kind) }
         out.apps = kinds.contains(.apps) ? other.apps : apps
         out.extensions = kinds.contains(.extensions) ? other.extensions : extensions
         out.reports = (reports.filter { !kinds.contains($0.kind) } + other.reports.filter { kinds.contains($0.kind) }).sorted { $0.kind < $1.kind }

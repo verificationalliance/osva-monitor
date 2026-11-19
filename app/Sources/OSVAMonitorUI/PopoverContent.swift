@@ -98,7 +98,7 @@ public struct PopoverContent: Sendable {
                    TallyCount(tally: .severity(.critical), count: critical), TallyCount(tally: .severity(.high), count: high)].filter { $0.count > 0 }
 
         let lower = findings.count - urgent.count
-        let scanned = report.map { "Scanned \(Self.relative($0.finishedAt, now: now))" }
+        let scanned = report.map { Self.unbroken("Scanned \(Self.relative($0.finishedAt, now: now))") }
         let looked = report.map { Self.sourcesSummary($0.inventory.reports) } ?? ""
         let when = [scanned, looked.isEmpty ? nil : looked].compactMap { $0 }.joined(separator: " · ")
 
@@ -113,8 +113,8 @@ public struct PopoverContent: Sendable {
             hero = .clean
             heroCount = nil
             sentence = "Nothing needs action"
-            let others = lower == 0 ? nil : (lower == 1 ? "1 lower-severity finding" : "\(lower) lower-severity findings")
-            let unchecked = coverage.notCheckedCount == 0 ? nil : "\(coverage.notCheckedCount.formatted()) not checked"
+            let others = lower == 0 ? nil : Self.unbroken(lower == 1 ? "1 lower-severity finding" : "\(lower) lower-severity findings")
+            let unchecked = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) not checked")
             subline = [others, unchecked, when].compactMap { $0 }.joined(separator: " · ")
         case let (_, n):
             hero = malicious > 0 ? .malicious : (exploited + critical > 0 ? .critical : .high)
@@ -141,11 +141,14 @@ public struct PopoverContent: Sendable {
         return "Remove the malicious \(what) first."
     }
 
-    /// "Homebrew, 138 apps, 23 extensions, pip, RubyGems, 2 folders": the sources that had something. The apps count
-    /// includes those that bundle Electron, so they are not counted twice.
+    /// "Homebrew, 138 apps, 23 extensions, Go and Rust programs, pip, pipx, RubyGems, 2 folders": the sources that had
+    /// something. The apps count includes those that bundle Electron, so they are not counted twice; Go and Rust
+    /// programs, and pipx and uv tools, share one name when both are there. Each name keeps its words together
+    /// (no-break spaces), so a wrapped line never splits "138 apps" or "Go and Rust programs".
     public static func sourcesSummary(_ reports: [SourceReport]) -> String {
-        let apps = reports.contains { $0.kind == .apps && $0.available && $0.count > 0 }
-        return reports.filter { $0.available && $0.count > 0 && !(apps && $0.kind == .electron) }.map { r in
+        let shown = reports.filter { $0.available && $0.count > 0 }
+        let kinds = Set(shown.map(\.kind))
+        return shown.filter { !(kinds.contains(.apps) && $0.kind == .electron) }.compactMap { r -> String? in
             switch r.kind {
             case .electron: return r.count == 1 ? "1 Electron app" : "\(r.count) Electron apps"
             case .apps: return r.count == 1 ? "1\u{00A0}app" : "\(r.count.formatted())\u{00A0}apps"             // never "140 / apps"
@@ -153,10 +156,17 @@ public struct PopoverContent: Sendable {
             case .folders:
                 let n = Int(r.detail.split(separator: " ").first ?? "") ?? 0
                 return n == 1 ? "1 folder" : "\(n) folders"
+            case .go where kinds.contains(.rust): return "Go and Rust programs"
+            case .rust where kinds.contains(.go): return nil
+            case .pipx where kinds.contains(.uv): return "pipx and uv tools"
+            case .uv where kinds.contains(.pipx): return nil
             default: return r.kind.title
             }
-        }.joined(separator: ", ")
+        }.map(unbroken).joined(separator: ", ")
     }
+
+    /// The phrase with no-break spaces: a wrapped subline breaks between its parts, never inside "4 minutes ago".
+    static func unbroken(_ phrase: String) -> String { phrase.replacingOccurrences(of: " ", with: "\u{00A0}") }
 
     static func relative(_ date: Date, now: Date) -> String {
         if now.timeIntervalSince(date) < 60 { return "just now" }
