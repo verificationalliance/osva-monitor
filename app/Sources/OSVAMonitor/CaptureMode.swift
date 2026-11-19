@@ -20,6 +20,9 @@ struct CaptureMode {
     let waitSeconds: Int
     /// Finding ids to keep, opened (`--only`); empty keeps them all with the malicious one opened.
     let only: [String]
+    /// A solid colour per appearance to put behind the panel (`--backdrop light=#f6f5f1,dark=#141413`), so the glass
+    /// samples the colour of the page the screenshot will sit on instead of whatever is on this Mac's desktop.
+    let backdrop: [String: NSColor]
     /// `--fix-states offer|confirm|results`: which fixture fix states to show.
     let fixStates: String?
 
@@ -40,6 +43,14 @@ struct CaptureMode {
         } else {
             only = []
         }
+        var colours: [String: NSColor] = [:]
+        if let b = arguments.firstIndex(of: "--backdrop"), b + 1 < arguments.count {
+            for pair in arguments[b + 1].split(separator: ",") {
+                let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                if kv.count == 2, let c = Self.colour(hex: kv[1]) { colours[kv[0]] = c }
+            }
+        }
+        backdrop = colours
         if let f = arguments.firstIndex(of: "--fix-states"), f + 1 < arguments.count { fixStates = arguments[f + 1] } else { fixStates = nil }
     }
 
@@ -79,10 +90,12 @@ struct CaptureMode {
 
                 // The panel, open once and kept open while the appearance changes (it closes when focus moves).
                 NSApp.appearance = NSAppearance(named: .aqua)
+                showBackdrop("light")
                 var (panel, isReplica) = try await openPanel()
                 let prefix = isReplica ? "replica-" : ""
                 for (name, appearance) in appearances {
                     NSApp.appearance = NSAppearance(named: appearance)
+                    showBackdrop(name)
                     show(full, withFixes: true)
                     try await settle()
                     if isReplica { try await Self.fitReplica() } else { panel = try await reopenIfClosed(panel) }
@@ -97,6 +110,7 @@ struct CaptureMode {
 
                 for (name, appearance) in appearances {
                     NSApp.appearance = NSAppearance(named: appearance)
+                    showBackdrop(name)
                     show(full, withFixes: true)
                     NSApp.activate(ignoringOtherApps: true)
                     Self.openSettings?()
@@ -170,6 +184,33 @@ struct CaptureMode {
             }
         }
         throw CaptureError("the menu-bar panel closed and was not opened again")
+    }
+
+    private static var backdropWindow: NSWindow?
+
+    /// A borderless window of one solid colour over the whole screen, under the menu bar and the panel, that ignores
+    /// clicks (the shield in the menu bar stays clickable). Nothing if no colour was given for this appearance.
+    private func showBackdrop(_ appearance: String) {
+        guard let colour = backdrop[appearance], let screen = NSScreen.main else { Self.backdropWindow?.orderOut(nil); return }
+        let w = Self.backdropWindow ?? {
+            let w = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            w.level = .normal
+            w.ignoresMouseEvents = true
+            w.hasShadow = false
+            w.isReleasedWhenClosed = false
+            w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            Self.backdropWindow = w
+            return w
+        }()
+        w.setFrame(screen.frame, display: false)
+        w.backgroundColor = colour
+        w.orderFrontRegardless()
+    }
+
+    static func colour(hex: String) -> NSColor? {
+        let h = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        return NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
     }
 
     /// The panel's own content in a borderless window whose content view is macOS 26's NSGlassEffectView, under the
