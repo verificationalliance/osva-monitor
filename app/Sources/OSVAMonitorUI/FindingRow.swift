@@ -164,7 +164,7 @@ public struct FindingRow: View {
                 FixRunCard(run: run) { actions.fix.stop(finding) }
             } else if let outcome = fix.outcome, outcome.isProblem, fix.run != nil {
                 commandBlock(command)
-                FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: canRetry(outcome),
+                FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: fix.offeredFix != nil,
                                retry: { actions.fix.retry(finding) }, undo: { actions.fix.undo(finding) },
                                runInTerminal: { actions.fix.runInTerminal(finding) }, copy: actions.copy)
             } else {
@@ -181,23 +181,17 @@ public struct FindingRow: View {
         return checkAfterFix
     }
 
-    /// Retry runs the same command again: for an ending that may go better a second time, while the button is offered.
-    private func canRetry(_ outcome: FixOutcome) -> Bool {
-        guard case .offered? = fix.availability else { return false }
-        switch outcome {
-        case .exitedWithError, .killed, .stopped, .timedOut, .couldNotStart, .couldNotCheck: return true
-        default: return false
-        }
-    }
-
-    /// Under the command: the button, or why there is none, or a moment while the app checks.
+    /// Under the command: the button (FixRowState.offeredFix, which Fix all counts too: Retry, above, is the same
+    /// decision), or why there is none, or a moment while the app checks.
     @ViewBuilder private var fixControl: some View {
-        if !fix.isBusy {
+        if let offer = fix.offeredFix {
+            FixButton(title: offer.plan.actionTitle, waitingFor: fix.waitingFor) { actions.fix.begin(finding) }
+        } else if !fix.isBusy {
             switch fix.availability {
             case .checking?:
                 FixSpinnerLabel("Checking…")
-            case let .offered(offer)?:
-                FixButton(title: offer.plan.actionTitle, waitingFor: fix.waitingFor) { actions.fix.begin(finding) }
+            case .offered?:
+                EmptyView()
             case let .withheld(why?)?:
                 Label {
                     Text(why).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

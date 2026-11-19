@@ -88,6 +88,15 @@ public struct FixRowState: Equatable, Sendable {
         if case let .finished(o)? = progress { return o }
         return nil
     }
+
+    /// The fix the row offers to run in the app now: its button (or its open review), or Retry after a run that may go
+    /// better a second time. Nil while it runs, once it is fixed, and when the row offers only Terminal, Undo or
+    /// nothing. The row draws its button from this, and Fix all counts and runs exactly these.
+    public var offeredFix: FixOffer? {
+        guard case let .offered(offer)? = availability, !isBusy, !isResolved else { return nil }
+        guard let outcome, outcome.isProblem, run != nil else { return offer }
+        return outcome.canRetry ? offer : nil
+    }
 }
 
 /// What a row can ask the app to do about a fix.
@@ -119,17 +128,24 @@ public struct FixActions {
     public static var none: FixActions { FixActions(assess: { _ in }, begin: { _ in }, cancel: { _ in }, run: { _ in }) }
 }
 
-/// The fix's one prominent action, worded as what it does: "Update to 1.30.7", "Update OpenMTP", "Remove axios". A
-/// capsule in the person's accent colour, like Scan Now; nothing runs from it alone (the review comes first). When
-/// another fix is running, it waits and says so.
+/// The fix's one prominent action, worded as what it does: "Update to 1.30.7", "Update OpenMTP", "Remove axios", and
+/// the panel's "Fix all (5)". A capsule in the person's accent colour, like Scan Now; nothing runs from it alone (the
+/// review comes first). When another fix is running, it waits and says so: beside it, or where its container puts the
+/// line (`saysWhy: false`; the panel's header puts it under the button).
 public struct FixButton: View {
     public var title: String
     public var waitingFor: String?
+    /// Waiting for something other than a fix ("Checking what can be fixed…"): disabled, and the container says why.
+    public var paused: Bool
+    public var saysWhy: Bool
     public var action: () -> Void
 
-    public init(title: String, waitingFor: String? = nil, action: @escaping () -> Void) {
-        self.title = title; self.waitingFor = waitingFor; self.action = action
+    public init(title: String, waitingFor: String? = nil, paused: Bool = false, saysWhy: Bool = true, action: @escaping () -> Void) {
+        self.title = title; self.waitingFor = waitingFor; self.paused = paused; self.saysWhy = saysWhy; self.action = action
     }
+
+    /// Why a fix waits, everywhere it waits: "One fix at a time: nginx is running."
+    public nonisolated static func waiting(_ busy: String) -> String { "One fix at a time: \(busy) is running." }
 
     public var body: some View {
         HStack(spacing: 10) {
@@ -137,9 +153,9 @@ public struct FixButton: View {
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
                 .controlSize(.regular)
-                .disabled(waitingFor != nil)
-            if let w = waitingFor {
-                Text("One fix at a time: \(w) is running.").font(Typeface.caption).foregroundStyle(.secondary)
+                .disabled(waitingFor != nil || paused)
+            if let w = waitingFor, saysWhy {
+                Text(Self.waiting(w)).font(Typeface.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -202,7 +218,7 @@ public struct FixConfirmation: View {
                     .help("Runs the command above in the app, as you, without a shell")
             }
             .controlSize(.regular)
-            if let w = waitingFor { Text("One fix at a time: \(w) is running.").font(Typeface.caption).foregroundStyle(.secondary) }
+            if let w = waitingFor { Text(FixButton.waiting(w)).font(Typeface.caption).foregroundStyle(.secondary) }
         }
         .fixCard()
         .accessibilityElement(children: .contain)
@@ -497,7 +513,7 @@ public struct FixProblemCard: View {
             if let run, !run.log.isEmpty, showsLog { FixLogView(log: run.log, full: $full) }
             HStack(spacing: 8) { actions }
                 .controlSize(.regular)
-            if let w = waitingFor { Text("One fix at a time: \(w) is running.").font(Typeface.caption).foregroundStyle(.secondary) }
+            if let w = waitingFor { Text(FixButton.waiting(w)).font(Typeface.caption).foregroundStyle(.secondary) }
         }
         .fixCard()
         .accessibilityElement(children: .contain)
@@ -626,6 +642,14 @@ public struct FixStatusLine: View {
 
 extension FixOutcome {
     var isUndone: Bool { if case .undone = self { return true } else { return false } }
+
+    /// An ending that may go better a second time: Retry runs the same command again.
+    var canRetry: Bool {
+        switch self {
+        case .exitedWithError, .killed, .stopped, .timedOut, .couldNotStart, .couldNotCheck: return true
+        default: return false
+        }
+    }
 }
 
 /// A notice inside a fix card: a symbol and one sentence.
