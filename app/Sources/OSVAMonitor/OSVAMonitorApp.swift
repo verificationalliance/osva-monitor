@@ -78,9 +78,11 @@ struct PopoverScene: View {
                 model.shownList = list
                 NSApp.activate(ignoringOtherApps: true)        // a menu-bar app is not frontmost by itself
                 openWindow(id: NameListView.windowID)
-            }),
+            },
+            closeWhatsNew: { model.closeWhatsNew() }),
             fixes: model.rowFixes,
             updates: updater.state,
+            whatsNew: model.whatsNew,
             expanded: model.initiallyExpanded)
         .onAppear { CaptureMode.openSettings = openSettings }
     }
@@ -95,7 +97,7 @@ struct SettingsScene: View {
             state: SettingsState(folders: model.settings.watchedFolders, intervalHours: model.settings.scanIntervalHours,
                                  notifications: model.settings.notificationsEnabled, notificationsAvailable: model.notifier.isAvailable,
                                  launchAtLogin: model.launchAtLogin, launchAtLoginAvailable: LoginItem.isAvailable, lastReport: model.report,
-                                 updates: updater.state),
+                                 updates: updater.state, changelog: model.changelog),
             actions: SettingsActions(addFolder: { model.chooseFolder() }, removeFolder: { model.removeFolder($0) },
                                      setInterval: { model.setInterval(hours: $0) }, setNotifications: { model.setNotifications($0) },
                                      setLaunchAtLogin: { model.setLaunchAtLogin($0) },

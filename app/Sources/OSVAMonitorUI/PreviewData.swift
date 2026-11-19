@@ -337,7 +337,7 @@ public enum PreviewData {
         let home = NSHomeDirectory()
         return SettingsState(folders: [home + "/code/storefront", home + "/code/tools"], intervalHours: 6, notifications: true,
                              notificationsAvailable: true, launchAtLogin: true, launchAtLoginAvailable: true, lastReport: report,
-                             updates: updates)
+                             updates: updates, changelog: .bundled)
     }
 
     /// The installed app's updater, checked this morning.

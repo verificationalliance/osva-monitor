@@ -7,7 +7,8 @@
 # The zip is the one scripts/build-app.sh made with DEVELOPER_ID and NOTARY_PROFILE. appcast.xml is made if it does not
 # exist; otherwise the release is added to it (or put in place of the same version, to make a release again). The notes,
 # Markdown or plain text, go inside the feed and so are covered by its signature; without them the item points to the
-# GitHub release page.
+# GitHub release page. They are docs/release-notes/<X.Y.Z>.md, the version's lines from the app's CHANGELOG.md
+# (ChangelogTests checks that the two agree).
 #
 # SPARKLE_ED_KEY_FILE holds the update key's private half: the base64 of a 32-byte Ed25519 seed (CryptoKit's
 # Curve25519.Signing.PrivateKey().rawRepresentation), which is the form Sparkle's `sign_update --ed-key-file` reads.

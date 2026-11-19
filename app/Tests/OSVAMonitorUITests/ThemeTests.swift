@@ -129,10 +129,25 @@ import OSVAKit
         for component in ["SeverityMark", "StatusChip", "GradeTile", "VerificationMark", "GroupContainer", "FindingRow", "CommandBlock",
                           "FixButton", "FixConfirmation", "FixStatusLine", "FixRunCard", "FixProblemCard", "FixLogView", "FixStepLine",
                           "FixElapsed", "SiteLink", "RowHover", "ProvenanceView", "FactRow", "NameListView", "NameRow",
-                          "ListDisclosureRow", "QuietCoverageSection", "AppIcon"] {
+                          "ListDisclosureRow", "QuietCoverageSection", "AppIcon", "PanelCard", "WhatsNewCard", "ChangelogLines",
+                          "WhatsNewSection"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
+    }
+
+    /// A container on the panel is a PanelCard: the groups, the quiet lists, a waiting update, What's New. Nothing else
+    /// draws `Surface.card` or the panel's concentric corners, so no container can be restyled on its own.
+    @Test func containersArePanelCards() {
+        for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") where file != "Theme.swift" {
+            let code = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }.joined(separator: "\n")
+            let cards = code.components(separatedBy: "Surface.card").count - 1
+            let corners = code.components(separatedBy: "ConcentricRectangle(").count - 1
+            let allowed = file == "Components.swift" ? 1 : 0                     // PanelCard's own
+            #expect(cards == allowed && corners == allowed, "\(file) draws a container of its own (\(cards) Surface.card, \(corners) ConcentricRectangle)")
+        }
+        let users = Self.sources("OSVAMonitorUI").filter { $0.1.contains(".panelCard(") }.map(\.0)
+        #expect(Set(users).isSuperset(of: ["Components.swift", "PopoverView.swift", "Updates.swift", "WhatsNewViews.swift"]), "\(users)")
     }
 
     /// Hover and links have one implementation each: a row's hover is RowHover (Surface.hover, never a lightening

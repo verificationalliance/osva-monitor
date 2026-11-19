@@ -9,7 +9,7 @@
 //   OSVAKit        What the app knows how to do: take inventory (Homebrew, Electron apps, global packages, project
 //                  folders), download the public index, ask the API, and turn answers into findings. Every decision
 //                  of the four kinds above goes through Sources/OSVAKit/Core.swift and nowhere else.
-//   OSVAMonitorUI  SwiftUI views and the app model.
+//   OSVAMonitorUI  SwiftUI views and the app model, and the app's changelog (Resources/CHANGELOG.md, What's New).
 //   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
 //   osva-scan      One scan from the command line, with the same code the app runs.
 //   osva-render    Renders the popover and the settings window off-screen to PNG, from fixture data.
@@ -78,7 +78,7 @@ let package = Package(
     targets: [
         verifiedCore,
         .target(name: "OSVAKit", dependencies: ["OSVACore"]),
-        .target(name: "OSVAMonitorUI", dependencies: ["OSVAKit"]),
+        .target(name: "OSVAMonitorUI", dependencies: ["OSVAKit"], resources: [.copy("Resources/CHANGELOG.md")]),
         .executableTarget(name: "OSVAMonitor", dependencies: ["OSVAKit", "OSVAMonitorUI", .product(name: "Sparkle", package: "Sparkle")]),
         .executableTarget(name: "osva-scan", dependencies: ["OSVAKit"]),
         .executableTarget(name: "osva-render", dependencies: ["OSVAKit", "OSVAMonitorUI"]),

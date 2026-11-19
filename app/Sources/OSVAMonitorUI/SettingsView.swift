@@ -11,12 +11,16 @@ public struct SettingsState: Sendable {
     public var launchAtLoginAvailable: Bool
     public var lastReport: ScanReport?
     public var updates: UpdateState
+    /// Every version and what it brought, for What's New.
+    public var changelog: Changelog
 
     public init(folders: [String], intervalHours: Int, notifications: Bool, notificationsAvailable: Bool,
-                launchAtLogin: Bool, launchAtLoginAvailable: Bool, lastReport: ScanReport?, updates: UpdateState = .none) {
+                launchAtLogin: Bool, launchAtLoginAvailable: Bool, lastReport: ScanReport?, updates: UpdateState = .none,
+                changelog: Changelog = Changelog()) {
         self.folders = folders; self.intervalHours = intervalHours; self.notifications = notifications
         self.notificationsAvailable = notificationsAvailable; self.launchAtLogin = launchAtLogin
         self.launchAtLoginAvailable = launchAtLoginAvailable; self.lastReport = lastReport; self.updates = updates
+        self.changelog = changelog
     }
 }
 
@@ -43,7 +47,7 @@ public struct SettingsActions {
 }
 
 /// The settings window, a native grouped form: watched folders, scanning, notifications, open at login, exactly
-/// what left the Mac in the last scan (each number opens its list), and updates.
+/// what left the Mac in the last scan (each number opens its list), updates, and what each version brought.
 public struct SettingsView: View {
     public static let size = CGSize(width: 540, height: 720)
 
@@ -51,10 +55,12 @@ public struct SettingsView: View {
     public var actions: SettingsActions
     /// The window's height; osva-render draws it taller to show every section at once.
     public var height: CGFloat
+    /// Versions opened under What's New from the start (for renders).
+    let whatsNewOpen: Set<String>
     @State private var openList: SentList.Kind?
 
-    public init(state: SettingsState, actions: SettingsActions, height: CGFloat = SettingsView.size.height) {
-        self.state = state; self.actions = actions; self.height = height
+    public init(state: SettingsState, actions: SettingsActions, height: CGFloat = SettingsView.size.height, whatsNewOpen: Set<String> = []) {
+        self.state = state; self.actions = actions; self.height = height; self.whatsNewOpen = whatsNewOpen
     }
 
     public var body: some View {
@@ -135,6 +141,10 @@ public struct SettingsView: View {
 
             if state.updates.isAvailable {
                 updatesSection
+            }
+
+            if !state.changelog.entries.isEmpty {
+                WhatsNewSection(changelog: state.changelog, open: whatsNewOpen)
             }
         }
         .formStyle(.grouped)
