@@ -1,0 +1,552 @@
+import Foundation
+
+// What else in a Python environment depends on a package, read from the installed distributions' own metadata, so an
+// upgrade that would break one of them is never run (and one that did is never called fixed).
+//
+// 0.2.0 upgraded starlette to 1.10.0 in a Homebrew Python where fastapi 0.120.0 needs starlette < 0.49: pip warned
+// and exited 0, the re-check saw starlette fixed, and the row said "Fixed". Now:
+//   - before: every installed distribution's Requires-Dist is checked against the version the fix installs (and, when
+//     pip's dry run names them, every other version it would install); one that excludes it withholds the button;
+//   - after: the environment's own `pip check` runs again, and any conflict it did not have before makes the outcome
+//     "Updated, but it broke …", with an Undo that puts back the exact versions that changed.
+
+/// One installed distribution, as its METADATA says.
+public struct PythonDistribution: Hashable, Sendable {
+    public var name: String
+    public var version: String
+    /// Its Requires-Dist lines, as written.
+    public var requires: [String]
+    public init(name: String, version: String, requires: [String]) { self.name = name; self.version = version; self.requires = requires }
+
+    /// PEP 503's normal form: lowercase, runs of `-_.` as one "-".
+    public var key: String { PythonNames.normal(name) }
+}
+
+public enum PythonNames {
+    public static func normal(_ name: String) -> String { PackageNames.indexName(name, in: .pypi) }
+}
+
+/// One version specifier of a requirement: `< 0.49.0`, `~= 2.2`, `== 1.4.*`.
+///
+/// Versions are ordered by the verified core alone (`Core.compareVersions`); what is done here is only PEP 440's
+/// reading of each operator in terms of that order: release numbers padded with zeros to the same length before a
+/// comparison ("0.49" is "0.49.0"), `== X.*` as "from X.dev0, below the next X", `~= X.Y` as ">= X.Y, == X.*".
+/// What the app cannot read (an epoch, a non-numeric prefix) gives no answer, which the callers treat as a conflict.
+public struct PythonSpecifier: Hashable, Sendable {
+    public enum Op: String, Sendable, CaseIterable {
+        case arbitrary = "===", compatible = "~=", equal = "==", notEqual = "!=", lessEqual = "<=", greaterEqual = ">=", less = "<", greater = ">"
+    }
+
+    public var op: Op
+    public var version: String
+
+    public init(op: Op, version: String) { self.op = op; self.version = version }
+
+    /// "<0.49.0", " >= 0.40 ".
+    public init?(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard let op = Op.allCases.first(where: { t.hasPrefix($0.rawValue) }) else { return nil }   // longest operators first
+        let v = t.dropFirst(op.rawValue.count).trimmingCharacters(in: .whitespaces)
+        guard !v.isEmpty, !v.contains(" ") else { return nil }
+        self.op = op; self.version = v
+    }
+
+    /// "< 0.49.0".
+    public var display: String { "\(op.rawValue) \(version)" }
+
+    /// Whether `candidate` satisfies it; nil when the app cannot tell.
+    public func admits(_ candidate: String) -> Bool? {
+        let v = Self.plain(candidate), s = Self.plain(version)
+        guard Self.readable(v) else { return nil }
+        if op == .arbitrary { return candidate.trimmingCharacters(in: .whitespaces).lowercased() == version.lowercased() }
+        if s.hasSuffix(".*") {
+            guard op == .equal || op == .notEqual, let matches = Self.prefixMatch(v, String(s.dropLast(2))) else { return nil }
+            return op == .equal ? matches : !matches
+        }
+        guard Self.readable(s) else { return nil }
+        let c = Self.compare(v, s)
+        switch op {
+        case .equal: return c == 0
+        case .notEqual: return c != 0
+        case .less: return c < 0
+        case .lessEqual: return c <= 0
+        case .greater: return c > 0
+        case .greaterEqual: return c >= 0
+        case .compatible:
+            let release = Self.release(s)
+            guard release.count >= 2 else { return nil }
+            guard let inSeries = Self.prefixMatch(v, release.dropLast().map(String.init).joined(separator: ".")) else { return nil }
+            return c >= 0 && inSeries
+        case .arbitrary: return nil
+        }
+    }
+
+    /// Lowercase, without a leading "v", spaces or local version ("+…" is dropped: PEP 440 ignores it in specifiers).
+    static func plain(_ v: String) -> String {
+        var s = v.trimmingCharacters(in: .whitespaces).lowercased()
+        if let plus = s.firstIndex(of: "+") { s = String(s[..<plus]) }
+        if s.hasPrefix("v") { s.removeFirst() }
+        return s
+    }
+
+    /// A version the app reads: starts with a digit, no epoch ("1!2.0"), only letters, digits and `. - _`.
+    static func readable(_ v: String) -> Bool {
+        guard let f = v.unicodeScalars.first, ("0"..."9").contains(f) else { return false }
+        return v.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || ".-_".unicodeScalars.contains($0)) }
+    }
+
+    /// The leading release numbers: "1.2.3rc1" is [1, 2, 3].
+    static func release(_ v: String) -> [Substring] {
+        var parts: [Substring] = []
+        for part in v.split(separator: ".", omittingEmptySubsequences: false) {
+            let digits = part.prefix { $0.isASCII && $0.isNumber }
+            guard !digits.isEmpty else { break }
+            parts.append(digits)
+            if digits.count != part.count { break }
+        }
+        return parts
+    }
+
+    /// Both versions with their release numbers padded with ".0" to the same length, compared by the core.
+    static func compare(_ a: String, _ b: String) -> Int {
+        let (ra, rb) = (release(a).count, release(b).count)
+        func pad(_ v: String, _ have: Int, _ want: Int) -> String {
+            guard want > have else { return v }
+            let zeros = String(repeating: ".0", count: want - have)
+            let releaseEnd = v.index(v.startIndex, offsetBy: release(v).map(\.count).reduce(0, +) + max(have - 1, 0))
+            return v[..<releaseEnd] + zeros + v[releaseEnd...]
+        }
+        return Core.shared.compareVersions(pad(a, ra, rb), pad(b, rb, ra))
+    }
+
+    /// Whether `v` is in the series `prefix.*` ("1.4" takes 1.4, 1.4.0, 1.4.9, 1.4rc1, 1.4.post1; not 1.40 or 1.5):
+    /// from prefix.dev0 (the first thing PEP 440 puts in it) to below the next prefix's .dev0.
+    static func prefixMatch(_ v: String, _ prefix: String) -> Bool? {
+        let numbers = prefix.split(separator: ".", omittingEmptySubsequences: false)
+        guard !numbers.isEmpty, numbers.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+              let last = Int(numbers.last!) else { return nil }
+        let next = (numbers.dropLast().map(String.init) + [String(last + 1)]).joined(separator: ".")
+        return compare(v, prefix + ".dev0") >= 0 && compare(v, next + ".dev0") < 0
+    }
+}
+
+/// A Requires-Dist line: "starlette<0.49.0,>=0.40.0", "uvicorn[standard] (>=0.12.0) ; extra == 'all'",
+/// "httpx @ https://…".
+public struct PythonRequirement: Hashable, Sendable {
+    public var name: String
+    public var specifiers: [PythonSpecifier]
+    public var marker: String?
+    /// A direct reference ("name @ url"): the app cannot tell which versions it takes.
+    public var url: Bool
+    /// Some part of it the app could not read: treated as excluding any change.
+    public var unreadable: Bool
+
+    public var key: String { PythonNames.normal(name) }
+
+    public init?(_ line: String) {
+        var body = Substring(line), marker: String?
+        if let semi = line.firstIndex(of: ";") {
+            body = line[..<semi]
+            marker = line[line.index(after: semi)...].trimmingCharacters(in: .whitespaces)
+        }
+        let scalars = body.unicodeScalars
+        let nameEnd = scalars.firstIndex { !(CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0)) } ?? scalars.endIndex
+        let name = String(scalars[..<nameEnd]).trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        var rest = String(scalars[nameEnd...]).trimmingCharacters(in: .whitespaces)
+        if rest.hasPrefix("[") {                                                   // extras the dependent asks for
+            guard let close = rest.firstIndex(of: "]") else { return nil }
+            rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+        }
+        self.name = name; self.marker = marker; self.url = false; self.unreadable = false; self.specifiers = []
+        if rest.hasPrefix("@") { url = true; return }
+        if rest.hasPrefix("(") && rest.hasSuffix(")") { rest = String(rest.dropFirst().dropLast()) }
+        for part in rest.split(separator: ",") where !part.trimmingCharacters(in: .whitespaces).isEmpty {
+            if let s = PythonSpecifier(String(part)) { specifiers.append(s) } else { unreadable = true }
+        }
+    }
+
+    /// The specifiers `version` fails (or the app cannot check), shown as what the dependent needs: "< 0.49.0".
+    /// Empty when it takes `version`.
+    public func refuses(_ version: String) -> [String] {
+        if url { return ["from a direct URL"] }
+        if unreadable { return ["a version the app cannot read"] }
+        return specifiers.filter { $0.admits(version) != true }.map(\.display)
+    }
+}
+
+/// PEP 508 environment markers, evaluated as `pip check` does: with no extra selected, so a requirement only an extra
+/// brings in does not count. Nil when the app cannot read the marker; the callers then treat the requirement as
+/// applying.
+public enum PythonMarker {
+    public static func evaluate(_ marker: String, environment env: [String: String]) -> Bool? {
+        var p = Parser(tokens: tokenize(marker), env: env)
+        guard let tokens = p.tokens, let value = p.or(), p.at == tokens.count else { return nil }
+        return value
+    }
+
+    enum Token: Equatable { case word(String), string(String), op(String), open, close }
+
+    static func tokenize(_ s: String) -> [Token]? {
+        var out: [Token] = [], i = s.startIndex
+        while i < s.endIndex {
+            let c = s[i]
+            if c.isWhitespace { i = s.index(after: i); continue }
+            if c == "(" { out.append(.open); i = s.index(after: i); continue }
+            if c == ")" { out.append(.close); i = s.index(after: i); continue }
+            if c == "'" || c == "\"" {
+                guard let end = s[s.index(after: i)...].firstIndex(of: c) else { return nil }
+                out.append(.string(String(s[s.index(after: i)..<end]))); i = s.index(after: end); continue
+            }
+            if "<>=!~".contains(c) {
+                var j = i
+                while j < s.endIndex, "<>=!~".contains(s[j]) { j = s.index(after: j) }
+                out.append(.op(String(s[i..<j]))); i = j; continue
+            }
+            var j = i
+            while j < s.endIndex, s[j].isLetter || s[j].isNumber || s[j] == "_" || s[j] == "." { j = s.index(after: j) }
+            guard j > i else { return nil }
+            out.append(.word(String(s[i..<j]))); i = j
+        }
+        return out
+    }
+
+    struct Parser {
+        var tokens: [Token]?
+        var env: [String: String]
+        var at = 0
+        init(tokens: [Token]?, env: [String: String]) { self.tokens = tokens; self.env = env }
+
+        mutating func next() -> Token? { guard let t = tokens, at < t.count else { return nil }; defer { at += 1 }; return t[at] }
+        func peek() -> Token? { guard let t = tokens, at < t.count else { return nil }; return t[at] }
+
+        mutating func or() -> Bool? {
+            guard var v = and() else { return nil }
+            while peek() == .word("or") { at += 1; guard let r = and() else { return nil }; v = v || r }
+            return v
+        }
+
+        mutating func and() -> Bool? {
+            guard var v = atom() else { return nil }
+            while peek() == .word("and") { at += 1; guard let r = atom() else { return nil }; v = v && r }
+            return v
+        }
+
+        mutating func atom() -> Bool? {
+            if peek() == .open {
+                at += 1
+                guard let v = or(), next() == .close else { return nil }
+                return v
+            }
+            guard let (lhs, lhsName) = value() else { return nil }
+            var op: String
+            switch next() {
+            case let .op(o)?: op = o
+            case .word("in")?: op = "in"
+            case .word("not")?: guard next() == .word("in") else { return nil }; op = "not in"
+            default: return nil
+            }
+            guard let (rhs, rhsName) = value() else { return nil }
+            let variable = lhsName ?? rhsName
+            if variable == "extra" { return op == "==" ? false : op == "!=" ? true : nil }   // no extra is selected
+            switch op {
+            case "in": return rhs.contains(lhs)
+            case "not in": return !rhs.contains(lhs)
+            default:
+                let versionLike = ["python_version", "python_full_version", "implementation_version", "platform_release"].contains(variable ?? "")
+                if versionLike || op == "~=" {
+                    // the variable's value against the literal, as a version specifier
+                    let (v, spec) = lhsName != nil ? (lhs, rhs) : (rhs, lhs)
+                    let flipped: String = lhsName != nil ? op : [">": "<", "<": ">", ">=": "<=", "<=": ">="][op] ?? op
+                    return PythonSpecifier(flipped + spec)?.admits(v)
+                }
+                switch op {
+                case "==", "===": return lhs == rhs
+                case "!=": return lhs != rhs
+                default: return nil
+                }
+            }
+        }
+
+        /// A literal, or a variable's value (and its name).
+        mutating func value() -> (String, String?)? {
+            switch next() {
+            case let .string(s)?: return (s, nil)
+            case let .word(w)?:
+                if w == "extra" { return ("", "extra") }
+                guard let v = env[w] else { return nil }
+                return (v, w)
+            default: return nil
+            }
+        }
+    }
+}
+
+/// A requirement one installed distribution has that a change would break.
+public struct DependencyConflict: Hashable, Sendable {
+    public var dependent: String
+    public var dependentVersion: String
+    public var package: String
+    /// What the dependent needs, as its specifiers say: "< 0.49.0", or ">= 2, < 3".
+    public var needs: String
+
+    /// "fastapi 0.120.0 needs starlette < 0.49.0".
+    public var line: String { "\(dependent) \(dependentVersion) needs \(package) \(needs)" }
+}
+
+/// The distributions of one Python, read from the folders on its sys.path, and the values its markers are read with.
+public struct PythonSite: Equatable, Sendable {
+    public var distributions: [PythonDistribution]
+    public var markers: [String: String]
+
+    public init(distributions: [PythonDistribution], markers: [String: String]) { self.distributions = distributions; self.markers = markers }
+
+    /// Each distribution's version, by normal name.
+    public var versions: [String: String] { Dictionary(distributions.map { ($0.key, $0.version) }, uniquingKeysWith: { a, _ in a }) }
+
+    /// The installed distributions that would no longer have what they require if the packages in `changes`
+    /// (normal name → new version) were at those versions. Distributions in `changes` themselves are not asked:
+    /// their new releases bring their own requirements, which pip resolves.
+    public func conflicts(_ changes: [String: String]) -> [DependencyConflict] {
+        var out: [DependencyConflict] = []
+        for d in distributions where changes[d.key] == nil {
+            for line in d.requires {
+                guard let r = PythonRequirement(line), let new = changes[r.key] else { continue }
+                if let m = r.marker, PythonMarker.evaluate(m, environment: markers) == false { continue }
+                let refused = r.refuses(new)
+                if !refused.isEmpty {
+                    let name = distributions.first { $0.key == r.key }?.name ?? r.name
+                    out.append(DependencyConflict(dependent: d.name, dependentVersion: d.version, package: name, needs: refused.joined(separator: ", ")))
+                }
+            }
+        }
+        return out.sorted { ($0.dependent.lowercased(), $0.package) < ($1.dependent.lowercased(), $1.package) }
+    }
+
+    // MARK: Reading
+
+    /// Every distribution in these folders, the first of each name winning (sys.path order is import order):
+    /// `*.dist-info/METADATA`, and the older `*.egg-info/PKG-INFO` with its `requires.txt`.
+    public static func read(folders: [String]) -> [PythonDistribution] {
+        var seen = Set<String>(), out: [PythonDistribution] = []
+        let fm = FileManager.default
+        for folder in folders {
+            for entry in ((try? fm.contentsOfDirectory(atPath: folder)) ?? []).sorted() {
+                let dir = (folder as NSString).appendingPathComponent(entry)
+                var d: PythonDistribution?
+                if entry.hasSuffix(".dist-info") {
+                    d = readText((dir as NSString).appendingPathComponent("METADATA")).flatMap(parseMetadata)
+                } else if entry.hasSuffix(".egg-info") {
+                    d = readText((dir as NSString).appendingPathComponent("PKG-INFO")).flatMap(parseMetadata)
+                    if d != nil, let reqs = readText((dir as NSString).appendingPathComponent("requires.txt")) {
+                        d!.requires += parseRequiresTxt(reqs)
+                    }
+                }
+                if let d, seen.insert(d.key).inserted { out.append(d) }
+            }
+        }
+        return out
+    }
+
+    /// At most the first 512 KB: the headers come first, the long description after them.
+    static func readText(_ path: String) -> String? {
+        guard let h = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? h.close() }
+        guard let data = try? h.read(upToCount: 512 * 1024) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The Name, Version and Requires-Dist headers of a METADATA or PKG-INFO file (RFC 822 style, up to the first
+    /// blank line; continuation lines are joined).
+    public static func parseMetadata(_ text: String) -> PythonDistribution? {
+        var name: String?, version: String?, requires: [String] = []
+        var headers: [(String, String)] = []
+        for raw in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            if raw.isEmpty { break }
+            if let f = raw.first, f == " " || f == "\t", !headers.isEmpty {
+                headers[headers.count - 1].1 += " " + raw.trimmingCharacters(in: .whitespaces)
+                continue
+            }
+            guard let colon = raw.firstIndex(of: ":") else { continue }
+            headers.append((String(raw[..<colon]), raw[raw.index(after: colon)...].trimmingCharacters(in: .whitespaces)))
+        }
+        for (key, value) in headers {
+            switch key.lowercased() {
+            case "name": name = value
+            case "version": version = value
+            case "requires-dist": requires.append(value)
+            default: break
+            }
+        }
+        guard let name, let version, !name.isEmpty, !version.isEmpty else { return nil }
+        return PythonDistribution(name: name, version: version, requires: requires)
+    }
+
+    /// An egg-info `requires.txt`: requirements, then `[extra]`, `[extra:marker]` or `[:marker]` sections. Extras are
+    /// left out (as `pip check` leaves them out); a `[:marker]` section's lines get its marker.
+    static func parseRequiresTxt(_ text: String) -> [String] {
+        var out: [String] = [], marker: String?, inExtra = false
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            if line.hasPrefix("[") && line.hasSuffix("]") {
+                let section = line.dropFirst().dropLast()
+                let parts = section.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+                inExtra = !(parts.first?.isEmpty ?? true)
+                marker = parts.count == 2 ? String(parts[1]) : nil
+                continue
+            }
+            if inExtra { continue }
+            out.append(marker.map { "\(line); \($0)" } ?? line)
+        }
+        return out
+    }
+
+    /// Prints the interpreter's sys.path (its absolute entries) and the values of PEP 508's marker variables, as JSON.
+    /// A fixed text: nothing from a finding or a report is ever put in it.
+    static let script = """
+    import json, os, platform, sys
+    print(json.dumps({"path": [p for p in sys.path if p and os.path.isabs(p) and os.path.isdir(p)], "markers": {
+        "python_version": ".".join(platform.python_version_tuple()[:2]), "python_full_version": platform.python_version(),
+        "os_name": os.name, "sys_platform": sys.platform, "platform_machine": platform.machine(),
+        "platform_system": platform.system(), "platform_release": platform.release(),
+        "platform_python_implementation": platform.python_implementation(), "implementation_name": sys.implementation.name}}))
+    """
+
+    /// Reads one interpreter's distributions now. Nil, with why, if the interpreter does not answer.
+    public static func read(python: String, tools: ToolEnvironment) async -> Result<PythonSite, PythonSiteError> {
+        do {
+            let r = try await tools.run(python, ["-c", script], timeout: 30)
+            guard r.status == 0, let json = try? JSONSerialization.jsonObject(with: r.stdout) as? [String: Any],
+                  let path = json["path"] as? [String] else {
+                return .failure(PythonSiteError(message: r.errorText.isEmpty ? "python exited with \(r.status)" : String(r.errorText.prefix(160))))
+            }
+            let markers = (json["markers"] as? [String: String]) ?? [:]
+            return .success(PythonSite(distributions: read(folders: path), markers: markers))
+        } catch {
+            return .failure(PythonSiteError(message: error.localizedDescription))
+        }
+    }
+}
+
+public struct PythonSiteError: Error, Equatable, Sendable { public var message: String }
+
+/// `pip check`: what the environment itself says is broken.
+public enum PipCheck {
+    /// The problems it lists, one line each, as pip wrote them ("fastapi 0.120.0 has requirement starlette<0.49.0,>=0.40.0,
+    /// but you have starlette 1.10.0."). "No broken requirements found." is none.
+    public static func problems(_ output: String) -> Set<String> {
+        Set(output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("No broken requirements") && !$0.lowercased().hasPrefix("warning") })
+    }
+
+    /// The distribution a problem line is about: "fastapi 0.120.0".
+    public static func subject(_ line: String) -> String {
+        line.split(separator: " ").prefix(2).joined(separator: " ")
+    }
+
+    /// Runs `python -m pip check`. Nil if pip did not answer (pip exits 1 when it finds problems, which is an answer).
+    public static func run(python: String, tools: ToolEnvironment) async -> Set<String>? {
+        guard let r = try? await tools.run(python, ["-m", "pip", "check", "--disable-pip-version-check"], timeout: 120),
+              r.status == 0 || r.status == 1 else { return nil }
+        return problems(String(decoding: r.stdout, as: UTF8.self))
+    }
+}
+
+/// Puts back what a pip run changed: the exact earlier version of every distribution whose version changed, with
+/// `--no-deps`, so pip resolves nothing and changes nothing else.
+public struct PipUndo: Hashable, Sendable {
+    public var invocation: FixInvocation
+    /// "starlette 0.48.0", one per distribution put back.
+    public var restores: [String]
+
+    public init(invocation: FixInvocation, restores: [String]) { self.invocation = invocation; self.restores = restores }
+
+    /// The undo, or nil if nothing changed or a name or version is not one the app puts in a command (`FixSafety`).
+    public static func make(python: String, user: Bool, before: PythonSite, after: PythonSite) -> PipUndo? {
+        let now = after.versions
+        let changed = before.distributions.filter { now[$0.key] != nil && now[$0.key] != $0.version }
+            .sorted { $0.key < $1.key }
+        guard !changed.isEmpty, changed.allSatisfy({ FixSafety.isSafeName($0.name) && FixSafety.isSafeVersion($0.version) }) else { return nil }
+        let args = ["-m", "pip", "install", "--no-deps", "--disable-pip-version-check"] + (user ? ["--user"] : [])
+            + changed.map { "\($0.name)==\($0.version)" }
+        return PipUndo(invocation: FixInvocation(executable: python, arguments: args), restores: changed.map { "\($0.name) \($0.version)" })
+    }
+
+    /// The command, as a person would type it.
+    public var command: String { invocation.argv.map(UpgradeCommand.quote).joined(separator: " ") }
+}
+
+/// The checks around a pip upgrade, before and after it runs.
+public struct PipGuard: Sendable {
+    let tools: ToolEnvironment
+    public init(tools: ToolEnvironment) { self.tools = tools }
+
+    /// What a check before the run found.
+    public enum Verdict: Equatable, Sendable {
+        /// Nothing installed excludes the new versions: the site as it is now.
+        case clear(PythonSite)
+        /// Something does: the line to show ("fastapi 0.120.0 needs starlette < 0.49.0 — update fastapi first").
+        case blocked(String, [DependencyConflict])
+        /// The interpreter did not answer, so nothing was checked: not run ("could not read what depends on starlette").
+        case unknown(String)
+    }
+
+    /// Whether `pip.name` may go to `pip.target` (and, when pip's dry run named them, the other packages to the
+    /// versions in `also`) without leaving an installed package without what it requires.
+    public func check(_ pip: FixPlan.Pip, also: [String: String] = [:]) async -> Verdict {
+        switch await PythonSite.read(python: pip.python, tools: tools) {
+        case let .failure(e):
+            return .unknown("could not read what depends on \(pip.name) (\(e.message))")
+        case let .success(site):
+            return Self.verdict(site, pip: pip, also: also)
+        }
+    }
+
+    public static func verdict(_ site: PythonSite, pip: FixPlan.Pip, also: [String: String] = [:]) -> Verdict {
+        var changes = also
+        changes[PythonNames.normal(pip.name)] = pip.target
+        let conflicts = site.conflicts(changes)
+        guard let first = conflicts.first else { return .clear(site) }
+        let dependents = Set(conflicts.map(\.dependent))
+        let line = dependents.count == 1
+            ? "\(first.line) — update \(first.dependent) first"
+            : "\(first.line), and \(dependents.count - 1) more — update them first"
+        return .blocked(line, conflicts)
+    }
+
+    /// What `pip check` says, before or after a run.
+    public func problems(_ pip: FixPlan.Pip) async -> Set<String>? { await PipCheck.run(python: pip.python, tools: tools) }
+
+    /// What a check after the run found.
+    public struct After: Equatable, Sendable {
+        /// The packages a new `pip check` problem is about ("fastapi 0.120.0 and 1 more"); nil when there is none.
+        public var broke: String?
+        /// Puts back what changed, when something did.
+        public var undo: PipUndo?
+        /// Why the app could not check, if it could not.
+        public var uncheckable: String?
+    }
+
+    /// Compares the environment with how it was before the run: new `pip check` problems, and an undo of every
+    /// version that changed.
+    public func after(_ pip: FixPlan.Pip, before: PythonSite, problemsBefore: Set<String>) async -> After {
+        let site = await PythonSite.read(python: pip.python, tools: tools)
+        let problems = await self.problems(pip)
+        var out = After()
+        if case let .success(now) = site { out.undo = PipUndo.make(python: pip.python, user: pip.user, before: before, after: now) }
+        guard let problems else {
+            out.uncheckable = "pip check did not answer, so the app cannot tell whether anything that depends on \(pip.name) broke"
+            return out
+        }
+        out.broke = Self.brokenLine(problems.subtracting(problemsBefore))
+        return out
+    }
+
+    /// "fastapi 0.120.0", "fastapi 0.120.0 and 1 more", or nil for no new problems.
+    public static func brokenLine(_ newProblems: Set<String>) -> String? {
+        let subjects = Array(Set(newProblems.map(PipCheck.subject))).sorted()
+        guard let first = subjects.first else { return nil }
+        return subjects.count == 1 ? first : "\(first) and \(subjects.count - 1) more"
+    }
+}

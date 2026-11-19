@@ -1,0 +1,7 @@
+Metadata-Version: 2.3
+Name: prometheus-fastapi-instrumentator
+Version: 7.1.0
+Summary: Instrument your FastAPI app with Prometheus metrics
+Requires-Python: >=3.8
+Requires-Dist: prometheus-client (>=0.8.0,<1.0.0)
+Requires-Dist: starlette (>=0.30.0,<1.0.0)

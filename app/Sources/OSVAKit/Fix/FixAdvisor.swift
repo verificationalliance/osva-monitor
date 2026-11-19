@@ -8,7 +8,7 @@ public struct FixOffer: Equatable, Sendable {
     public init(plan: FixPlan, homebrew: String? = nil) { self.plan = plan; self.homebrew = homebrew }
 }
 
-/// Whether a finding gets a Fix button.
+/// Whether a finding gets a Fix button, and why not.
 public enum FixAssessment: Equatable, Sendable {
     case offer(FixOffer)
     /// No button, and the row says why ("Homebrew still ships 1.30.6; the fix is 1.30.7 upstream.").
@@ -32,6 +32,14 @@ public struct FixAdvisor: Sendable {
         case let .success(p): plan = p
         case let .failure(refusal): return refusal.explanation.map(FixAssessment.withheld) ?? .none
         }
+        if let pip = plan.pip, plan.action == .upgrade {
+            // what depends on it, from the installed packages' own metadata: no button for an upgrade that breaks one
+            switch await PipGuard(tools: tools).check(pip) {
+            case .clear: return .offer(FixOffer(plan: plan))
+            case let .blocked(line, _): return .withheld(line + ".")
+            case let .unknown(why): return .withheld("Not offered: the app \(why).")
+            }
+        }
         guard let brew = plan.homebrew, plan.action == .upgrade else { return .offer(FixOffer(plan: plan)) }
         switch await HomebrewInfoReader(tools: tools).availability(brew, fixedVersion: plan.target) {
         case let .available(line): return .offer(FixOffer(plan: plan, homebrew: line))
@@ -41,8 +49,17 @@ public struct FixAdvisor: Sendable {
     }
 
     /// What else the fix changes, from the tool's dry run.
+    /// For pip, the other packages its dry run would install are checked against what depends on them too.
     public func preview(_ plan: FixPlan) async -> FixPreview {
-        await FixPreviewer(tools: tools).preview(plan)
+        var preview = await FixPreviewer(tools: tools).preview(plan)
+        if let pip = plan.pip, plan.action == .upgrade, !preview.installs.isEmpty {
+            switch await PipGuard(tools: tools).check(pip, also: preview.installs) {
+            case .clear: break
+            case let .blocked(line, _): preview.blocked = line
+            case let .unknown(why): preview.blocked = "the app \(why)"
+            }
+        }
+        return preview
     }
 
     /// Homebrew's answer read again (after a run), for the reason a `brew upgrade` left the finding as it was.

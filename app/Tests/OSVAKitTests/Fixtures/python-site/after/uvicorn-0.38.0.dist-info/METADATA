@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: uvicorn
+Version: 0.38.0
+Requires-Dist: click>=7.0
+Requires-Dist: h11>=0.8
+Requires-Dist: typing-extensions>=4.0; python_version < "3.11"

@@ -10,9 +10,21 @@ public struct FixPreview: Equatable, Sendable {
     public var lines: [String]
     /// Why there is no preview, when there is none.
     public var unavailable: String?
+    /// pip's dry run: every package it would install, by normal name, and the version.
+    public var installs: [String: String]
+    /// Something installed depends on a version the dry run would replace: the line that says so. Nothing runs.
+    public var blocked: String?
 
-    public init(source: String?, lines: [String], unavailable: String? = nil) {
-        self.source = source; self.lines = lines; self.unavailable = unavailable
+    public init(source: String?, lines: [String], unavailable: String? = nil, installs: [String: String] = [:], blocked: String? = nil) {
+        self.source = source; self.lines = lines; self.unavailable = unavailable; self.installs = installs; self.blocked = blocked
+    }
+
+    /// The other packages it would change, by name: "openssl@3" for a `brew upgrade nginx` that also upgrades it.
+    public func others(than name: String) -> [String] {
+        if !installs.isEmpty {
+            return installs.keys.filter { $0 != PythonNames.normal(name) }.sorted()
+        }
+        return lines.filter { $0.contains(" → ") }.compactMap { $0.split(separator: " ").first.map(String.init) }.filter { $0 != name }
     }
 
     public static func none(_ why: String) -> FixPreview { FixPreview(source: nil, lines: [], unavailable: why) }
@@ -30,9 +42,9 @@ public struct FixPreviewer: Sendable {
         if let brew = plan.homebrew, plan.action == .upgrade { return await homebrew(brew) }
         if let pip = plan.pip { return await self.pip(pip) }
         if plan.action == .removal, plan.toolName == "pip" {
-            return .none("pip lists what it removes and asks before it does, in the Terminal window.")
+            return .none("pip has no dry run for a removal: the log shows what it removes.")
         }
-        return .none("\(plan.toolName) has no dry run the app uses: the Terminal window shows what changes.")
+        return .none("\(plan.toolName) has no dry run the app uses: the log shows what changes.")
     }
 
     // MARK: Homebrew
@@ -101,8 +113,10 @@ public struct FixPreviewer: Sendable {
         do {
             let r = try await tools.run(pip.python, args, timeout: 60)
             if r.status == 0 {
-                let lines = Self.parsePipDryRun(String(decoding: r.stdout, as: UTF8.self))
-                return FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)", lines: lines.isEmpty ? ["Nothing else would change."] : lines)
+                let text = String(decoding: r.stdout, as: UTF8.self)
+                let lines = Self.parsePipDryRun(text)
+                return FixPreview(source: "pip install --dry-run (asks PyPI, installs nothing)", lines: lines.isEmpty ? ["Nothing else would change."] : lines,
+                                  installs: Self.pipDryRunInstalls(text))
             }
             let err = r.errorText
             if err.contains("No matching distribution") || err.contains("only-binary") {
@@ -121,6 +135,20 @@ public struct FixPreviewer: Sendable {
         guard words.count >= 2, words[0] == "pip" else { return nil }
         let v = String(words[1])
         return FixSafety.isSafeVersion(v) ? v : nil
+    }
+
+    /// "Would install urllib3-2.8.0 idna-3.10" is ["urllib3": "2.8.0", "idna": "3.10"] (normal names).
+    public static func pipDryRunInstalls(_ text: String) -> [String: String] {
+        var out: [String: String] = [:]
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("Would install ") else { continue }
+            for item in line.dropFirst("Would install ".count).split(separator: " ") {
+                guard let dash = item.lastIndex(of: "-") else { continue }
+                out[PythonNames.normal(String(item[..<dash]))] = String(item[item.index(after: dash)...])
+            }
+        }
+        return out
     }
 
     /// "Would install urllib3-2.8.0 idna-3.10" is "Would install urllib3 2.8.0, idna 3.10".

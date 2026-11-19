@@ -66,7 +66,7 @@ import Testing
         // setuptools on Apple's Python 3.9.6: the plan's 78.1.1, not 84.1.0, the newest fix (which needs Python 3.10)
         let setuptools = f[2]
         #expect(setuptools.fixedVersion == "78.1.1" && setuptools.fixesCount == 3)
-        #expect(setuptools.upgradeCommand == "/usr/bin/python3 -m pip install --user --upgrade 'setuptools>=78.1.1'")
+        #expect(setuptools.upgradeCommand == "/usr/bin/python3 -m pip install --user --upgrade setuptools==78.1.1")
         #expect(setuptools.note?.contains("current Python") == true)
         #expect(setuptools.flawCount == 4)                                    // the Windows-only one does not count here
         #expect(setuptools.unresolved.map(\.explanation) == [
@@ -98,7 +98,7 @@ import Testing
         ], batch: "api/check-batch-live-2026-11-19.json")
         let setuptools = try #require(f.first { $0.title == "setuptools" })
         #expect(setuptools.fixedVersion == "78.1.1" && setuptools.fixesCount == 3 && setuptools.flawCount == 4)
-        #expect(setuptools.upgradeCommand == "/usr/bin/python3 -m pip install --user --upgrade 'setuptools>=78.1.1'")
+        #expect(setuptools.upgradeCommand == "/usr/bin/python3 -m pip install --user --upgrade setuptools==78.1.1")
         #expect(Set(setuptools.unresolved.map(\.explanation)) == ["Fixed in 83.0.0, which needs Python ≥3.10; this Python is 3.9.6",
                                                                    "Windows only, does not affect this Mac"])
         let minimist = try #require(f.first { $0.title == "minimist" })
@@ -168,18 +168,18 @@ import Testing
 
     @Test("pip, where the package lives", arguments: [
         // Apple's Python, its own (read-only) packages: a newer copy in the user site
-        (Fixture.applePython, false, nil, "/usr/bin/python3 -m pip install --user --upgrade 'six>=2.0.0'", true),
-        (Fixture.applePython, true, nil, "/usr/bin/python3 -m pip install --user --upgrade 'six>=2.0.0'", true),
+        (Fixture.applePython, false, nil, "/usr/bin/python3 -m pip install --user --upgrade six==2.0.0", true),
+        (Fixture.applePython, true, nil, "/usr/bin/python3 -m pip install --user --upgrade six==2.0.0", true),
         // Homebrew's: a formula's package is upgraded with the formula; anything else pip will not touch (PEP 668)
         (Fixture.homebrewPython, false, "python-six", "brew upgrade python-six", false),
         (Fixture.homebrewPython, false, nil, nil, true),
         (Fixture.homebrewPython, true, nil, nil, true),
         // a virtual environment and python.org's: pip in place
         (PythonEnvironment(executable: "/Users/ana/venv/bin/python", version: "3.12.4", kind: .virtualEnv, externallyManaged: false, userSite: nil, formula: nil),
-         false, nil, "/Users/ana/venv/bin/python -m pip install --upgrade 'six>=2.0.0'", false),
+         false, nil, "/Users/ana/venv/bin/python -m pip install --upgrade six==2.0.0", false),
         (PythonEnvironment(executable: "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3", version: "3.13.1", kind: .pythonOrg,
                            externallyManaged: false, userSite: nil, formula: nil),
-         true, nil, "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -m pip install --user --upgrade 'six>=2.0.0'", false),
+         true, nil, "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -m pip install --user --upgrade six==2.0.0", false),
     ] as [(PythonEnvironment, Bool, String?, String?, Bool)])
     func pip(_ python: PythonEnvironment, _ user: Bool, _ formula: String?, _ command: String?, _ hasNote: Bool) {
         let a = UpgradeCommand.advice(for: .pip(python: python, user: user, formula: formula), name: "six", ecosystem: .pypi, target: "2.0.0", malicious: false)

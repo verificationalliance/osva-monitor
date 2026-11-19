@@ -1,0 +1,4 @@
+Metadata-Version: 2.4
+Name: starlette
+Version: 1.10.0
+Requires-Dist: anyio<5,>=3.6.2
