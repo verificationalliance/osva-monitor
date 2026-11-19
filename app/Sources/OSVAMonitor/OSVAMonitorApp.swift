@@ -20,6 +20,17 @@ struct OSVAMonitorApp: App {
         Settings {
             SettingsScene(model: delegate.model, updater: delegate.updater)
         }
+
+        // A long list of names opened from the panel ("Apps with no security record"), with its search field.
+        Window("List", id: NameListView.windowID) {
+            if let list = delegate.model.shownList {
+                NameListView(list: list, scanned: delegate.model.report?.finishedAt ?? Date())
+                    .id(list.id)                                  // a new list starts with an empty search
+                    .navigationTitle(list.title)
+            }
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
     }
 }
 
@@ -44,6 +55,7 @@ struct PopoverScene: View {
     let model: AppModel
     let updater: Updater
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         PopoverView(content: model.popoverContent, actions: PopoverActions(
@@ -60,7 +72,12 @@ struct PopoverScene: View {
             },
             fix: FixActions(assess: { model.assessFix($0) }, begin: { model.beginFix($0) }, cancel: { model.cancelFix($0) },
                             run: { model.runFix($0) }),
-            checkForUpdates: { updater.checkForUpdates() }),
+            checkForUpdates: { updater.checkForUpdates() },
+            openList: { list in
+                model.shownList = list
+                NSApp.activate(ignoringOtherApps: true)        // a menu-bar app is not frontmost by itself
+                openWindow(id: NameListView.windowID)
+            }),
             fixes: model.fixes,
             updates: updater.state,
             expanded: model.initiallyExpanded)

@@ -34,6 +34,9 @@ public final class AppModel {
         report = storage.loadLastReport()
     }
 
+    /// The long list the panel last opened in its window ("Apps with no security record").
+    public var shownList: NameList?
+
     public var popoverContent: PopoverContent {
         PopoverContent(report: report, isScanning: isScanning, progress: progress, resolved: resolved)
     }

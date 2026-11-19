@@ -56,3 +56,52 @@ import OSVAKit
         #expect(SystemNotifier.text(for: [PreviewData.findings[0]]).title == "Malicious package: axios")
     }
 }
+
+/// What could not be vouched for, as lists of names: readable, one per line, the long ones in a window with search.
+@Suite struct CoverageListTests {
+    let coverage = PreviewData.appCoverage
+
+    @Test func appListsReadAsNamesWithIconsPackagesAsWritten() {
+        let apps = CoverageLists.list(coverage.notChecked[1], in: .notChecked)
+        #expect(apps.title == "Apps with no security record" && apps.style == .names && apps.many == "apps" && apps.shown == 104)
+        #expect(apps.sections[0].paths?.count == 104 && apps.searchable)
+        let brew = CoverageLists.list(coverage.notChecked[0], in: .notChecked)
+        #expect(brew.style == .code && brew.many == "names" && !brew.searchable)
+        let libraries = CoverageLists.list(coverage.notChecked[2], in: .notChecked)
+        #expect(libraries.style == .names && libraries.many == "names")              // what apps bundle, by the app's icon
+        let chrome = CoverageLists.list(coverage.updatedElsewhere[1], in: .updatedElsewhere)
+        #expect(chrome.title == "Chrome web apps" && chrome.explanation.contains("updated with Chrome") && chrome.style == .names)
+        #expect(CoverageLists.list(coverage.updatedElsewhere[0], in: .updatedElsewhere).explanation.contains("not checked here"))
+    }
+
+    @Test func aListLongEnoughToSearchOpensInAWindow() {
+        func row(_ n: Int) -> ListDisclosureRow {
+            ListDisclosureRow(NameList(title: "t", explanation: "", count: n, sections: [.init(title: nil, items: (0..<n).map { "a\($0)" })], style: .names))
+        }
+        #expect(!row(20).opensWindow && row(21).opensWindow && NameList.searchThreshold == 20)
+    }
+
+    @Test func theKeepersInAFewWords() {
+        #expect(CoverageLists.keepersCaption(coverage.updatedElsewhere) == "App Store and web apps — not checked here")
+        #expect(CoverageLists.keepersCaption([.init(source: AppCoverage.appStore, items: ["a"])]) == "App Store — not checked here")
+        #expect(CoverageLists.keepersCaption([.init(source: AppCoverage.appStore, items: ["a"]), .init(source: AppCoverage.macOS, items: ["b"]),
+                                              .init(source: "Edge web apps", items: ["c"])]) == "App Store, macOS and web apps — not checked here")
+    }
+
+    @Test func onlyWhatNobodyLooksAfterIsNotChecked() {
+        let c = PopoverContent(report: PreviewData.coverageReport(), isScanning: false, now: PreviewData.now)
+        #expect(c.coverage.notCheckedCount == 109 && c.coverage.updatedElsewhereCount == 37)
+        #expect(c.subline.hasPrefix("4 lower-severity findings · 109 not checked · Scanned"))
+        #expect(PreviewData.appsWithNoRecord.count + PreviewData.appsFromTheAppStore.count + PreviewData.chromeWebApps.count
+                + PreviewData.edgeWebApps.count == 141)
+    }
+
+    @Test func searchAndFooterSayApps() {
+        let list = CoverageLists.list(coverage.notChecked[1], in: .notChecked)
+        let found = NameListView.sections(list, matching: "micro").flatMap(\.rows)
+        #expect(found.map(\.text) == ["Microsoft Edge", "Microsoft Excel", "Microsoft Outlook", "Microsoft PowerPoint", "Microsoft Word"])
+        #expect(found.allSatisfy { $0.path?.hasPrefix("/Applications/Microsoft") == true })
+        #expect(NameListView.footer(list, scanned: PreviewData.now, query: "", matching: 104).hasPrefix("104 apps · last scan "))
+        #expect(NameListView.footer(list, scanned: PreviewData.now, query: "micro", matching: 5) == "5 of 104")
+    }
+}
