@@ -95,6 +95,17 @@ public enum Origin: Hashable, Codable, Sendable {
         return nil
     }
 
+    /// Whether two origins are the same place, as a fix sees it: the same Python (an upgrade with --user moves a
+    /// package from Apple's read-only site to the user site), the same lockfile, the same app bundle; otherwise equal.
+    public func samePlace(as other: Origin) -> Bool {
+        switch (self, other) {
+        case let (.pip(a, _, _), .pip(b, _, _)): return a.executable == b.executable
+        case let (.folder(_, a, _), .folder(_, b, _)): return a == b
+        case let (.electronApp(_, a, _), .electronApp(_, b, _)): return a == b
+        default: return self == other
+        }
+    }
+
     public var kind: SourceKind {
         switch self {
         case .homebrewFormula, .homebrewCask: return .homebrew

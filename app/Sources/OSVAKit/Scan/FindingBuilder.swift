@@ -23,10 +23,13 @@ public struct FindingBuilder: Sendable {
         var out = packageFindings(approved: approved, verdicts: verdicts)
         out += projectFindings(brew: brew, projects: projects)
         applyBigIssues(bigIssues, to: &out, approved: approved, brew: brew, projects: projects)
-        return out.sorted {
-            ($0.group, -($0.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), $0.title.lowercased(), $0.id)
-                < ($1.group, -($1.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), $1.title.lowercased(), $1.id)
-        }
+        return out.sorted(by: Self.precedes)
+    }
+
+    /// The order findings are listed in: by group, worst severity first, then by title.
+    public static func precedes(_ a: Finding, _ b: Finding) -> Bool {
+        (a.group, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.title.lowercased(), a.id)
+            < (b.group, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.title.lowercased(), b.id)
     }
 
     // MARK: Packages (exact versions, from api/v1/check/batch)
@@ -48,7 +51,10 @@ public struct FindingBuilder: Sendable {
             let onlyElsewhere = !flaws.isEmpty && here.isEmpty && !malicious
             let group: Finding.Group = malicious ? .malicious : onlyElsewhere ? .other : exploited ? .exploited
                 : (severityHere ?? .low) >= .high ? .criticalHigh : .other
-            let target = malicious ? nil : verdict.plan?.target
+            // A version from the server goes into a command only if it reads as a version and nothing else (FixSafety).
+            let planned = malicious ? nil : verdict.plan?.target
+            let target = planned.flatMap { FixSafety.isSafeVersion($0) ? $0 : nil }
+            let rejected = planned != nil && target == nil
             let unresolved = (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
                 // The API lists at most 40 flaws per package: a remaining one may have no entry, and is then named by its id.
                 let flaw = flaws.first { $0.id == r.id }
@@ -62,9 +68,11 @@ public struct FindingBuilder: Sendable {
             let apps = installs.filter { $0.origin.kind == .electron }
             let others = installs.filter { $0.origin.kind != .electron }
             func finding(id: String, title: String, component: String?, origins: [Origin], spelledAs: String) -> Finding {
-                let advice = UpgradeCommand.advice(for: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: target, malicious: malicious)
+                let inputs = UpgradeCommand.Inputs(origin: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: target, malicious: malicious)
+                let advice = rejected ? UpgradeCommand.Advice(command: nil) : UpgradeCommand.advice(inputs)
                 let note = malicious ? "Remove it, then rotate every secret it could read."
                     : onlyElsewhere ? nil
+                    : rejected ? "The server named a fixed version the app does not accept as a version; see the site."
                     : (verdict.plan != nil && target == nil && unresolved.isEmpty ? "No fixed release yet." : advice.note)
                 return Finding(id: id, group: group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
                                component: component, installedVersion: package.version, fixedVersion: target,
@@ -72,7 +80,8 @@ public struct FindingBuilder: Sendable {
                                flawCount: flaws.isEmpty ? max(verdict.distinctFlaws, malicious ? 0 : 1) : max(here.count, onlyElsewhere ? flaws.count : 0),
                                exploited: exploited, malicious: malicious, note: note, bigIssue: nil, origins: origins, pageURL: page,
                                upgradeCommand: onlyElsewhere ? nil : advice.command, verification: .none, grade: nil,
-                               fixesCount: verdict.plan.map { $0.fixes.count }, unresolved: unresolved)
+                               fixesCount: verdict.plan.map { $0.fixes.count }, unresolved: unresolved,
+                               commandInputs: onlyElsewhere || advice.command == nil ? nil : inputs)
             }
             for app in apps {
                 guard case let .electronApp(name, path, _) = app.origin else { continue }
@@ -131,10 +140,17 @@ public struct FindingBuilder: Sendable {
                 advisoryIDs: hits.map(\.advisory.id), flawCount: hits.count, exploited: exploited, malicious: false,
                 note: target.map { "Likely affected: the issuer names \($0) as fixed." }, bigIssue: nil, origins: [match.item.origin],
                 pageURL: SiteURL.projectPage(slug: project.slug),
-                upgradeCommand: UpgradeCommand.command(for: match.item.origin, name: match.item.name, ecosystem: nil, fixed: target, malicious: false),
-                verification: project.verificationMark, grade: project.grade))
+                upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
+                verification: project.verificationMark, grade: project.grade,
+                commandInputs: Self.inputs(match.item.origin, match.item.name, nil, target)))
         }
         return out
+    }
+
+    /// The inputs of an upgrade command, with a version from the server only if it reads as one.
+    static func inputs(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem?, _ target: String?) -> UpgradeCommand.Inputs {
+        UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: target.flatMap { FixSafety.isSafeVersion($0) ? $0 : nil },
+                              malicious: false)
     }
 
     // MARK: "Patch these first" (api/v1/state big_issues)
@@ -170,8 +186,9 @@ public struct FindingBuilder: Sendable {
                             advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
                             note: target.map { "Likely affected: the issuer names \($0) as fixed." }, bigIssue: label,
                             origins: [match.item.origin], pageURL: SiteURL.projectPage(slug: issue.slug),
-                            upgradeCommand: UpgradeCommand.command(for: match.item.origin, name: match.item.name, ecosystem: nil, fixed: target, malicious: false),
-                            verification: project?.verificationMark ?? .none, grade: project?.grade)
+                            upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
+                            verification: project?.verificationMark ?? .none, grade: project?.grade,
+                            commandInputs: Self.inputs(match.item.origin, match.item.name, nil, target))
                 }
             }
             // Registry packages that belong to the project (the index's project column), Electron apps for "electron"
@@ -191,8 +208,9 @@ public struct FindingBuilder: Sendable {
                                 flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
                                 note: target.map { "Likely affected: the issuer names \($0) as fixed." }, bigIssue: label,
                                 origins: [install.origin], pageURL: SiteURL.packagePage(package.ecosystem, package.name, version: package.version),
-                                upgradeCommand: UpgradeCommand.command(for: install.origin, name: install.name, ecosystem: package.ecosystem, fixed: target, malicious: false),
-                                verification: projects[issue.slug]?.verificationMark ?? .none, grade: projects[issue.slug]?.grade)
+                                upgradeCommand: UpgradeCommand.advice(Self.inputs(install.origin, install.name, package.ecosystem, target)).command,
+                                verification: projects[issue.slug]?.verificationMark ?? .none, grade: projects[issue.slug]?.grade,
+                                commandInputs: Self.inputs(install.origin, install.name, package.ecosystem, target))
                     }
                 }
             }

@@ -156,14 +156,3 @@ public struct PopoverContent: Sendable {
         }
     }
 }
-
-extension Finding {
-    /// The installed version, and the fixed one when known ("Electron 18.3.15", "42.11.16").
-    public var installedLabel: String { (component.map { "\($0) " } ?? "") + installedVersion }
-
-    /// "1.13.8 → 1.19.5", "Electron 24.2.0 → 42.11.16", "1.14.1", in one string (notifications, accessibility).
-    public var versionLine: String {
-        if malicious { return installedLabel }
-        return fixedVersion.map { "\(installedLabel) → \($0)" } ?? installedLabel
-    }
-}
