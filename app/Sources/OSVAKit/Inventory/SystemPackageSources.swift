@@ -87,13 +87,14 @@ public struct NixSource: Sendable {
     static func defaultProfiles(_ environment: ToolEnvironment) -> [(path: String, shared: Bool)] {
         let home = environment.home.path, user = NSUserName()
         return [(home + "/.nix-profile", false), (home + "/.local/state/nix/profiles/profile", false),
-                ("/nix/var/nix/profiles/per-user/\(user)/profile", false), ("/nix/var/nix/profiles/default", true)]
+                (environment.system("/nix/var/nix/profiles/per-user/\(user)/profile"), false),
+                (environment.system("/nix/var/nix/profiles/default"), true)]
     }
 
     public func collect() -> (managed: [ManagedPackage], unchecked: [UncheckedItem], report: SourceReport) {
         let clock = ContinuousClock(), start = clock.now
-        let nix = environment.firstExecutable(["/nix/var/nix/profiles/default/bin/nix-env", "~/.nix-profile/bin/nix-env",
-                                               "/run/current-system/sw/bin/nix-env"] + profiles.map { $0.path + "/bin/nix-env" })
+        let nix = environment.firstExecutable([environment.system("/nix/var/nix/profiles/default/bin/nix-env"), "~/.nix-profile/bin/nix-env",
+                                               environment.system("/run/current-system/sw/bin/nix-env")] + profiles.map { $0.path + "/bin/nix-env" })
         guard nix != nil else {
             return ([], [], SourceReport(kind: .nix, available: false, count: 0, detail: "Nix not found", seconds: (clock.now - start).seconds))
         }

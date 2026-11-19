@@ -237,3 +237,16 @@ enum ManagerFiles {
         #expect(Fixture.index.managedCount == 0)
     }
 }
+
+/// Machine-wide Nix paths go through ToolEnvironment.systemRoot, so a test never reads the Mac's own /nix.
+@Suite struct NixSystemRootTests {
+    @Test func defaultProfilesStayUnderHomeOrTheSystemRoot() {
+        var tools = ToolEnvironment(home: URL(fileURLWithPath: "/Users/ana"), base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false })
+        tools.systemRoot = "/tmp/fake-root"
+        let paths = NixSource.defaultProfiles(tools).map(\.path)
+        #expect(paths.contains("/tmp/fake-root/nix/var/nix/profiles/default"))
+        #expect(paths.allSatisfy { $0.hasPrefix("/Users/ana/") || $0.hasPrefix("/tmp/fake-root/") }, "\(paths)")
+        // and in the app, nothing changes: the root is empty
+        #expect(NixSource.defaultProfiles(ToolEnvironment(home: URL(fileURLWithPath: "/Users/ana"))).map(\.path).contains("/nix/var/nix/profiles/default"))
+    }
+}

@@ -220,10 +220,11 @@ import Testing
             default: return .init(status: 404, body: Data())
             }
         }
-        let tools = ToolEnvironment(home: home, base: ["GOBIN": gobin.path], runner: RecordedRunner(outputs: [:]),
+        var tools = ToolEnvironment(home: home, base: ["GOBIN": gobin.path], runner: RecordedRunner(outputs: [:]),
                                     isExecutable: { p in
                                         p.hasPrefix(home.path) && (p.hasPrefix(gobin.path) || ["/bin/python", "/bin/conda", "/bin/nix-env"].contains { p.hasSuffix($0) })
                                     })
+        tools.systemRoot = home.appendingPathComponent("system-root").path   // not this Mac's own /nix (the Mac server has Nix)
         let scanner = Scanner(configuration: ScanConfiguration(storage: Storage(directory: home.appendingPathComponent("support")), tools: tools,
                                                                folders: [], applicationRoots: [home.appendingPathComponent("Applications")]),
                               transport: transport, pause: { _ in })

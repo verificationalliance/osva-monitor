@@ -75,6 +75,9 @@ public struct ToolEnvironment: Sendable {
     public var runner: any CommandRunner
     /// Whether a path is an executable file (tests pretend tools exist).
     public var isExecutable: @Sendable (String) -> Bool
+    /// Put in front of machine-wide paths a source reads directly (/nix/var/nix/profiles/…): "" in the app, a temporary
+    /// folder in tests, so a test run on a Mac that has Nix does not read that Mac's own profiles.
+    public var systemRoot: String = ""
 
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser,
                 base: [String: String] = ProcessInfo.processInfo.environment,
@@ -95,6 +98,9 @@ public struct ToolEnvironment: Sendable {
             isExecutable(p) && seen.insert((p as NSString).resolvingSymlinksInPath).inserted
         }
     }
+
+    /// A machine-wide path, under `systemRoot`.
+    public func system(_ path: String) -> String { systemRoot + path }
 
     public func expand(_ path: String) -> String {
         path.hasPrefix("~/") ? home.appendingPathComponent(String(path.dropFirst(2))).path : path
