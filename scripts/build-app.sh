@@ -14,6 +14,10 @@
 # profile: it is unlocked and appended to the search list only while signing (codesign needs that to build the
 # certificate chain), then the search list is restored exactly and the keychain locked again.
 #
+# SIGN_APP=<path to OSVA Monitor.app>, with DEVELOPER_ID: skip steps 1-3 and sign and notarize an app another Mac
+# built with this script (the Mac server builds and tests; the signing keys stay on the signing Mac). It must be the
+# same version and bundle version, with this repository's identifier, update key and feed, and no test-only parts.
+#
 # For testing updates only, and refused together with DEVELOPER_ID:
 #   SPARKLE_PUBLIC_KEY=<base64>  trust this update key instead of the real one (a throwaway key's public half)
 #   UPDATE_TESTING=1             compile in OSVA_UPDATE_FEED, an environment variable that points the updater at
@@ -41,6 +45,7 @@ if [ -n "${DEVELOPER_ID:-}" ]; then
 fi
 [ "${UPDATE_TESTING:-}" != 1 ] || swift_flags+=(-Xswiftc -DOSVA_UPDATE_TESTING)
 
+if [ -z "${SIGN_APP:-}" ]; then
 echo "1. verified core (lake build OSVACore:static)"
 lake="$(command -v lake || echo "$HOME/.elan/bin/lake")"
 # Built for the app's deployment target, so the linker does not see objects newer than the app.
@@ -102,6 +107,24 @@ if [ "${UPDATE_TESTING:-}" = 1 ]; then
   plutil -insert NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true}' "$plist"
 fi
 plutil -lint "$app/Contents/Info.plist" >/dev/null
+else
+  # SIGN_APP: an app built on another Mac. The Mac server builds and tests; the keys stay on the signing Mac. It is
+  # signed only if it is the release build this script makes: this version and bundle version, this repository's
+  # update key, feed and identifier, and no test-only code or settings.
+  [ -n "${DEVELOPER_ID:-}" ] || die "SIGN_APP signs a build made elsewhere with the Developer ID; set DEVELOPER_ID"
+  [ -f "$SIGN_APP/Contents/Info.plist" ] && [ -x "$SIGN_APP/Contents/MacOS/OSVAMonitor" ] || die "SIGN_APP is not an OSVA Monitor app: $SIGN_APP"
+  echo "1-3. the app built elsewhere: $SIGN_APP"
+  got() { /usr/libexec/PlistBuddy -c "Print :$1" "$SIGN_APP/Contents/Info.plist" 2>/dev/null || true; }
+  want() { /usr/libexec/PlistBuddy -c "Print :$1" "$app_src/Resources/Info.plist" 2>/dev/null || true; }
+  [ "$(got CFBundleShortVersionString)" = "$version" ] || die "SIGN_APP is version $(got CFBundleShortVersionString), not $version"
+  [ "$(got CFBundleVersion)" = "$build_number" ] || die "SIGN_APP has bundle version $(got CFBundleVersion), not $build_number"
+  for k in CFBundleIdentifier SUFeedURL SUPublicEDKey SUVerifyUpdateBeforeExtraction SURequireSignedFeed; do
+    [ -n "$(want "$k")" ] && [ "$(got "$k")" = "$(want "$k")" ] || die "SIGN_APP's $k is not this repository's"
+  done
+  [ -z "$(got NSAppTransportSecurity)" ] || die "SIGN_APP is a test build (it allows local networking)"
+  ! grep -q -a OSVA_UPDATE_FEED "$SIGN_APP/Contents/MacOS/OSVAMonitor" || die "SIGN_APP is a test build (it has the feed override)"
+  rm -rf "$app"; mkdir -p "$out_dir"; ditto "$SIGN_APP" "$app"
+fi
 
 echo "4. signature"
 # Inside out, each piece once, never --deep (Sparkle's documentation, "Code Signing", for an app that is not sandboxed):
