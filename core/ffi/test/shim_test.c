@@ -8,6 +8,10 @@ static int fails = 0;
 #define S(x) (const uint8_t *)(x), strlen(x)
 #define CHECK(cond, what) do { if (!(cond)) { printf("FAIL %s\n", what); fails++; } else printf("ok   %s\n", what); } while (0)
 
+/* strlen, or 0 for an absent bound. A function rather than `(x) ? strlen(x) : 0` in the macro: GCC's -Wnonnull
+   flags strlen(NULL) in the untaken branch when the macro is given a literal NULL. */
+static size_t len_or_0(const char *s) { return s ? strlen(s) : 0; }
+
 int main(void) {
     CHECK(osva_core_init() == 0, "init");
     CHECK(osva_core_init() == 0, "init twice");
@@ -26,7 +30,7 @@ int main(void) {
     CHECK(osva_affected(S("1.0"), NULL, NULL, 0) == -1, "no fixes: unknown");
 
     /* affected ranges: PostgreSQL's CVE-2026-14662 (one range per branch) and CPython's CVE-2026-119170 (only 3.14.10) */
-#define R(i, f, l) { (const uint8_t *)(i), (i) ? strlen(i) : 0, (const uint8_t *)(f), (f) ? strlen(f) : 0, (const uint8_t *)(l), (l) ? strlen(l) : 0 }
+#define R(i, f, l) { (const uint8_t *)(i), len_or_0(i), (const uint8_t *)(f), len_or_0(f), (const uint8_t *)(l), len_or_0(l) }
     const osva_range pg[] = { R(NULL, "14.24", NULL), R("15", "15.19", NULL), R("16", "16.15", NULL), R("17", "17.11", NULL), R("18", "18.6", NULL) };
     const osva_range py[] = { R("3.14.10", "3.14.11", NULL) };
     uint8_t up[32];
