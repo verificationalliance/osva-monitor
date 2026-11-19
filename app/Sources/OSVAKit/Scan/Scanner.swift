@@ -71,7 +71,7 @@ public actor Scanner {
         let approvedProjects = filter.approve(projects: brew.map(\.project.slug))
         let allowed = Set(approvedProjects.map(\.slug))
         let brewChecked = brew.filter { allowed.contains($0.project.slug) }
-        var fromCache = 0
+        var fromCache: [String] = []                         // what the cache answered, as it was sent
 
         // 4. Exact versions, 200 at a time.
         let packages = selection.approved.keys.sorted { $0.cacheKey < $1.cacheKey }
@@ -80,7 +80,7 @@ public actor Scanner {
         for p in packages {
             if let cached = cache.readJSON(CachedVerdict.self, "batch", p.cacheKey, maxAge: Freshness.batchVerdict) {
                 if let r = cached.result { verdicts[p] = r }
-                fromCache += 1
+                fromCache.append(p.sentDescription)
             } else {
                 toAsk.append(p)
             }
@@ -107,7 +107,7 @@ public actor Scanner {
         var projects: [String: ProjectResponse] = [:]
         for p in approvedProjects {
             if let cached = cache.readJSON(ProjectResponse.self, "project", p.slug, maxAge: Freshness.project) {
-                projects[p.slug] = cached; fromCache += 1; continue
+                projects[p.slug] = cached; fromCache.append(p.sentDescription); continue
             }
             progress("Reading \(p.slug)'s advisories…")
             do {
@@ -140,9 +140,9 @@ public actor Scanner {
         let checkedBrew = Set(brewChecked.map(\.item))
         let coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
                                      otherApps: inventory.otherApps)
-        let sent = SentRecord(requests: await api.takeSentRequests(),
-                              withheldCount: selection.withheld.count + (inventory.homebrew.count - brewChecked.count),
-                              answeredFromCache: fromCache)
+        let withheld = Self.withheld(selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) })
+        let sent = SentRecord(requests: await api.takeSentRequests(), withheldCount: withheld.reduce(0) { $0 + $1.items.count },
+                              answeredFromCache: fromCache.count, cached: fromCache, withheld: withheld)
         progress("")
         return ScanReport(startedAt: started, finishedAt: Date(), inventory: inventory, findings: findings, sent: sent,
                           indexGeneratedAt: index.generatedAt, problems: problems, coverage: coverage)
@@ -182,6 +182,19 @@ public actor Scanner {
             notChecked.append(.init(source: "Packages the site cannot check", items: Array(Set(uncheckable.map(describe))).sorted()))
         }
         return Coverage(notInIndex: notInIndex, notChecked: notChecked)
+    }
+
+    /// Everything that stayed on this Mac, by where it was found, each name and version once per source: Homebrew
+    /// packages with no graded project, then packages the privacy filter did not pass (not in the index, or with a
+    /// version no registry would have).
+    static func withheld(_ packages: [InstalledPackage], unmatchedBrew: [HomebrewItem]) -> [Coverage.Bucket] {
+        let bySource = Dictionary(grouping: packages) { $0.origin.kind }
+        return SourceKind.allCases.compactMap { kind in
+            var items = Set((bySource[kind] ?? []).map { "\($0.name) \($0.version)" })
+            if kind == .homebrew { items.formUnion(unmatchedBrew.map { "\($0.name) \($0.version)" }) }
+            guard !items.isEmpty else { return nil }
+            return Coverage.Bucket(source: kind.title, items: items.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+        }
     }
 
     /// Inventory of the given sources, run side by side.

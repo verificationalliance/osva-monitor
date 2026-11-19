@@ -70,7 +70,6 @@ struct SettingsScene: View {
                                  launchAtLogin: model.launchAtLogin, launchAtLoginAvailable: LoginItem.isAvailable, lastReport: model.report),
             actions: SettingsActions(addFolder: { model.chooseFolder() }, removeFolder: { model.removeFolder($0) },
                                      setInterval: { model.setInterval(hours: $0) }, setNotifications: { model.setNotifications($0) },
-                                     setLaunchAtLogin: { model.setLaunchAtLogin($0) }),
-            showSent: model.isShowingFixtures)
+                                     setLaunchAtLogin: { model.setLaunchAtLogin($0) }))
     }
 }

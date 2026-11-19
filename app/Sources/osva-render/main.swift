@@ -15,7 +15,7 @@ import OSVAKit
 import OSVAMonitorUI
 import SwiftUI
 
-enum Method { case imageRenderer, hostingView }
+enum Method { case imageRenderer, hostingView, window }
 
 @MainActor
 func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale: CGFloat, width: CGFloat? = nil) throws -> NSBitmapImageRep {
@@ -40,9 +40,18 @@ private func draw<V: View>(_ root: V, appearance: NSAppearance, method: Method, 
         let rep = NSBitmapImageRep(cgImage: cg)
         rep.size = NSSize(width: CGFloat(cg.width) / scale, height: CGFloat(cg.height) / scale)
         return rep
-    case .hostingView:
+    case .hostingView, .window:
         let host = NSHostingView(rootView: root)
         host.appearance = appearance
+        // A List is an NSTableView, which makes its rows only once it is in a window: the sheets get one, never shown.
+        var window: NSWindow?
+        if method == .window {
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.borderless], backing: .buffered, defer: false)
+            w.appearance = appearance
+            w.contentView = host
+            window = w
+        }
+        defer { window?.contentView = nil }
         var size = host.fittingSize
         for _ in 0..<3 {
             host.frame = NSRect(x: 0, y: 0, width: width ?? size.width, height: size.height)
@@ -66,7 +75,11 @@ private func draw<V: View>(_ root: V, appearance: NSAppearance, method: Method, 
 @MainActor
 func write(_ rep: NSBitmapImageRep, _ name: String, into dir: URL) throws {
     let file = dir.appendingPathComponent(name + ".png")
-    try rep.representation(using: .png, properties: [:])!.write(to: file)
+    guard let png = rep.representation(using: .png, properties: [:]) else {   // a real report's whole popover can be too tall
+        FileHandle.standardError.write(Data("osva-render: \(name) is too large to encode (\(rep.pixelsWide)×\(rep.pixelsHigh) px), skipped\n".utf8))
+        return
+    }
+    try png.write(to: file)
     print("\(file.path)  \(Int(rep.size.width))×\(Int(rep.size.height)) pt")
 }
 
@@ -115,6 +128,14 @@ func main() throws {
 
     let now = PreviewData.now
     let full = PreviewData.report()
+    /// The sheets behind "What leaves your Mac", one per list, and one narrowed by a search.
+    func sheets(_ report: ScanReport, prefix: String) -> [(String, AnyView, Method)] {
+        SentSummary.lists(report.sent).filter(\.canOpen).map { list in
+            ("\(prefix)-\(list.kind.rawValue)", AnyView(SentListView(list: list, scanned: report.finishedAt)), Method.window)
+        } + SentSummary.lists(report.sent).filter { $0.kind == .withheld && $0.canOpen }.map { list in
+            ("\(prefix)-withheld-search", AnyView(SentListView(list: list, scanned: report.finishedAt, query: "lib")), Method.window)
+        }
+    }
     let open: Set<String> = ["pkg|npm|axios|1.14.1", "brew|nginx|1.30.2"]
     func popover(_ report: ScanReport?, scanning: Bool = false, progress: String = "", expanded: Set<String> = []) -> some View {
         PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: progress, now: now), actions: .none,
@@ -129,16 +150,19 @@ func main() throws {
         ("popover-high-only", AnyView(popover(PreviewData.report(findings: PreviewData.findings.filter { $0.severity == .high && !$0.exploited }))),
          .imageRenderer),
         ("popover-offline", AnyView(popover(PreviewData.report(findings: [], problems: ["Could not refresh the public index; using the copy from 2 days ago."]))), .imageRenderer),
-        ("settings", AnyView(SettingsView(state: PreviewData.settings(), actions: .none, showSent: true)), .hostingView),
+        ("settings", AnyView(SettingsView(state: PreviewData.settings(), actions: .none)), .hostingView),
+        ("settings-whole", AnyView(SettingsView(state: PreviewData.settings(), actions: .none, height: 1080)), .hostingView),
         ("settings-empty", AnyView(SettingsView(state: SettingsState(folders: [], intervalHours: 24, notifications: false, notificationsAvailable: false,
                                                                      launchAtLogin: false, launchAtLoginAvailable: false, lastReport: nil), actions: .none)), .hostingView),
         ("components", AnyView(ComponentSheet()), .imageRenderer),
-    ]
+    ] + sheets(full, prefix: "sent")
     if let reportPath {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let real = try decoder.decode(ScanReport.self, from: Data(contentsOf: URL(fileURLWithPath: reportPath)))
         views.append(("popover-real", AnyView(PopoverView(content: PopoverContent(report: real, isScanning: false, now: real.finishedAt.addingTimeInterval(120)),
                                                           actions: .none, scrolls: false)), .imageRenderer))
+        views.append(("settings-real", AnyView(SettingsView(state: PreviewData.settings(report: real), actions: .none, height: 1080)), .hostingView))
+        views += sheets(real, prefix: "sent-real")
     }
     // Increase Contrast cannot be drawn here: AppKit returns plain Aqua for the high-contrast appearance names unless
     // the setting is on, so those variants are checked by ToneTests and on the real panel.

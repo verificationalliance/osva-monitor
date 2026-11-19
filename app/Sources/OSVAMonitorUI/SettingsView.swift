@@ -38,17 +38,18 @@ public struct SettingsActions {
 }
 
 /// The settings window, a native grouped form: watched folders, scanning, notifications, open at login, and exactly
-/// what left the Mac in the last scan.
+/// what left the Mac in the last scan (each number opens its list).
 public struct SettingsView: View {
     public static let size = CGSize(width: 540, height: 720)
 
     public var state: SettingsState
     public var actions: SettingsActions
-    @State private var showSent: Bool
+    /// The window's height; osva-render draws it taller to show every section at once.
+    public var height: CGFloat
+    @State private var openList: SentList.Kind?
 
-    public init(state: SettingsState, actions: SettingsActions, showSent: Bool = false) {
-        self.state = state; self.actions = actions
-        _showSent = State(initialValue: showSent)
+    public init(state: SettingsState, actions: SettingsActions, height: CGFloat = SettingsView.size.height) {
+        self.state = state; self.actions = actions; self.height = height
     }
 
     public var body: some View {
@@ -113,17 +114,8 @@ public struct SettingsView: View {
                     .font(Typeface.body).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let report = state.lastReport {
-                    let counts = SentSummary.counts(report.sent)
-                    LabeledContent("Package versions checked") { count(counts.batch) }
-                    LabeledContent("Projects matched from Homebrew") { count(counts.projects) }
-                    LabeledContent("Answered from this Mac's cache") { count(report.sent.answeredFromCache) }
-                    LabeledContent("Not in the public index, never sent") { count(report.sent.withheldCount) }
-                    if !report.sent.requests.isEmpty {
-                        DisclosureGroup(isExpanded: $showSent) {
-                            sentList(report.sent)
-                        } label: {
-                            Text("Everything sent in the last scan")
-                        }
+                    ForEach(SentSummary.lists(report.sent)) { list in
+                        SentListRow(list: list) { openList = list.kind }
                     }
                 }
             } header: {
@@ -137,24 +129,42 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: Self.size.width, height: Self.size.height)
-    }
-
-    private func count(_ n: Int) -> some View {
-        Text("\(n)").font(Typeface.count(13, weight: .medium)).foregroundStyle(n == 0 ? .secondary : .primary)
-    }
-
-    private func sentList(_ sent: SentRecord) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(SentSummary.groups(sent).enumerated()), id: \.offset) { _, group in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(group.title).font(Typeface.chip).foregroundStyle(.secondary)
-                    ForEach(group.items, id: \.self) { Text($0).font(Typeface.code).textSelection(.enabled) }
-                }
+        .frame(width: Self.size.width, height: height)
+        .sheet(item: $openList) { kind in
+            if let report = state.lastReport, let list = SentSummary.lists(report.sent).first(where: { $0.kind == kind }) {
+                SentListView(list: list, scanned: report.finishedAt)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+    }
+}
+
+/// One number under "What leaves your Mac". With anything to show, the whole row opens its list; without, the
+/// chevron's place stays empty so the numbers still line up.
+struct SentListRow: View {
+    let list: SentList
+    let open: () -> Void
+
+    var body: some View {
+        if list.canOpen {
+            Button(action: open) { row.contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+                .help("Show the \(list.count.formatted()) \(list.noun)")
+                .accessibilityHint("Shows the list")
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 6) {
+            Text(list.title).foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            Text(list.count.formatted()).font(Typeface.count(13, weight: .medium)).foregroundStyle(list.count == 0 ? .secondary : .primary)
+            Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                .opacity(list.canOpen ? 1 : 0)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -173,17 +183,84 @@ public enum SentSummary {
         return Counts(batch: count("POST api/v1/check/batch"), projects: count("GET api/v1/project"))
     }
 
-    public struct Group { public var title: String; public var items: [String] }
+    /// The four numbers, each with the list behind it, in the order Settings shows them.
+    public static func lists(_ sent: SentRecord) -> [SentList] {
+        func items(_ endpoint: String) -> [String] { sent.requests.filter { $0.endpoint == endpoint }.flatMap(\.items) }
+        let checked = items("POST api/v1/check/batch")
+        let projects = items("GET api/v1/project").map(projectSlug)
+        let cachedPackages = sent.cached.filter { !$0.hasPrefix("project ") }
+        let cachedProjects = sent.cached.filter { $0.hasPrefix("project ") }.map(projectSlug)
+        return [
+            SentList(kind: .checked, count: checked.count, sections: [.init(title: nil, items: checked)]),
+            SentList(kind: .projects, count: projects.count, sections: [.init(title: nil, items: projects)]),
+            SentList(kind: .cached, count: sent.answeredFromCache,
+                     sections: [.init(title: "Package versions", items: cachedPackages), .init(title: "Projects", items: cachedProjects)]),
+            SentList(kind: .withheld, count: sent.withheldCount, sections: sent.withheld.map { .init(title: $0.source, items: $0.items) }),
+        ]
+    }
 
-    public static func groups(_ sent: SentRecord) -> [Group] {
-        sent.requests.map { r in
-            let title: String
-            switch r.endpoint {
-            case "POST api/v1/check/batch": title = "POST /api/v1/check/batch · \(r.items.count)"
-            case "GET api/v1/project": title = "GET /api/v1/project · \(r.items.count)"
-            default: title = r.endpoint
-            }
-            return Group(title: title, items: r.items)
+    /// "project openssl" (as recorded) is the slug "openssl".
+    static func projectSlug(_ item: String) -> String { item.hasPrefix("project ") ? String(item.dropFirst("project ".count)) : item }
+}
+
+/// One of the lists behind "What leaves your Mac": what one number counts, by name.
+public struct SentList: Identifiable, Sendable, Equatable {
+    public enum Kind: String, CaseIterable, Identifiable, Sendable {
+        case checked, projects, cached, withheld
+        public var id: String { rawValue }
+    }
+
+    public struct Section: Sendable, Equatable {
+        public var title: String?
+        public var items: [String]
+    }
+
+    public var kind: Kind
+    /// The number in the row: exact, even when the saved list was cut short.
+    public var count: Int
+    /// The names, empty sections left out.
+    public var sections: [Section]
+    public var id: Kind { kind }
+
+    public init(kind: Kind, count: Int, sections: [Section]) {
+        self.kind = kind; self.count = count; self.sections = sections.filter { !$0.items.isEmpty }
+    }
+
+    /// How many names the list holds (at most SentRecord.listLimit; none for a report from before lists were kept).
+    public var shown: Int { sections.reduce(0) { $0 + $1.items.count } }
+    /// A row opens only when there is something to show: a count of 0 is not a disclosure.
+    public var canOpen: Bool { count > 0 && shown > 0 }
+
+    public var title: String {
+        switch kind {
+        case .checked: return "Package versions checked"
+        case .projects: return "Projects matched from Homebrew"
+        case .cached: return "Answered from this Mac's cache"
+        case .withheld: return "Not in the public index, never sent"
+        }
+    }
+
+    /// What the items are, for "Show the 245 …".
+    public var noun: String {
+        switch kind {
+        case .checked: return count == 1 ? "package version sent" : "package versions sent"
+        case .projects: return count == 1 ? "project asked about" : "projects asked about"
+        case .cached: return count == 1 ? "answer from the cache" : "answers from the cache"
+        case .withheld: return count == 1 ? "name that stayed on this Mac" : "names that stayed on this Mac"
+        }
+    }
+
+    /// The sentence under the sheet's title.
+    public var explanation: String {
+        switch kind {
+        case .checked:
+            return "Sent to verificationalliance.org in the last scan, exactly as written here: ecosystem, name and version. A Python package also names its Python, and a package installed on this Mac says macOS."
+        case .projects:
+            return "Asked about by name in the last scan: the projects the site grades that your Homebrew formulae and casks belong to. Formula and cask names are not sent."
+        case .cached:
+            return "Checked in an earlier scan and answered this time from this Mac's cache, so not sent again."
+        case .withheld:
+            return "Installed on this Mac but not in the public index, by where each was found. Their names were not sent anywhere; this list is only on this Mac."
         }
     }
 }
