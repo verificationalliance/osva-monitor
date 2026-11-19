@@ -121,7 +121,7 @@ public struct FindingBuilder: Sendable {
         case .needsPython: return .needsPython
         case .otherPlatform: return .otherPlatform
         case .noFix: return .noFix
-        case .malicious, .unknown: return .unknown
+        case .malicious, .unknown, .blockedByConstraint: return .unknown
         }
     }
 

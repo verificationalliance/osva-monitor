@@ -22,6 +22,10 @@ public struct FixPlan: Hashable, Sendable {
         public var versionIsTheFix: Bool
         /// What the person knows it as ("Slack", "jupyterlab").
         public var label: String
+        /// The app bundle a cask's upgrade replaces, when the scan found it: its own version is what is installed.
+        public var bundle: String? = nil
+        /// The Electron an app ships ("Electron 18.3.15"), for the line that says the newest release still ships it.
+        public var electron: String? = nil
     }
 
     public var findingID: String
@@ -64,6 +68,10 @@ public struct FixPlan: Hashable, Sendable {
         public var target: String
         /// The version the finding is about: the copy Python loads must be this one.
         public var installed: String = ""
+
+        public init(python: String, requirement: String, user: Bool, name: String, target: String, installed: String = "") {
+            self.python = python; self.requirement = requirement; self.user = user; self.name = name; self.target = target; self.installed = installed
+        }
     }
 
     /// Why a finding gets no Fix button.
@@ -98,8 +106,19 @@ public struct FixPlan: Hashable, Sendable {
         }
     }
 
-    /// The plan for a finding, or why there is none.
-    public static func make(for finding: Finding, tools: ToolEnvironment, home: String = NSHomeDirectory()) -> Result<FixPlan, Refusal> {
+    /// The plan for a finding, or why there is none. `target`: a partial fix's version (FixProposal.partial), which the
+    /// command then names instead of the finding's own fixed version; the rest of the command must be the one shown.
+    public static func make(for finding: Finding, tools: ToolEnvironment, home: String = NSHomeDirectory(),
+                            target partial: String? = nil) -> Result<FixPlan, Refusal> {
+        var finding = finding
+        if let partial {
+            guard FixSafety.isSafeVersion(partial), !finding.malicious, var inputs = finding.commandInputs, case .pip = inputs.origin,
+                  UpgradeCommand.advice(inputs, home: home).command == finding.upgradeCommand else { return .failure(.notReproducible) }
+            inputs.target = partial
+            finding.commandInputs = inputs
+            finding.fixedVersion = partial
+            finding.upgradeCommand = UpgradeCommand.advice(inputs, home: home).command
+        }
         guard let command = finding.upgradeCommand else { return .failure(.noCommand) }
         guard let inputs = finding.commandInputs, UpgradeCommand.advice(inputs, home: home).command == command else {
             return .failure(.notReproducible)
@@ -135,7 +154,8 @@ public struct FixPlan: Hashable, Sendable {
             guard let b = brew() else { return .failure(.toolNotFound("Homebrew")) }
             plan.use(tool: b, name: "brew", pathFirst: true)
             plan.place = homebrewPlace(b) + ", the \(cask) cask: \(appName) in " + Paths.abbreviatingHome((bundlePath as NSString).deletingLastPathComponent, home: home)
-            plan.homebrew = Homebrew(brew: b, name: cask, cask: true, versionIsTheFix: false, label: appName)
+            plan.homebrew = Homebrew(brew: b, name: cask, cask: true, versionIsTheFix: false, label: appName, bundle: bundlePath,
+                                     electron: finding.component == nil ? nil : finding.installedLabel)
 
         case let .npmGlobal(npm):
             guard FixSafety.isSafePath(npm), tools.isExecutable(npm) else { return .failure(.toolNotFound("npm")) }

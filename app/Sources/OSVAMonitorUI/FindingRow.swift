@@ -156,21 +156,24 @@ public struct FindingRow: View {
             }
             .font(Typeface.small.weight(.medium))
         }
-        if let command = finding.upgradeCommand ?? fix.run?.command {
-            if case let .offered(offer)? = fix.availability, let preview = fix.preview, !fix.isBusy {
+        // a command that cannot bring a fix now (Homebrew behind, the newest already installed) is not shown to copy
+        if let command = fix.hold == .noFix && fix.run == nil ? nil : finding.upgradeCommand ?? fix.run?.command {
+            if let offer = fix.reviewable, let preview = fix.preview, !fix.isBusy {
                 FixConfirmation(offer: offer, preview: preview, waitingFor: fix.waitingFor,
                                 cancel: { actions.fix.cancel(finding) }, run: { actions.fix.run(finding) })
             } else if let run = fix.run, fix.isBusy {
                 FixRunCard(run: run) { actions.fix.stop(finding) }
             } else if let outcome = fix.outcome, outcome.isProblem, fix.run != nil {
                 commandBlock(command)
-                FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: fix.offeredFix != nil,
+                FixProblemCard(outcome: outcome, run: fix.run, waitingFor: fix.waitingFor, canRetry: fix.offeredFix != nil || fix.offeredProposal != nil,
                                retry: { actions.fix.retry(finding) }, undo: { actions.fix.undo(finding) },
                                runInTerminal: { actions.fix.runInTerminal(finding) }, copy: actions.copy)
             } else {
                 commandBlock(command)
                 fixControl
             }
+        } else if fix.hold == .noFix {
+            fixControl                                         // why: no fixed release this command can bring yet
         }
     }
 
@@ -199,8 +202,33 @@ public struct FindingRow: View {
                     Image(systemName: "info.circle").foregroundStyle(.secondary)
                 }
                 .font(Typeface.small)
+                if let proposal = fix.offeredProposal { proposalControl(proposal) }
+            case let .terminal(_, why)?:
+                Label {
+                    Text(why).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                }
+                .font(Typeface.small)
+                TerminalButton(waitingFor: fix.waitingFor) { actions.fix.runInTerminal(finding) }
+                    .controlSize(.regular)
             case .withheld(nil)?, nil:
                 EmptyView()
+            }
+        }
+    }
+
+    /// What the app can do instead, with the person's OK: the proposal in one line, who pip asks for an upgrade
+    /// together, and its button, which opens the same review as any fix.
+    @ViewBuilder private func proposalControl(_ offer: FixOffer) -> some View {
+        if let proposal = offer.proposal {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(proposal.line(offer.plan)).font(Typeface.small.weight(.medium)).foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let asks = proposal.asks {
+                    Text(FixAllProposalLine.whole(asks) + ".").font(Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                FixButton(title: proposal.buttonTitle(offer.plan), waitingFor: fix.waitingFor) { actions.fix.begin(finding) }
             }
         }
     }

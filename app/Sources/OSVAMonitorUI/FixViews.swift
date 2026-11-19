@@ -45,7 +45,14 @@ public struct FixRowState: Equatable, Sendable {
         case offered(FixOffer)
         /// No button; why, when there is something to say.
         case withheld(String?)
+        /// It needs an administrator's password (a cask's installer, a kernel extension): Terminal only, and why.
+        case terminal(FixOffer, String)
     }
+
+    /// Why a finding with no button is left: no fixed release reachable yet (Homebrew behind, the newest installed),
+    /// something installed holds it back, or it is the person's to decide (a system component, a project's lockfile, a
+    /// command to copy). The header's breakdown counts these.
+    public enum Hold: Equatable, Sendable { case noFix, blocked, yours }
 
     public enum Preview: Equatable, Sendable {
         case loading
@@ -68,10 +75,15 @@ public struct FixRowState: Equatable, Sendable {
     public var run: FixRunState?
     /// Another fix is running (its finding's name): one runs at a time, so this row's button waits.
     public var waitingFor: String?
+    /// With no button for the full fix: a partial fix or an upgrade together, which runs only with the person's OK.
+    public var proposal: FixOffer?
+    /// Why there is no button, as the header's breakdown counts it.
+    public var hold: Hold?
 
     public init(availability: Availability? = nil, preview: Preview? = nil, progress: Progress? = nil, run: FixRunState? = nil,
-                waitingFor: String? = nil) {
+                waitingFor: String? = nil, proposal: FixOffer? = nil, hold: Hold? = nil) {
         self.availability = availability; self.preview = preview; self.progress = progress; self.run = run; self.waitingFor = waitingFor
+        self.proposal = proposal; self.hold = hold
     }
 
     /// A run is under way: no button, no review.
@@ -96,6 +108,19 @@ public struct FixRowState: Equatable, Sendable {
         guard case let .offered(offer)? = availability, !isBusy, !isResolved else { return nil }
         guard let outcome, outcome.isProblem, run != nil else { return offer }
         return outcome.canRetry ? offer : nil
+    }
+
+    /// The proposal the row offers now (its own button, and Fix all's unticked line), on the same terms as `offeredFix`.
+    public var offeredProposal: FixOffer? {
+        guard case .withheld? = availability, let proposal, !isBusy, !isResolved else { return nil }
+        guard let outcome, outcome.isProblem, run != nil else { return proposal }
+        return outcome.canRetry ? proposal : nil
+    }
+
+    /// What the review open on this row is about: the offered fix, else the proposal.
+    public var reviewable: FixOffer? {
+        if case let .offered(offer)? = availability { return offer }
+        return proposal
     }
 }
 
@@ -163,6 +188,22 @@ public struct FixButton: View {
     }
 }
 
+/// Run in Terminal, the one way on when a step needs an administrator password: everywhere it appears (a row whose
+/// cask needs one, a run that asked, Fix all's summary) it is this button. Terminal asks for the password; the app
+/// never sees it.
+public struct TerminalButton: View {
+    public var waitingFor: String?
+    public var action: () -> Void
+    public init(waitingFor: String? = nil, action: @escaping () -> Void) { self.waitingFor = waitingFor; self.action = action }
+
+    public var body: some View {
+        Button(action: action) { Text("Run in Terminal").fontWeight(.semibold) }
+            .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+            .disabled(waitingFor != nil)
+            .help("Opens Terminal with this command; it asks for the password there")
+    }
+}
+
 /// The review: what will happen in one sentence, what else changes, a warning if there is one, and the one action.
 /// The exact arguments, where it runs and the tool's dry run are under Details.
 public struct FixConfirmation: View {
@@ -185,17 +226,20 @@ public struct FixConfirmation: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(plan.summary).font(Typeface.body.weight(.semibold)).foregroundStyle(.primary)
+            Text(offer.proposal?.line(plan) ?? plan.summary).font(Typeface.body.weight(.semibold)).foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let asks = offer.proposal?.asks {
+                Text(FixAllProposalLine.whole(asks) + ".").font(Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             switch preview {
             case .loading:
-                FixSpinnerLabel("Asking \(plan.toolName) what else changes…")
+                FixSpinnerLabel(offer.proposal?.asks == nil ? "Asking \(plan.toolName) what else changes…" : "Asking pip for a set that fits…")
             case let .ready(p):
                 if let blocked = p.blocked {
                     FixNotice(symbol: "exclamationmark.triangle.fill", text: blocked.prefix(1).uppercased() + blocked.dropFirst() + ".", strong: true)
                 } else {
-                    if let also = Self.also(p, plan: plan, companions: offer.companions) {
-                        Text(also).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let also = Self.also(p, plan: plan, companions: offer.companions + Self.moving(offer.proposal)) {
+                        Text(FixAllProposalLine.whole(also)).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     if let used = Self.usedBy(p.usedBy) {
                         Text(used).font(Typeface.small).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -223,6 +267,12 @@ public struct FixConfirmation: View {
         .fixCard()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Review the fix")
+    }
+
+    /// What an upgrade together moves with the finding's package: the blockers and their dependents.
+    static func moving(_ proposal: FixProposal?) -> [String] {
+        if case let .together(t)? = proposal { return t.blockers + t.others }
+        return []
     }
 
     /// "Used by whisperx, pyannote.audio.": who to check afterwards, when it changes more than a patch.
@@ -256,7 +306,7 @@ struct FixDetails: View {
         VStack(alignment: .leading, spacing: 7) {
             fact("Runs") {
                 WrapAtSpaces(spacing: 4, lineSpacing: 4) {
-                    ForEach(Array((plan.invocation.argv + (preview?.pins ?? [])).enumerated()), id: \.offset) { i, arg in
+                    ForEach(Array(argv.enumerated()), id: \.offset) { i, arg in
                         Text(i == 0 ? Paths.abbreviatingHome(arg) : arg)
                             .font(Typeface.code).foregroundStyle(.primary)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
@@ -287,6 +337,15 @@ struct FixDetails: View {
                 .font(Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .transition(.opacity)
+    }
+
+    /// Exactly what runs: the plan's command with the dry run's pins, or, for an upgrade together, the set pinned.
+    private var argv: [String] {
+        let plan = offer.plan
+        if case .together? = offer.proposal, let pip = plan.pip {
+            return PipSetPreviewer.invocation(python: pip.python, user: pip.user, pins: preview?.pins ?? []).argv
+        }
+        return plan.invocation.argv + (preview?.pins ?? [])
     }
 
     /// The width of the names column: "Homebrew", the longest, is 52 pt in 11.5 pt SF Pro.
@@ -524,6 +583,7 @@ public struct FixProblemCard: View {
         switch outcome {
         case .needsPassword: return "This step needs your administrator password, which the app never handles."
         case let .broke(what): return "Updated, but it broke \(what)."
+        case let .putBack(what): return "Put back: on its own, it broke \(what)."
         default: return outcome.text + "."
         }
     }
@@ -532,18 +592,18 @@ public struct FixProblemCard: View {
         switch outcome {
         case .needsPassword: return "lock.fill"
         case .fixedCheck: return "checkmark.circle.fill"
-        case .broke, .undoFailed: return "exclamationmark.triangle.fill"
+        case .broke, .undoFailed, .putBack: return "exclamationmark.triangle.fill"
         default: return "exclamationmark.circle.fill"
         }
     }
 
     private var showsLog: Bool {
-        switch outcome { case .blocked, .fixedCheck: return false; default: return true }
+        switch outcome { case .blocked, .fixedCheck, .partlyFixed: return false; default: return true }
     }
 
     @ViewBuilder private var actions: some View {
         switch outcome {
-        case .broke, .undoFailed:
+        case .broke, .undoFailed, .putBack:
             if let undo = run?.undo {
                 Button(action: self.undo) { Text("Undo").fontWeight(.semibold) }
                     .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
@@ -558,12 +618,9 @@ public struct FixProblemCard: View {
                     .help("Puts back " + undo.restores.joined(separator: ", ") + ": " + undo.command)
             }
         case .needsPassword:
-            Button(action: runInTerminal) { Text("Run in Terminal").fontWeight(.semibold) }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
-                .disabled(waitingFor != nil)
-                .help("Opens Terminal with this command; it asks for the password there")
+            TerminalButton(waitingFor: waitingFor, action: runInTerminal)
             copyButton
-        case .blocked:
+        case .blocked, .partlyFixed:
             EmptyView()
         default:
             if canRetry {
@@ -630,7 +687,7 @@ public struct FixStatusLine: View {
         switch progress {
         case .running where run == nil: Image(systemName: "terminal").foregroundStyle(.secondary)
         case .running, .rechecking: FixSpinner()
-        case let .finished(outcome) where outcome.isResolved || outcome.isUndone:
+        case let .finished(outcome) where outcome.isResolved || outcome.isUndone || outcome.isPartly:
             // the check is cut out of the disc, so it reads on light and dark glass alike
             Image(systemName: "checkmark.circle.fill").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.clean.color)
                 .transition(.symbolEffect(.drawOn))
@@ -642,6 +699,7 @@ public struct FixStatusLine: View {
 
 extension FixOutcome {
     var isUndone: Bool { if case .undone = self { return true } else { return false } }
+    var isPartly: Bool { if case .partlyFixed = self { return true } else { return false } }
 
     /// An ending that may go better a second time: Retry runs the same command again.
     var canRetry: Bool {

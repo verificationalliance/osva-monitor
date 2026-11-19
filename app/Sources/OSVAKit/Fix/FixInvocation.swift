@@ -17,6 +17,13 @@ public struct FixInvocation: Hashable, Sendable {
 
     public var argv: [String] { [executable] + arguments }
 
+    /// The words as a person would type them: quoted only where the shell needs it ("-g" stays as it is).
+    public var display: String {
+        argv.map { w in
+            w.unicodeScalars.allSatisfy({ ShellWords.plain.contains($0) }) && !w.isEmpty && !w.hasPrefix("=") ? w : UpgradeCommand.quote(w)
+        }.joined(separator: " ")
+    }
+
     /// The invocation the shown command stands for, or nil if the command is not exactly one the app can run that way.
     ///
     /// The command's words are read by `ShellWords`, which accepts only the quoting `UpgradeCommand.quote` writes and

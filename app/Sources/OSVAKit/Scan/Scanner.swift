@@ -405,3 +405,57 @@ public actor Scanner {
 
 /// A cached batch answer: `result` is nil when the version had no advisories.
 struct CachedVerdict: Codable { var result: BatchResponse.Result? }
+
+// MARK: - What a fix asks the site
+
+extension Scanner: FixServer {
+    /// The plan for one Python package at its installed version, its target within `constraints`: a fresh answer (the
+    /// cache keeps the scan's own plans). Only a package the privacy filter passes is asked about, as in a scan.
+    public func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError> {
+        guard case .package(.pypi, _) = finding.subject, let inputs = finding.commandInputs, case .pip = inputs.origin else {
+            return .failure(FixServerError("only a Python package's plan can be asked within constraints"))
+        }
+        guard !constraints.isEmpty, constraints.count <= PythonConstraints.maxSent, constraints.allSatisfy(PythonConstraints.isSendable) else {
+            return .failure(FixServerError("the constraints are not ones the app sends"))
+        }
+        let index: PublicIndex
+        do { index = try await indexStore.load(maxAge: Freshness.index).index }
+        catch { return .failure(FixServerError("could not read the public index (\(error.localizedDescription))")) }
+        let installed = InstalledPackage(ecosystem: .pypi, name: inputs.name, version: finding.installedVersion, origin: inputs.origin)
+        guard let approved = PrivacyFilter(index: index).approve([installed]).approved.keys.first else {
+            return .failure(FixServerError("\(inputs.name) is not one the app asks about"))
+        }
+        do { return .success(try await api.checkWithin(approved, constraints: constraints)?.plan) }
+        catch { return .failure(FixServerError(error.localizedDescription)) }
+    }
+
+    /// The flaws known at each version, asked as a scan asks (privacy filter, batches of 200), never from the cache. A
+    /// package the public index does not list has nothing reported; a version no registry would have cannot be asked.
+    public func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError> {
+        let index: PublicIndex
+        do { index = try await indexStore.load(maxAge: Freshness.index).index }
+        catch { return .failure(FixServerError("could not read the public index (\(error.localizedDescription))")) }
+        let origin = Origin.pip(python: python, user: false, formula: nil)
+        if let odd = versions.first(where: { !PackageNames.isPlausibleVersion($0.version) }) {
+            return .failure(FixServerError("\(odd.name) \(odd.version) cannot be checked"))
+        }
+        let selection = PrivacyFilter(index: index).approve(versions.map { InstalledPackage(ecosystem: .pypi, name: $0.name, version: $0.version, origin: origin) })
+        var out = Dictionary(uniqueKeysWithValues: Set(versions).map { ($0, Set<String>()) })
+        for chunk in Self.batches(selection.approved.keys.sorted { $0.cacheKey < $1.cacheKey }) {
+            do {
+                let results = try await api.checkBatch(chunk)
+                let byKey = Dictionary(results.map { ("\($0.ecosystem)\u{1F}\($0.name)\u{1F}\($0.version)", $0) }, uniquingKeysWith: { a, _ in a })
+                for p in chunk {
+                    let ids = Set((byKey[p.versionKey]?.flaws ?? []).flatMap { [$0.id] + $0.aliases })
+                    for installed in selection.approved[p] ?? [] { out[PackageVersion(name: installed.name, version: installed.version)] = ids }
+                }
+            } catch {
+                return .failure(FixServerError(error.localizedDescription))
+            }
+        }
+        return .success(out)
+    }
+
+    /// What the fix questions named since the last call: for "What leaves your Mac".
+    public func takeSentRequests() async -> [SentRequest] { await api.takeSentRequests() }
+}

@@ -40,6 +40,10 @@ public enum FixOutcome: Equatable, Sendable {
     case undone(String)
     /// The undo did not finish.
     case undoFailed
+    /// A partial fix ran: now at this version, with this many flaws left (what blocked the rest still blocks them).
+    case partlyFixed(now: String, remain: Int)
+    /// Run on its own after its batch broke something, it broke it again (what), and was put back at once.
+    case putBack(String)
 
     public var text: String {
         switch self {
@@ -61,6 +65,8 @@ public enum FixOutcome: Equatable, Sendable {
         case let .blocked(why): return "Not run: \(why)"
         case let .undone(what): return "Undone — \(what) again"
         case .undoFailed: return "The undo did not finish"
+        case let .partlyFixed(now, remain): return "Partly fixed — now \(now) · " + (remain == 1 ? "1 flaw remains" : "\(remain) flaws remain")
+        case let .putBack(what): return "Put back: it broke \(what)"
         }
     }
 
@@ -72,7 +78,7 @@ public enum FixOutcome: Equatable, Sendable {
     /// Whether this is a problem to show with the log and a way on (Retry, Undo, Terminal).
     public var isProblem: Bool {
         switch self {
-        case .fixed, .fixedCheck, .removed, .undone: return false
+        case .fixed, .fixedCheck, .removed, .undone, .partlyFixed: return false
         default: return true
         }
     }

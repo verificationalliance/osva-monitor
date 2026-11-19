@@ -44,20 +44,27 @@ public struct BatchResponse: Decodable, Sendable {
     /// What upgrading does here: the one version to ask for, what it fixes, and what it cannot.
     public struct Plan: Codable, Sendable, Hashable {
         public struct Remaining: Codable, Sendable, Hashable {
-            public enum Reason: String, Codable, Sendable { case needsPython = "needs-python", otherPlatform = "other-platform", noFix = "no-fix", malicious, unknown }
+            public enum Reason: String, Codable, Sendable {
+                case needsPython = "needs-python", otherPlatform = "other-platform", noFix = "no-fix", malicious, unknown
+                /// Asked within constraints (a dependent's specifier, a runtime boundary): its fix lies outside them.
+                case blockedByConstraint = "blocked-by-constraint"
+            }
             public var id: String
             public var fixedIn: String?
             public var reason: Reason
             /// "Python >=3.10", "Windows".
             public var detail: String?
+            /// For blocked-by-constraint: the constraint, as it was sent, that excludes the fix ("<2.9").
+            public var constraint: String?
 
-            enum CodingKeys: String, CodingKey { case id, reason, detail, fixedIn = "fixed_in" }
+            enum CodingKeys: String, CodingKey { case id, reason, detail, constraint, fixedIn = "fixed_in" }
             public init(from d: Decoder) throws {
                 let c = try d.container(keyedBy: CodingKeys.self)
                 id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? ""
                 fixedIn = try? c.decodeIfPresent(String.self, forKey: .fixedIn)
                 reason = (try? c.decodeIfPresent(String.self, forKey: .reason)).flatMap(Reason.init(rawValue:)) ?? .unknown
                 detail = try? c.decodeIfPresent(String.self, forKey: .detail)
+                constraint = try? c.decodeIfPresent(String.self, forKey: .constraint)
             }
         }
 
@@ -278,8 +285,10 @@ struct BatchRequest: Encodable {
         var version: String
         var python: String?
         var platform: String?
+        /// PEP 440 specifiers the plan's target must satisfy (a partial fix): versions only, never a name.
+        var constraints: [String]? = nil
 
-        enum CodingKeys: String, CodingKey { case ecosystem, name, version, python, platform }
+        enum CodingKeys: String, CodingKey { case ecosystem, name, version, python, platform, constraints }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(ecosystem, forKey: .ecosystem)
@@ -287,6 +296,7 @@ struct BatchRequest: Encodable {
             try c.encode(version, forKey: .version)
             try c.encodeIfPresent(python, forKey: .python)
             try c.encode(platform, forKey: .platform)                 // null is meaningful: "may run anywhere"
+            try c.encodeIfPresent(constraints, forKey: .constraints)
         }
     }
     var packages: [Package]

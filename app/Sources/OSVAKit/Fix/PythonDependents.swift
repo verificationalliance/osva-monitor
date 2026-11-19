@@ -101,6 +101,13 @@ public struct PythonSpecifier: Hashable, Sendable {
         }
     }
 
+    /// Whether two versions are the same release, as PEP 440 orders them ("2.8" is "2.8.0"); false when either cannot be
+    /// read.
+    public static func same(_ a: String, _ b: String) -> Bool {
+        let (x, y) = (plain(a), plain(b))
+        return readable(x) && readable(y) && compare(x, y) == 0
+    }
+
     /// Lowercase, without a leading "v", spaces or local version ("+…" is dropped: PEP 440 ignores it in specifiers).
     static func plain(_ v: String) -> String {
         var s = v.trimmingCharacters(in: .whitespaces).lowercased()

@@ -131,8 +131,8 @@ public enum PreviewData {
         /// The findings shown; the resolved ones are left out of the report and come back through `resolved`.
         public var shown: [String]
 
-        public func report() -> ScanReport { PreviewData.report(findings: PreviewData.fixFindings.filter { shown.contains($0.id) && !resolved.contains($0.id) }) }
-        public var resolvedFindings: [Finding] { PreviewData.fixFindings.filter { resolved.contains($0.id) } }
+        public func report() -> ScanReport { PreviewData.report(findings: PreviewData.sceneFindings.filter { shown.contains($0.id) && !resolved.contains($0.id) }) }
+        public var resolvedFindings: [Finding] { PreviewData.sceneFindings.filter { resolved.contains($0.id) } }
     }
 
     public static let fixSceneNames = ["offer", "confirm", "running", "done", "problems", "results"]

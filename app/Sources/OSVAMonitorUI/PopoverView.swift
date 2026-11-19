@@ -242,6 +242,17 @@ struct QuietCoverageSection: View {
     }
 }
 
+/// What "N need action" is made of, in one short line under it: "2 fixable here · 40 no fix yet · 12 blocked · 19 yours
+/// to decide", so a small "Fix all (2)" beside a large count makes sense at a glance (FixAll.breakdown).
+struct NeedActionBreakdown: View {
+    let line: String
+    var body: some View {
+        Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("Of these: " + line)
+    }
+}
+
 struct HeroView: View {
     let content: PopoverContent
     var fixAll: FixAllPanel = .none
@@ -276,6 +287,7 @@ struct HeroView: View {
                     Text(why).font(Typeface.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
+                if content.heroCount != nil, let line = fixAll.breakdown { NeedActionBreakdown(line: line) }
                 if let advice = content.advice {
                     Text(advice).font(Typeface.body).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                 }

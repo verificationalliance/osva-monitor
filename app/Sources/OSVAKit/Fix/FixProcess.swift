@@ -28,9 +28,13 @@ public struct FixLimits: Equatable, Sendable {
     public var grace: TimeInterval
     /// How much output is kept.
     public var logBytes: Int
+    /// Stopped once it asks for a password (one command, one thing to update). A batch is not: brew goes on past a
+    /// cask whose installer asked (sudo fails at once without a terminal), and the others still update; the run then
+    /// ends as `.needsPassword`, and the check after it says which findings are still there.
+    public var stopsAtPassword: Bool
 
-    public init(timeout: TimeInterval = 15 * 60, grace: TimeInterval = 5, logBytes: Int = 64 * 1024) {
-        self.timeout = timeout; self.grace = grace; self.logBytes = logBytes
+    public init(timeout: TimeInterval = 15 * 60, grace: TimeInterval = 5, logBytes: Int = 64 * 1024, stopsAtPassword: Bool = true) {
+        self.timeout = timeout; self.grace = grace; self.logBytes = logBytes; self.stopsAtPassword = stopsAtPassword
     }
 }
 
@@ -160,7 +164,8 @@ final class FixProcess: FixRunning, @unchecked Sendable {   // every mutable fie
     private func stop(because why: FixEnding) {
         let target: pid_t? = lock.withLock {
             guard !exited, pid > 0 else { return nil }
-            if reason == nil { reason = why; stoppedAt = Date() }
+            // a batch that went on past a password prompt is still stopped as asked
+            if reason == nil || (reason == .needsPassword && stoppedAt == nil && !limits.stopsAtPassword) { reason = why; stoppedAt = Date() }
             return pid
         }
         guard let target else { return }
@@ -213,7 +218,7 @@ final class FixProcess: FixRunning, @unchecked Sendable {   // every mutable fie
                 reason = .needsPassword
                 return true
             }
-            if first {
+            if first && limits.stopsAtPassword {
                 DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in self?.stop(because: .needsPassword) }
             }
         }

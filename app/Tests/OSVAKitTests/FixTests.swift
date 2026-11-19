@@ -271,7 +271,11 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         #expect(HomebrewAvailability.decide(HomebrewInfo(name: "slack", stable: "4.52.0", installed: "4.51.180"), for: cask, fixedVersion: "42.11.16")
             == .available(line: "Has Slack 4.52.0; 4.51.180 is installed. Whether that brings the fix shows when the app checks again."))
         #expect(HomebrewAvailability.decide(HomebrewInfo(name: "slack", stable: "4.51.180", installed: "4.51.180"), for: cask, fixedVersion: "42.11.16")
-            == .unavailable("Homebrew has no newer Slack than 4.51.180, the one installed."))
+            == .unavailable("Newest version installed; no fixed release yet."))
+        // the app's own version decides, not a record left behind by an app that updates itself
+        #expect(HomebrewAvailability.decide(HomebrewInfo(name: "slack", stable: "4.52.0", installed: "4.40.0"), for: cask, fixedVersion: "42.11.16",
+                                            bundleVersion: "4.52.0", electron: "Electron 37.1.0")
+            == .unavailable("Newest version installed; no fixed release yet. It still ships Electron 37.1.0."))
     }
 
     @Test func asksBrewLocallyWithArgvAndNoUpdate() async {

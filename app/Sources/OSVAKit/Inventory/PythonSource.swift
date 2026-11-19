@@ -18,19 +18,21 @@ public struct PythonSource: Sendable {
     /// The interpreters to look at, each real file once: Homebrew's python3 and python3.x, python.org's, a
     /// /usr/local one, and Apple's /usr/bin/python3 (only when the developer tools are present: without them it is
     /// a stub that asks to install them).
+    /// Machine-wide paths, under `ToolEnvironment.systemRoot` ("" in the app; a test's own folder in tests).
     func interpreters() -> [String] {
-        var candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
-        for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        let sys = environment.system
+        var candidates = [sys("/opt/homebrew/bin/python3"), sys("/usr/local/bin/python3")]
+        for dir in [sys("/opt/homebrew/bin"), sys("/usr/local/bin")] {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
             candidates += names.filter { $0.range(of: #"^python3\.[0-9]+$"#, options: .regularExpression) != nil }
                 .sorted { $0.localizedStandardCompare($1) == .orderedDescending }.map { "\(dir)/\($0)" }
         }
-        let frameworks = "/Library/Frameworks/Python.framework/Versions"
+        let frameworks = sys("/Library/Frameworks/Python.framework/Versions")
         let versions = (try? FileManager.default.contentsOfDirectory(atPath: frameworks)) ?? []
         candidates += versions.filter { $0 != "Current" }.sorted().reversed().map { "\(frameworks)/\($0)/bin/python3" }
-        if environment.isExecutable("/Library/Developer/CommandLineTools/usr/bin/python3")
-            || environment.isExecutable("/Applications/Xcode.app/Contents/Developer/usr/bin/python3") {
-            candidates.append("/usr/bin/python3")
+        if environment.isExecutable(sys("/Library/Developer/CommandLineTools/usr/bin/python3"))
+            || environment.isExecutable(sys("/Applications/Xcode.app/Contents/Developer/usr/bin/python3")) {
+            candidates.append(sys("/usr/bin/python3"))
         }
         return environment.distinctExecutables(candidates)
     }

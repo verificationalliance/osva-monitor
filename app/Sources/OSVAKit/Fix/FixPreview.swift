@@ -20,6 +20,11 @@ public struct FixPreview: Equatable, Sendable {
     /// For an upgrade beyond a patch: the installed packages that use what changes ("whisperx", "pyannote.audio"),
     /// for the review's "Used by" line. pip's checks cannot tell whether they still work.
     public var usedBy: [String] = []
+    /// For a set of pip changes (an upgrade together, a batch): what its dry run's report said each would be, the new
+    /// versions' own requirements included, for the end-state check just before it runs.
+    public var report: [PythonDistribution] = []
+    /// The names pip asked PyPI about, when the dry run named more than the finding's own package.
+    public var asks: [String] = []
 
     public init(source: String?, lines: [String], unavailable: String? = nil, installs: [String: String] = [:], blocked: String? = nil,
                 pins: [String] = [], usedBy: [String] = []) {

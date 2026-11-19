@@ -111,7 +111,7 @@ extension PreviewData {
             case let .success(plan):
                 let line = plan.homebrew.map { h -> String in
                     switch HomebrewAvailability.decide(HomebrewInfo(name: h.name, stable: "2.63.0", installed: "2.62.0"), for: h, fixedVersion: f.fixedVersion) {
-                    case let .available(line), let .unavailable(line), let .unknown(line): return line
+                    case let .available(line), let .unavailable(line), let .unknown(line), let .needsPassword(line): return line
                     }
                 }
                 out[f.id] = FixRowState(availability: .offered(FixOffer(plan: plan, homebrew: line)))

@@ -130,11 +130,29 @@ import OSVAKit
                           "FixButton", "FixConfirmation", "FixStatusLine", "FixRunCard", "FixProblemCard", "FixLogView", "FixStepLine",
                           "FixElapsed", "SiteLink", "RowHover", "ProvenanceView", "FactRow", "NameListView", "NameRow",
                           "ListDisclosureRow", "QuietCoverageSection", "AppIcon", "PanelCard", "WhatsNewCard", "ChangelogLines",
-                          "WhatsNewSection", "FixAllCard", "FixAllReview", "FixAllStepLine", "FixAllSkipLine", "FixAllProgress",
-                          "FixAllSummary", "FixNotice", "FixDisclosure", "ConsentView"] {
+                          "WhatsNewSection", "FixAllCard", "FixAllReview", "FixAllBatchLine", "FixAllSkipLine", "FixAllProgress",
+                          "FixAllSummary", "FixNotice", "FixDisclosure", "ConsentView", "FixAllProposalLine", "FixAllNeedLine",
+                          "TerminalButton", "NeedActionBreakdown"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
+    }
+
+    /// Run in Terminal is one button (TerminalButton) wherever it appears: a row whose cask needs a password, a run that
+    /// asked for one, Fix all's summary. The header's breakdown is one view (NeedActionBreakdown), and a proposal's
+    /// tick is drawn only by FixAllProposalLine, with the review's own symbols.
+    @Test func sharedControlsAreDrawnByTheirComponents() {
+        for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") {
+            let code = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+            let terminal = code.components(separatedBy: "Text(\"Run in Terminal\")").count - 1
+            #expect(terminal == (file == "FixViews.swift" ? 1 : 0), "\(file) draws its own Run in Terminal")
+            let breakdown = code.components(separatedBy: "fixAll.breakdown").count - 1
+            #expect(breakdown == (file == "PopoverView.swift" ? 1 : 0), "\(file) draws the breakdown itself")
+            #expect(!code.contains("toggleStyle(") && !code.contains(" Toggle(") || file == "SettingsView.swift" || file == "ConsentView.swift",
+                    "\(file) has a toggle of its own")
+        }
+        let views = Self.sources("OSVAMonitorUI").first { $0.0 == "FixAllViews.swift" }!.1
+        #expect(views.contains("struct FixAllProposalLine") && views.components(separatedBy: "checkmark.circle.fill\" : \"circle\"").count - 1 == 1)
     }
 
     /// A container on the panel is a PanelCard: the groups, the quiet lists, a waiting update, What's New, Fix all, the
