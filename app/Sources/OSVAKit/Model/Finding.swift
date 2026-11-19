@@ -107,6 +107,10 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         case package(ecosystem: Ecosystem, name: String)
         /// A project our site grades (matched from Homebrew), checked against its recent advisories.
         case project(slug: String, name: String, installedAs: String)
+        /// An app or a library bundled in one, checked against its product record's recent advisories.
+        case product(key: String, name: String)
+        /// An editor or browser extension its store reported as malicious.
+        case addOn(store: String, id: String)
     }
 
     public var id: String
@@ -162,6 +166,7 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         if case let .project(_, _, installedAs) = subject, let first = origins.first, first.kind == .homebrew {
             return "\(first.label) \(installedAs)"
         }
+        if let profiles = Origin.profilesSummary(origins) { return profiles }
         var seen = Set<String>(), labels: [String] = []
         for o in origins where seen.insert(o.location).inserted { labels.append(o.location) }
         let shown = labels.prefix(3).joined(separator: ", ")

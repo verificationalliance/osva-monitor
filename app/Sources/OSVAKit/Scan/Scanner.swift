@@ -68,7 +68,11 @@ public actor Scanner {
         let brew = inventory.homebrew.compactMap { item in
             ProjectMatcher.project(for: item, in: index).map { FindingBuilder.BrewMatch(item: item, project: $0) }
         }
-        let approvedProjects = filter.approve(projects: brew.map(\.project.slug))
+        // Apps, the libraries they bundle, and extensions are matched to the index here, on this Mac (BundleCheck).
+        progress("Reading apps and extensions…")
+        let bundles = BundleCheck.match(inventory, index: index)
+        let approvedProducts = filter.approve(products: bundles.productKeys)
+        let approvedProjects = filter.approve(projects: brew.map(\.project.slug) + bundles.projectSlugs)
         let allowed = Set(approvedProjects.map(\.slug))
         let brewChecked = brew.filter { allowed.contains($0.project.slug) }
         var fromCache = 0
@@ -120,6 +124,11 @@ public actor Scanner {
             }
         }
 
+        // 5b. Product records of the apps and bundled libraries the index lists.
+        let products = await BundleCheck.records(approvedProducts, api: api, cache: cache, maxAge: Freshness.project, progress: progress)
+        problems += products.problems
+        fromCache += products.fromCache
+
         // 6. The site's "patch these first" list.
         var bigIssues: [StateResponse.BigIssue] = []
         if let cached = cache.readJSON(StateResponse.self, "state", "state", maxAge: Freshness.state) {
@@ -135,11 +144,14 @@ public actor Scanner {
         }
 
         // 7. Findings, and what could not be vouched for.
-        let findings = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
-                                                             brew: brewChecked, projects: projects, bigIssues: bigIssues)
+        let findings = FindingOrder.sorted(FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
+                                                                                 brew: brewChecked, projects: projects, bigIssues: bigIssues)
+                                           + bundles.findings(products: products.records, projects: projects))
         let checkedBrew = Set(brewChecked.map(\.item))
-        let coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
-                                     otherApps: inventory.otherApps)
+        let accounted = bundles.accountedApps(products: products.records)
+        var coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
+                                     otherApps: inventory.otherApps.filter { !accounted.contains($0) })
+        coverage.notChecked += bundles.notChecked(products: products.records, projects: projects)
         let sent = SentRecord(requests: await api.takeSentRequests(),
                               withheldCount: selection.withheld.count + (inventory.homebrew.count - brewChecked.count),
                               answeredFromCache: fromCache)
@@ -176,7 +188,7 @@ public actor Scanner {
             notChecked.append(.init(source: "Homebrew packages with no graded project",
                                     items: unmatchedBrew.map { "\($0.name) \($0.version)" }.sorted()))
         }
-        if !otherApps.isEmpty { notChecked.append(.init(source: "Apps that do not bundle Electron", items: otherApps)) }
+        if !otherApps.isEmpty { notChecked.append(.init(source: "Apps with no product record", items: otherApps)) }
         let uncheckable = withheld.filter { !checkable($0) }
         if !uncheckable.isEmpty {
             notChecked.append(.init(source: "Packages the site cannot check", items: Array(Set(uncheckable.map(describe))).sorted()))
@@ -201,11 +213,17 @@ public actor Scanner {
         async let gem = kinds.contains(.gem) ? await globals.gem() : nil
         async let apps = kinds.contains(.electron) ? ElectronSource(roots: roots, caskForApp: casks).collect() : nil
         async let lockfiles = kinds.contains(.folders) ? FolderSource(roots: folders).collect() : nil
+        async let installedApps = kinds.contains(.apps) ? AppSource(roots: roots, caskForApp: casks).collect() : nil
+        async let addOns = kinds.contains(.extensions) ? ExtensionSource(home: tools.home).collect() : nil
         let cargo = kinds.contains(.cargo) ? globals.cargo() : nil
         let electron = await apps
         inventory.otherApps = electron?.otherApps ?? []
         let appPackages = electron.map { (packages: $0.packages, report: $0.report) }
-        for r in [appPackages, await npm, await pip, cargo, await gem, await lockfiles].compactMap({ $0 }) {
+        if let a = await installedApps { inventory.apps = a.apps; inventory.reports.append(a.report) }
+        let extensions = await addOns
+        inventory.extensions = extensions?.extensions ?? []
+        let extensionPackages = extensions.map { (packages: $0.packages, report: $0.report) }
+        for r in [appPackages, extensionPackages, await npm, await pip, cargo, await gem, await lockfiles].compactMap({ $0 }) {
             inventory.packages += r.packages
             inventory.reports.append(r.report)
         }

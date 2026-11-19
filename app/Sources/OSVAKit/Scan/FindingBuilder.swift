@@ -55,9 +55,11 @@ public struct FindingBuilder: Sendable {
             }
             let page = SiteURL.packagePage(package.ecosystem, package.name, version: package.version)
 
-            // An app that bundles Electron is its own finding (it is updated on its own); other copies share one.
+            // An app that bundles Electron is its own finding (it is updated on its own), and so is an extension that
+            // bundles the package; other copies share one.
             let apps = installs.filter { $0.origin.kind == .electron }
-            let others = installs.filter { $0.origin.kind != .electron }
+            let extensions = installs.filter { $0.origin.kind == .extensions }
+            let others = installs.filter { $0.origin.kind != .electron && $0.origin.kind != .extensions }
             func finding(id: String, title: String, component: String?, origins: [Origin], spelledAs: String) -> Finding {
                 let advice = UpgradeCommand.advice(for: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: target, malicious: malicious)
                 let note = malicious ? "Remove it, then rotate every secret it could read."
@@ -74,6 +76,10 @@ public struct FindingBuilder: Sendable {
             for app in apps {
                 guard case let .electronApp(name, path, _) = app.origin else { continue }
                 out.append(finding(id: "app|\(path)|\(package.version)", title: name, component: "Electron", origins: [app.origin], spelledAs: app.name))
+            }
+            for e in extensions {
+                guard case let .addOn(_, _, name, _, path) = e.origin else { continue }
+                out.append(finding(id: "ext|\(path)|\(package.name)|\(package.version)", title: name, component: e.name, origins: [e.origin], spelledAs: e.name))
             }
             if !others.isEmpty {
                 var seen = Set<Origin>()

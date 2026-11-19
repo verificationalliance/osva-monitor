@@ -1,0 +1,23 @@
+M	vscode	Evil-Pub.Prettier-VSCode	malware: sends SSH keys and tokens to a remote host	https://example.org/reports/prettier-clone
+M	openvsx	ms-python.python	impersonates the Python extension	https://open-vsx.org/extension/ms-python/python
+M	chrome	abcdefghijklmnopabcdefghijklmnop	removed by the store: malware	https://example.org/reports/chrome
+M	firefox	{8A3F5B2E-1111-4C7A-9E0D-123456789ABC}	malware	http://insecure.example.org/report
+M	chrome	not-a-chrome-id	dropped: not 32 letters a to p
+M	safari	x.y	dropped: a store the app does not know
+A	us.zoom.xos	zoom	Zoom
+A	com.tinyspeck.slackmacgap	slack	Slack
+A	com.example.buildnumber	buildnum	Build Number	CFBundleVersion
+A	com.example.bad	../../etc	dropped: not a slug
+A	has space	x	dropped: not a bundle identifier
+C	framework	Sparkle.framework	sparkle	Sparkle
+C	framework	QtCore.framework	qt	Qt
+C	framework	Chromium Embedded Framework.framework	cef	CEF
+C	dylib	libssl	openssl	OpenSSL
+C	dylib	libcrypto	openssl	OpenSSL
+C	dylib	libavcodec	ffmpeg	FFmpeg
+C	jre	java	openjdk	Java
+C	python	Python.framework	cpython	Python
+C	framework	../evil.framework	x	dropped: a path
+C	framework	NotAFramework	x	dropped: not a .framework
+C	gadget	foo	x	dropped: a kind the app does not know
+Z	a future record

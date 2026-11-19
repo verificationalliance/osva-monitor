@@ -1,0 +1,7 @@
+{"key": "zoom", "name": "Zoom Workplace", "kind": "app", "vendor": "Zoom Communications", "open_source": false,
+ "source": "https://www.zoom.com/en/trust/security-bulletin/", "as_of": "2026-11-18",
+ "recent": [
+  {"id": "ZSB-26031", "date": "2026-11-10", "sev": "HIGH", "title": "Improper privilege management in Zoom Workplace for macOS", "fixed_hint": ["6.6.12"], "kev": false, "cve": "CVE-2026-40112"},
+  {"id": "ZSB-26020", "date": "2026-09-02", "sev": "CRITICAL", "title": "Buffer overflow in the meeting client", "fixed_hint": ["6.5.9"], "kev": true, "cve": "CVE-2026-31001"},
+  {"id": "ZSB-26011", "date": "2026-06-01", "sev": "MODERATE", "title": "Information disclosure", "fixed_hint": ["6.7.0"], "kev": false}
+ ]}
