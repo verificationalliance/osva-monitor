@@ -128,6 +128,15 @@ public struct InstalledExtension: Hashable, Codable, Sendable {
     public var maliciousKey: String { ProductIndex.maliciousKey(store: host.store, id: id) }
 }
 
+/// Who keeps an app up to date when nothing here checks it. Each is confirmed, not taken from what the app says
+/// about itself: an App Store receipt only with the Mac App Store's signature, Apple's own apps only with Apple's.
+public enum AppKeeper: Hashable, Codable, Sendable {
+    case appStore
+    case macOS
+    /// A website a Chromium browser installed as an app ("Chrome", "Edge"): the browser showing the site.
+    case browser(String)
+}
+
 /// An app bundle in /Applications or ~/Applications, as its Info.plist describes it. Stays on this Mac: bundle
 /// identifiers and paths are never sent; only a product key the public index itself lists can be.
 public struct InstalledApp: Hashable, Codable, Sendable {
@@ -141,11 +150,19 @@ public struct InstalledApp: Hashable, Codable, Sendable {
     public var bundleVersion: String?
     /// The Homebrew cask that installed it, if one did.
     public var caskToken: String?
+    /// The App Store, macOS or a browser, when one of them keeps it up to date.
+    public var keeper: AppKeeper?
+    /// A web app's own name ("YouTube Music"), where its file is named by profile and ID ("Default beimhn…").
+    public var displayName: String?
 
-    public init(name: String, path: String, bundleID: String?, shortVersion: String?, bundleVersion: String?, caskToken: String?) {
+    public init(name: String, path: String, bundleID: String?, shortVersion: String?, bundleVersion: String?, caskToken: String?,
+                keeper: AppKeeper? = nil, displayName: String? = nil) {
         self.name = name; self.path = path; self.bundleID = bundleID; self.shortVersion = shortVersion
-        self.bundleVersion = bundleVersion; self.caskToken = caskToken
+        self.bundleVersion = bundleVersion; self.caskToken = caskToken; self.keeper = keeper; self.displayName = displayName
     }
+
+    /// The name to list it by: a web app's own, else the one Finder shows.
+    public var shownName: String { displayName ?? name }
 
     public var origin: Origin { .application(name: name, bundlePath: path, caskToken: caskToken) }
 }

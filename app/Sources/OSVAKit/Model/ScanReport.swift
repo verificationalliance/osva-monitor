@@ -67,8 +67,13 @@ public struct Coverage: Codable, Sendable, Hashable {
     public struct Bucket: Codable, Sendable, Hashable, Identifiable {
         public var source: String
         public var items: [String]
+        /// For a list of apps (or of what apps bundle), each item's app bundle, in the same order, for its icon ("" when
+        /// not known).
+        public var paths: [String]?
         public var id: String { source }
-        public init(source: String, items: [String]) { self.source = source; self.items = items }
+        public init(source: String, items: [String], paths: [String]? = nil) {
+            self.source = source; self.items = items; self.paths = paths.flatMap { $0.count == items.count ? $0 : nil }
+        }
     }
 
     /// Checkable packages that are not in the public index: nothing has ever been reported about them. That is no
@@ -77,11 +82,24 @@ public struct Coverage: Codable, Sendable, Hashable {
     /// What the app cannot classify at all: Homebrew packages with no graded project, apps that do not
     /// bundle Electron, packages of registries the site does not check.
     public var notChecked: [Bucket] = []
+    /// Apps something else keeps up to date (the App Store, macOS, the browser a web app runs in). Not checked here
+    /// either, and said so; listed apart from the apps nobody is known to look after.
+    public var updatedElsewhere: [Bucket] = []
 
-    public init(notInIndex: [Bucket] = [], notChecked: [Bucket] = []) { self.notInIndex = notInIndex; self.notChecked = notChecked }
+    public init(notInIndex: [Bucket] = [], notChecked: [Bucket] = [], updatedElsewhere: [Bucket] = []) {
+        self.notInIndex = notInIndex; self.notChecked = notChecked; self.updatedElsewhere = updatedElsewhere
+    }
+
+    public init(from decoder: Decoder) throws {                  // reports saved before apps were told apart
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        notInIndex = try c.decodeIfPresent([Bucket].self, forKey: .notInIndex) ?? []
+        notChecked = try c.decodeIfPresent([Bucket].self, forKey: .notChecked) ?? []
+        updatedElsewhere = try c.decodeIfPresent([Bucket].self, forKey: .updatedElsewhere) ?? []
+    }
 
     public var notInIndexCount: Int { notInIndex.reduce(0) { $0 + $1.items.count } }
     public var notCheckedCount: Int { notChecked.reduce(0) { $0 + $1.items.count } }
+    public var updatedElsewhereCount: Int { updatedElsewhere.reduce(0) { $0 + $1.items.count } }
 }
 
 /// The result of one scan, kept on disk so the popover has something to show at launch.

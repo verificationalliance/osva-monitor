@@ -149,9 +149,11 @@ public actor Scanner {
                                            + bundles.findings(products: products.records, projects: projects))
         let checkedBrew = Set(brewChecked.map(\.item))
         let accounted = bundles.accountedApps(products: products.records)
+        let apps = AppCoverage.buckets(inventory.otherApps.filter { !accounted.contains($0) }, apps: inventory.apps)
         var coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
-                                     otherApps: inventory.otherApps.filter { !accounted.contains($0) })
+                                     apps: apps.notChecked)
         coverage.notChecked += bundles.notChecked(products: products.records, projects: projects)
+        coverage.updatedElsewhere = apps.updatedElsewhere
         let withheld = Self.withheld(selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) })
         let sent = SentRecord(requests: await api.takeSentRequests(), withheldCount: withheld.reduce(0) { $0 + $1.items.count },
                               answeredFromCache: fromCache.count, cached: fromCache, withheld: withheld)
@@ -270,7 +272,7 @@ public actor Scanner {
     }
 
     /// Not in the index (nothing ever reported: no known problem, not proof of safety) versus not checked at all.
-    static func coverage(withheld: [InstalledPackage], unmatchedBrew: [HomebrewItem], otherApps: [String]) -> Coverage {
+    static func coverage(withheld: [InstalledPackage], unmatchedBrew: [HomebrewItem], apps: Coverage.Bucket?) -> Coverage {
         func describe(_ p: InstalledPackage) -> String { "\(p.name) \(p.version)" }
         func checkable(_ p: InstalledPackage) -> Bool { Ecosystem.checkable.contains(p.ecosystem) && PackageNames.isPlausibleVersion(p.version) }
         let bySource = Dictionary(grouping: withheld.filter(checkable)) { $0.origin.kind }
@@ -283,7 +285,7 @@ public actor Scanner {
             notChecked.append(.init(source: "Homebrew packages with no graded project",
                                     items: unmatchedBrew.map { "\($0.name) \($0.version)" }.sorted()))
         }
-        if !otherApps.isEmpty { notChecked.append(.init(source: "Apps with no product record", items: otherApps)) }
+        if let apps, !apps.items.isEmpty { notChecked.append(apps) }
         let uncheckable = withheld.filter { !checkable($0) }
         if !uncheckable.isEmpty {
             notChecked.append(.init(source: "Packages the site cannot check", items: Array(Set(uncheckable.map(describe))).sorted()))

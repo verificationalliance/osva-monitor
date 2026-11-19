@@ -63,8 +63,9 @@ import Testing
         #expect(python.grade == nil && python.verification == .none)              // CPython's grade is not the app's
 
         // what could not be checked is said
-        #expect(check.notChecked(products: Self.products, projects: ["cpython": Make.cpython])
-                == [Coverage.Bucket(source: "Bundled libraries with no readable version", items: ["Sparkle in Unreadable"])])
+        let unread = check.notChecked(products: Self.products, projects: ["cpython": Make.cpython])
+        #expect(unread.map(\.source) == ["Bundled libraries with no readable version"] && unread[0].items == ["Sparkle in Unreadable"])
+        #expect(unread[0].paths?.first?.hasSuffix("/Unreadable.app") == true)                      // the app it is in, for its icon
         #expect(check.accountedApps(products: Self.products) == ["zoom.us"])
         // without the product records (offline, or the server has none), nothing is claimed and all of it is listed
         let none = check.notChecked(products: [:], projects: [:])
@@ -87,8 +88,8 @@ import Testing
         // FFmpeg's releases: 60.23.100 is not comparable with 7.1.1; said, not counted as fine
         let releases = ["ffmpeg": record(["7.1.1", "6.1.3"])]
         #expect(check.findings(products: releases, projects: [:]).isEmpty)
-        #expect(check.notChecked(products: releases, projects: [:]) == [Coverage.Bucket(source: "Bundled libraries numbered unlike their advisories",
-                                                                                          items: ["libavcodec 60.23.100 in Cutter"])])
+        #expect(check.notChecked(products: releases, projects: [:]).map { "\($0.source): \($0.items)" }
+                == ["Bundled libraries numbered unlike their advisories: [\"libavcodec 60.23.100 in Cutter\"]"])
         // a record numbered by libavcodec's own versions is compared
         let own = ["ffmpeg": record(["60.31.102"])]
         #expect(check.findings(products: own, projects: [:]).map(\.versionLabel) == ["libavcodec 60.23.100 → 60.31.102"])
@@ -243,7 +244,7 @@ import Testing
             }
         }
         // and what was not vouched for is said
-        #expect(report.coverage.notChecked.contains(Coverage.Bucket(source: "Apps with no product record", items: ["Secret Internal Tool"])))
+        #expect(report.coverage.notChecked.first { $0.source == AppCoverage.noRecord }?.items == ["Secret Internal Tool"])
         #expect(report.coverage.notInIndex.contains(Coverage.Bucket(source: "Extensions", items: ["our-internal-ui 3.0.0"])))
 
         // A second scan right away answers from the cache and sends nothing new.
@@ -264,7 +265,7 @@ import Testing
                               transport: transport, pause: { _ in })
         let report = await scanner.scan()
         #expect(report.problems.isEmpty && report.findings.isEmpty)
-        #expect(report.coverage.notChecked.contains(Coverage.Bucket(source: "Apps with no product record", items: ["Slack"])))
+        #expect(report.coverage.notChecked.first { $0.source == AppCoverage.noRecord }?.items == ["Slack"])
         _ = await scanner.scan(previous: report)
         #expect(transport.requests.filter { $0.url!.path.hasPrefix("/api/v1/product/") }.count == 1)    // the "no record" is remembered
     }
@@ -303,6 +304,13 @@ import Testing
         let extHome = env["OSVA_PROBE_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? home
         var ext: (extensions: [InstalledExtension], packages: [InstalledPackage], report: SourceReport)!
         let tExt = clock.measure { ext = ExtensionSource(home: extHome).collect() }
+        for a in apps.apps where a.bundleID?.hasPrefix("com.apple.") == true || a.keeper != nil { print("PROBE keeper \(a.name) \(a.bundleID ?? "-") \(String(describing: a.keeper))") }
+        let electron = ElectronSource(roots: roots).collect()
+        print("PROBE other apps \(electron.otherApps.count), Safari among them: \(electron.otherApps.contains("Safari"))")
+        let split = AppCoverage.buckets(electron.otherApps, apps: apps.apps)
+        for b in [split.notChecked].compactMap({ $0 }) + split.updatedElsewhere {
+            print("PROBE bucket \(b.source): \(b.items.count) · \(b.items.joined(separator: " | "))")
+        }
         print("PROBE apps: \(apps.apps.count) in \(tApps); electron pass \(tElectron); match + components: \(tMatch); extensions: \(ext.extensions.count) (\(ext.packages.count) packages) in \(tExt) · \(ext.report.detail)")
         var lines = ""
         for i in 0..<5000 { lines += "M\tchrome\t\(String(repeating: "abcdefghijklmnop", count: 2).shuffled().prefix(32).map(String.init).joined())\tmalware \(i)\t\n" }

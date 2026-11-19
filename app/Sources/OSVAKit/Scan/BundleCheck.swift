@@ -209,33 +209,37 @@ public struct BundleCheck: Sendable {
     // MARK: What was not checked
 
     /// Apps this check accounts for, by name: checked against their product record, or listed under "no readable
-    /// version". The rest of the apps that do not bundle Electron are "Apps with no product record".
+    /// version". The rest of the apps that do not bundle Electron are sorted by AppCoverage.
     public func accountedApps(products: [String: ProductResponse]) -> Set<String> {
         Set(apps.filter { $0.version == nil || products[$0.record.product] != nil }.map(\.app.name))
     }
 
     public func notChecked(products: [String: ProductResponse], projects: [String: ProjectResponse]) -> [Coverage.Bucket] {
-        var unreadable: [String] = [], noRecord: [String] = [], appVersions: [String] = [], otherNumbering: [String] = []
-        for m in apps where m.version == nil { appVersions.append(m.app.name) }
+        typealias Item = (text: String, app: String)
+        var unreadable: [Item] = [], noRecord: [Item] = [], appVersions: [Item] = [], otherNumbering: [Item] = []
+        for m in apps where m.version == nil { appVersions.append((m.app.name, m.app.path)) }
         for c in components {
             if let v = c.found.version {
                 let recent = c.project.map { projects[$0]?.recent } ?? products[c.found.record.product]?.recent
                 if let recent {
-                    if !Self.comparable(c.found, v, recent) { otherNumbering.append("\(c.found.label) \(v) in \(c.app.name)") }
+                    if !Self.comparable(c.found, v, recent) { otherNumbering.append(("\(c.found.label) \(v) in \(c.app.name)", c.app.path)) }
                 } else {
-                    noRecord.append("\(c.found.label) \(v) in \(c.app.name)")
+                    noRecord.append(("\(c.found.label) \(v) in \(c.app.name)", c.app.path))
                 }
             } else {
-                unreadable.append("\(c.found.label) in \(c.app.name)")
+                unreadable.append(("\(c.found.label) in \(c.app.name)", c.app.path))
             }
         }
-        func unique(_ items: [String]) -> [String] {
-            Array(Set(items)).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        /// Each line once, sorted, with the bundle of the app it is in (for its icon).
+        func bucket(_ title: String, _ items: [Item]) -> Coverage.Bucket {
+            var seen = Set<String>()
+            let unique = items.filter { seen.insert($0.text).inserted }.sorted { $0.text.localizedCaseInsensitiveCompare($1.text) == .orderedAscending }
+            return Coverage.Bucket(source: title, items: unique.map(\.text), paths: unique.map(\.app))
         }
-        return [Coverage.Bucket(source: "Apps with no readable version", items: unique(appVersions)),
-                Coverage.Bucket(source: "Bundled libraries with no readable version", items: unique(unreadable)),
-                Coverage.Bucket(source: "Bundled libraries with no product record", items: unique(noRecord)),
-                Coverage.Bucket(source: "Bundled libraries numbered unlike their advisories", items: unique(otherNumbering))].filter { !$0.items.isEmpty }
+        return [bucket("Apps with no readable version", appVersions),
+                bucket("Bundled libraries with no readable version", unreadable),
+                bucket("Bundled libraries with no product record", noRecord),
+                bucket("Bundled libraries numbered unlike their advisories", otherNumbering)].filter { !$0.items.isEmpty }
     }
 
     // MARK: Asking (only approved product keys)

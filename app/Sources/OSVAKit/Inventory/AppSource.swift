@@ -12,23 +12,37 @@ public struct AppSource: Sendable {
     public init(roots: [URL], caskForApp: [String: String] = [:]) { self.roots = roots; self.caskForApp = caskForApp }
 
     public func collect() -> (apps: [InstalledApp], report: SourceReport) {
-        var apps: [InstalledApp] = [], seen = Set<String>()
+        var bundles: [URL] = [], seen = Set<String>()
         for bundle in ElectronSource(roots: roots).appBundles().prefix(Self.maxApps) {
             // The same app reached twice (a link in ~/Applications to /Applications) is one app.
-            guard seen.insert(Paths.realPath(bundle.path)).inserted else { continue }
-            apps.append(Self.read(bundle, cask: caskForApp[bundle.lastPathComponent]))
+            if seen.insert(Paths.realPath(bundle.path)).inserted { bundles.append(bundle) }
         }
+        // Side by side: an App Store app's signature takes a few milliseconds to check.
+        let slots = Slots(count: bundles.count), casks = caskForApp
+        DispatchQueue.concurrentPerform(iterations: bundles.count) { i in
+            slots.set(i, Self.read(bundles[i], cask: casks[bundles[i].lastPathComponent]))
+        }
+        var apps = (0..<bundles.count).compactMap { slots.get($0) }
         apps.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return (apps, SourceReport(kind: .apps, available: true, count: apps.count, detail: apps.count == 1 ? "1 app" : "\(apps.count) apps"))
+    }
+
+    private final class Slots: @unchecked Sendable {      // each slot is written once, by one iteration, under the lock
+        private let lock = NSLock()
+        private var slots: [InstalledApp?]
+        init(count: Int) { slots = Array(repeating: nil, count: count) }
+        func set(_ i: Int, _ v: InstalledApp) { lock.withLock { slots[i] = v } }
+        func get(_ i: Int) -> InstalledApp? { lock.withLock { slots[i] } }
     }
 
     /// One app bundle. An unreadable or garbage Info.plist leaves only the name.
     public static func read(_ bundle: URL, cask: String? = nil) -> InstalledApp {
         let plist = Documents.plist(bundle.appendingPathComponent("Contents/Info.plist"), limit: maxInfoPlist) ?? [:]
-        return InstalledApp(name: bundle.deletingPathExtension().lastPathComponent, path: bundle.path,
-                            bundleID: Documents.string(plist, "CFBundleIdentifier", max: 255).flatMap(ProductIndex.bundleID),
+        let bundleID = Documents.string(plist, "CFBundleIdentifier", max: 255).flatMap(ProductIndex.bundleID)
+        let kept = AppKeepers.keeper(of: bundle, plist: plist, bundleID: bundleID)
+        return InstalledApp(name: bundle.deletingPathExtension().lastPathComponent, path: bundle.path, bundleID: bundleID,
                             shortVersion: Documents.string(plist, "CFBundleShortVersionString"),
-                            bundleVersion: Documents.string(plist, "CFBundleVersion"), caskToken: cask)
+                            bundleVersion: Documents.string(plist, "CFBundleVersion"), caskToken: cask, keeper: kept.keeper, displayName: kept.name)
     }
 }
 
