@@ -7,7 +7,8 @@ import SwiftUI
 /// the Settings window), captures each, composited by the window server with its Liquid Glass, in light and dark
 /// appearance, writes `<view>-<appearance>.png` into <dir>, and quits.
 ///
-/// With --fixtures it shows the render fixtures instead of the last scan. Either way it does not scan, send anything,
+/// With --fixtures it shows the render fixtures instead of the last scan; --only <id>[,<id>…] keeps just those findings,
+/// opened (for a close-up of one fix plan). Either way it does not scan, send anything,
 /// ask for notification permission, or write anything but the PNGs. It captures only its own windows, which macOS
 /// allows without Screen Recording permission.
 @MainActor
@@ -16,6 +17,8 @@ struct CaptureMode {
     let fixtures: Bool
     /// How long to wait for someone to click the shield before falling back to the replica (`--wait <seconds>`).
     let waitSeconds: Int
+    /// Finding ids to keep, opened (`--only`); empty keeps them all with the malicious one opened.
+    let only: [String]
 
     /// The popover's openSettings action, registered when the popover appears.
     static var openSettings: OpenSettingsAction?
@@ -29,14 +32,20 @@ struct CaptureMode {
         } else {
             waitSeconds = 90
         }
+        if let o = arguments.firstIndex(of: "--only"), o + 1 < arguments.count {
+            only = arguments[o + 1].split(separator: ",").map(String.init)
+        } else {
+            only = []
+        }
     }
 
     func run(model: AppModel) {
-        let full = fixtures ? PreviewData.report() : model.report
+        var full = fixtures ? PreviewData.report() : model.report
+        if !only.isEmpty { full = full.map { r in var c = r; c.findings = r.findings.filter { only.contains($0.id) }; return c } }
         let clean = fixtures ? PreviewData.report(findings: []) : model.report.map { r in var c = r; c.findings = []; return c }
         let fixtureSettings = fixtures ? MonitorSettings(watchedFolders: PreviewData.settings().folders) : model.settings
         model.showFixtures(full, settings: fixtureSettings)
-        model.initiallyExpanded = ["pkg|npm|axios|1.14.1"]
+        model.initiallyExpanded = only.isEmpty ? ["pkg|npm|axios|1.14.1"] : Set(only)
         Task { @MainActor in
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
