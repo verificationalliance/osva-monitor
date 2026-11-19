@@ -211,11 +211,7 @@ struct QuietCoverageSection: View {
                         ListDisclosureRow(list, open: rowsOpen.contains(list.id), openList: openList)
                     }
                 }
-                .background {
-                    let shape = ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true)
-                    shape.fill(Surface.card.color).overlay(shape.stroke(Surface.edge.color, lineWidth: 2))
-                }
-                .clipShape(ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+                .panelCard()
             }
         }
     }

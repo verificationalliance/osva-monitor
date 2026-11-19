@@ -53,7 +53,7 @@ struct UpdateWaitingRow: View {
             .font(Typeface.small)
             .padding(.horizontal, 12).padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Surface.card.color, in: ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true))
+            .panelCard()
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

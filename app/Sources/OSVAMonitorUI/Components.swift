@@ -163,8 +163,8 @@ extension Finding.Group {
     public var heading: String { title }
 }
 
-/// A group: a title-case heading (glyph, name, count), then its rows in one content container on `Surface.card` with a
-/// hairline edge, separated by dividers. The malicious group is the one container with a clay wash and hairline.
+/// A group: a title-case heading (glyph, name, count), then its rows in one PanelCard, separated by dividers. The
+/// malicious group is the one container with a clay wash and hairline.
 public struct GroupContainer<Content: View>: View {
     public enum Heading: Equatable, Sendable {
         case findings(Finding.Group)
@@ -195,8 +195,7 @@ public struct GroupContainer<Content: View>: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) { content }
-                .background { surface }
-                .clipShape(shape)
+                .panelCard(heading == .findings(.malicious) ? .malicious : .plain)
         }
     }
 
@@ -207,17 +206,6 @@ public struct GroupContainer<Content: View>: View {
     /// The number beside the heading: what still needs action. None when every row it shows was fixed or removed and
     /// stays only until the next scan ("Malicious 0" above a removed row reads as a contradiction).
     static func countText(_ count: Int) -> String? { count > 0 ? count.formatted() : nil }
-
-    private var shape: some Shape { ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true) }
-
-    @ViewBuilder private var surface: some View {
-        if heading == .findings(.malicious) {
-            // a 2 pt stroke, half of it clipped away by the container's own shape: a 1 pt hairline inside the edge
-            shape.fill(Tokens.Malicious.wash.color).overlay(shape.stroke(Tokens.Malicious.hairline.color, lineWidth: 2))
-        } else {
-            shape.fill(Surface.card.color).overlay(shape.stroke(Surface.edge.color, lineWidth: 2))
-        }
-    }
 
     @ViewBuilder private var glyph: some View {
         switch heading {
@@ -436,8 +424,29 @@ extension EnvironmentValues {
     @Entry public var showsHover = false
 }
 
+/// The panel's one container: `Surface.card` with a hairline edge, in corners concentric with the panel's own. The
+/// groups of findings, the quiet coverage lists and a waiting update each sit in one, so restyling it reaches all of
+/// them. The malicious group's is the one with a clay wash and hairline.
+struct PanelCard: ViewModifier {
+    enum Kind: Sendable { case plain, malicious }
+    var kind: Kind
+
+    static var shape: ConcentricRectangle { ConcentricRectangle(corners: .concentric(minimum: 12), isUniform: true) }
+
+    func body(content: Content) -> some View {
+        let (wash, edge) = kind == .malicious ? (Tokens.Malicious.wash, Tokens.Malicious.hairline) : (Surface.card, Surface.edge)
+        // a 2 pt stroke, half of it clipped away by the card's own shape: a 1 pt hairline inside the edge
+        content
+            .background { Self.shape.fill(wash.color).overlay(Self.shape.stroke(edge.color, lineWidth: 2)) }
+            .clipShape(Self.shape)
+    }
+}
+
 extension View {
     func rowHover(_ hovering: Binding<Bool>? = nil) -> some View { modifier(RowHover(hovering: hovering)) }
+
+    /// A container on the panel (PanelCard).
+    func panelCard(_ kind: PanelCard.Kind = .plain) -> some View { modifier(PanelCard(kind: kind)) }
 
     /// A well set into its surface (a command, a log, a fix's card): `Surface.well` with a hairline, so it keeps its
     /// edge where the well and what is around it are both near white.
