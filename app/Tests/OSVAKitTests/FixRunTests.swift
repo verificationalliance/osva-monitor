@@ -300,9 +300,10 @@ final class UpdateRecorder: @unchecked Sendable {
         let pids = dir.appendingPathComponent("pids")
         let marker = dir.appendingPathComponent("child-got-term")
         let ready = dir.appendingPathComponent("child-ready")
-        // a child that cleans up on SIGTERM: Stop asks the whole group to end, so it gets the chance before any SIGKILL.
-        // It says it is ready only once its trap is set, and Stop waits for that, so a slow machine cannot race it.
-        let cleaner = tool("trap 'echo term > \"\(marker.path)\"; exit 0' TERM; : > \"\(ready.path)\"; while :; do sleep 0.1; done",
+        // a child that takes a moment to clean up on SIGTERM, after the command itself has already ended: Stop gives it
+        // the grace period, not an instant SIGKILL. It says it is ready only once its trap is set, and Stop waits for
+        // that, so a slow machine cannot race it.
+        let cleaner = tool("trap 'sleep 0.3; echo term > \"\(marker.path)\"; exit 0' TERM; : > \"\(ready.path)\"; while :; do sleep 0.1; done",
                            in: dir, name: "child")
         let t = tool("sleep 300 & echo $! > '\(pids.path)'; '\(cleaner.path)' & echo started; sleep 300", in: dir)
         let (ending, log) = await run(FixInvocation(executable: t.path, arguments: []), stopWhenExists: ready)

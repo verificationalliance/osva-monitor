@@ -99,6 +99,7 @@ final class FixProcess: FixRunning, @unchecked Sendable {   // every mutable fie
     private var pid: pid_t = 0
     private var text: TerminalText
     private var reason: FixEnding?               // why the app stopped it, if it did
+    private var stoppedAt: Date?                 // when it was first asked to stop
     private var exited = false
     private var result: (FixEnding, FixLog)?
     private var waiters: [CheckedContinuation<(FixEnding, FixLog), Never>] = []
@@ -159,7 +160,7 @@ final class FixProcess: FixRunning, @unchecked Sendable {   // every mutable fie
     private func stop(because why: FixEnding) {
         let target: pid_t? = lock.withLock {
             guard !exited, pid > 0 else { return nil }
-            if reason == nil { reason = why }
+            if reason == nil { reason = why; stoppedAt = Date() }
             return pid
         }
         guard let target else { return }
@@ -237,11 +238,29 @@ final class FixProcess: FixRunning, @unchecked Sendable {   // every mutable fie
         // while the rest of a stopped command's group is killed.
         var info = siginfo_t()
         while waitid(P_PID, id_t(child), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR {}
-        if lock.withLock({ reason }) != nil { kill(-child, SIGKILL) }
+        if let stoppedAt = lock.withLock({ reason == nil ? nil : stoppedAt }) {
+            // The rest of the group had the SIGTERM too: it gets what is left of the grace period to clean up (brew's
+            // helpers removing their locks, say) before any SIGKILL, even though the command itself already ended.
+            let deadline = stoppedAt.addingTimeInterval(limits.grace)
+            while Date() < deadline && Self.othersInGroup(child) { usleep(20_000) }
+            kill(-child, SIGKILL)
+        }
         var status: Int32 = 0
         while waitpid(child, &status, 0) < 0 && errno == EINTR {}
         lock.withLock { exited = true; exitStatus = status }
         completeIfReady()
+    }
+
+    /// Whether a process other than `leader` (ended, not yet reaped) is still in its process group. False when the
+    /// group cannot be listed, so a stop then ends the group at once, as before.
+    static func othersInGroup(_ leader: pid_t) -> Bool {
+        let size = MemoryLayout<pid_t>.stride
+        let bytes = proc_listpids(UInt32(PROC_PGRP_ONLY), UInt32(leader), nil, 0)
+        guard bytes > 0 else { return false }
+        var pids = [pid_t](repeating: 0, count: Int(bytes) / size + 16)
+        let got = pids.withUnsafeMutableBytes { proc_listpids(UInt32(PROC_PGRP_ONLY), UInt32(leader), $0.baseAddress, Int32($0.count)) }
+        guard got > 0 else { return false }
+        return pids.prefix(Int(got) / size).contains { $0 > 0 && $0 != leader }
     }
 
     private func readerDone() {
