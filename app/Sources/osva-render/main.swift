@@ -145,11 +145,32 @@ func main() throws {
         ("fix-confirm", AnyView(popover(only(confirmIDs), expanded: Set(confirmIDs), fixes: PreviewData.fixConfirmations)), .imageRenderer),
         ("fix-results", AnyView(popover(afterRuns, expanded: [F.nginx, F.openmtp], fixes: PreviewData.fixResults, resolved: resolved)), .imageRenderer),
     ]
+    // Where each copy is and why: rows open, then one with its details open; on the window background and on a mid-grey
+    // like the glass of the owner's panel over their desktop (sampled from their screenshot: rgb 122).
+    let explained = PreviewData.report(findings: PreviewData.provenanceFindings, coverage: Coverage())
+    let midGrey = Color(red: 122 / 255, green: 122 / 255, blue: 122 / 255)
+    let starlette = PreviewData.report(findings: PreviewData.provenanceFindings.filter { $0.id == PreviewData.ProvenanceID.starlette }, coverage: Coverage())
+    for (suffix, grey) in [("", false), ("-grey", true)] {
+        views += [
+            ("popover-provenance" + suffix, AnyView(popover(explained, expanded: Set(explained.findings.map(\.id))).background(grey ? midGrey : .clear)),
+             .imageRenderer),
+            ("popover-provenance-details" + suffix,
+             AnyView(popover(starlette, expanded: [PreviewData.ProvenanceID.starlette]).environment(\.provenanceDetailsOpen, true)
+                .background(grey ? midGrey : .clear)), .imageRenderer),
+        ]
+    }
     if let reportPath {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let real = try decoder.decode(ScanReport.self, from: Data(contentsOf: URL(fileURLWithPath: reportPath)))
         views.append(("popover-real", AnyView(PopoverView(content: PopoverContent(report: real, isScanning: false, now: real.finishedAt.addingTimeInterval(120)),
                                                           actions: .none, scrolls: false)), .imageRenderer))
+        // Its first findings with where and why, opened, on the owner's mid-grey.
+        var opened = real
+        opened.findings = Array(real.findings.filter { $0.provenance != nil }.prefix(8))
+        opened.coverage = Coverage()
+        views.append(("popover-real-provenance-grey", AnyView(PopoverView(content: PopoverContent(report: opened, isScanning: false, now: real.finishedAt),
+                                                                          actions: .none, expanded: Set(opened.findings.map(\.id)), scrolls: false)
+                                                                 .background(midGrey)), .imageRenderer))
     }
     // Increase Contrast cannot be drawn here: AppKit returns plain Aqua for the high-contrast appearance names unless
     // the setting is on, so those variants are checked by ToneTests and on the real panel.

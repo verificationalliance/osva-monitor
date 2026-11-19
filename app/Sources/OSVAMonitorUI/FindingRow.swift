@@ -94,6 +94,7 @@ public struct FindingRow: View {
 
     @ViewBuilder private var details: some View {
         VStack(alignment: .leading, spacing: 8) {
+            ProvenanceView(finding.provenance)
             if !fix.isResolved { advice }
             Button { actions.open(finding.pageURL) } label: {
                 Label("Open on verificationalliance.org", systemImage: "arrow.up.right")
