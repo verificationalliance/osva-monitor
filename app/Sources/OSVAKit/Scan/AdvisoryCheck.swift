@@ -60,3 +60,37 @@ public struct AdvisoryCheck: Sendable {
         return AdvisoryCheck(installed: installed, hits: hits, target: core.newestVersion(upgrades))
     }
 }
+
+/// An item of the site's "patch these first" list, decided like the project's own advisories: by the issuer's ranges
+/// when the project's record has them for every advisory on the item, else by the list's first fixed versions.
+struct IssueCheck {
+    private let core = Core.shared
+    /// The ranges of each advisory on the item, or nil when the first fixed versions decide.
+    let ranges: [[AffectedRange]]?
+    let fixedIn: [String]
+
+    init(_ issue: StateResponse.BigIssue, project: ProjectResponse?) {
+        let listed = project?.recent.filter { a in issue.ids.contains(a.id) || a.cve.map(issue.ids.contains) == true } ?? []
+        let covered = Set(listed.flatMap { [$0.id] + ($0.cve.map { [$0] } ?? []) })
+        let sets = listed.compactMap(\.ranges)
+        ranges = !listed.isEmpty && sets.count == listed.count && issue.ids.allSatisfy(covered.contains) ? sets : nil
+        fixedIn = issue.fixedIn
+    }
+
+    func affects(_ installed: String) -> Bool {
+        if let ranges { return ranges.contains { core.affectedness(installed: installed, ranges: $0) == .affected } }
+        return core.affectedness(installed: installed, fixedVersions: fixedIn) == .affected
+    }
+
+    func fix(_ installed: String) -> String? {
+        if let ranges { return core.upgrade(from: installed, ranges: ranges.flatMap { $0 }) }
+        return core.nearestVersion(in: fixedIn, above: installed)
+    }
+
+    func note(_ installed: String, _ target: String?) -> String? {
+        if ranges != nil {
+            return target.map { "The issuer lists \(installed) as affected and \($0) as fixed." } ?? "The issuer lists \(installed) as affected. No fixed release yet."
+        }
+        return target.map { "Likely affected: the issuer names \($0) as fixed." }
+    }
+}

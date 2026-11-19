@@ -186,23 +186,10 @@ public struct FindingBuilder: Sendable {
                         brew: [BrewMatch], projects: [String: ProjectResponse]) {
         for issue in issues where !issue.fixedIn.isEmpty {
             let label = "On the site's “patch these first” list: \(issue.title.isEmpty ? issue.name : issue.title)"
-            // When the project's record has the issuer's ranges for every advisory on the list, they decide, as for the
-            // project's own findings; otherwise the list's first fixed versions do, as before ranges.
-            let listed = projects[issue.slug]?.recent.filter { a in issue.ids.contains(a.id) || a.cve.map(issue.ids.contains) == true } ?? []
-            let covered = Set(listed.flatMap { [$0.id] + ($0.cve.map { [$0] } ?? []) })
-            let rangeSets = listed.compactMap(\.ranges)
-            let byRanges = !listed.isEmpty && rangeSets.count == listed.count && issue.ids.allSatisfy(covered.contains)
-            let allRanges = rangeSets.flatMap { $0 }
-            let affects = { (v: String) in
-                byRanges ? rangeSets.contains { self.core.affectedness(installed: v, ranges: $0) == .affected }
-                         : self.core.affectedness(installed: v, fixedVersions: issue.fixedIn) == .affected
-            }
+            // The project's ranges decide when its record has them for every advisory on the item (IssueCheck).
+            let check = IssueCheck(issue, project: projects[issue.slug])
             let firstFix = { (v: String) in self.core.nearestVersion(in: issue.fixedIn, above: v) }
-            let fix = { (v: String) in byRanges ? self.core.upgrade(from: v, ranges: allRanges) : firstFix(v) }
-            let says = { (v: String, t: String?) -> String? in
-                byRanges ? (t.map { "The issuer lists \(v) as affected and \($0) as fixed." } ?? "The issuer lists \(v) as affected. No fixed release yet.")
-                         : t.map { "Likely affected: the issuer names \($0) as fixed." }
-            }
+            let fix = { (v: String) in check.fix(v) }
             let severity = Severity(api: issue.severity)
             let group: Finding.Group = issue.exploited ? .exploited : (severity ?? .low) >= .high ? .criticalHigh : .other
             func mark(id: String, fix: (String) -> String?, make: () -> Finding) {
@@ -219,7 +206,7 @@ public struct FindingBuilder: Sendable {
             // Homebrew formulae and casks of the project
             for match in brew where match.project.slug == issue.slug {
                 let v = match.item.version
-                guard affects(v) else { continue }
+                guard check.affects(v) else { continue }
                 let project = projects[issue.slug]
                 let target = fix(v)
                 mark(id: "brew|\(match.item.name)|\(v)", fix: fix) {
@@ -227,7 +214,7 @@ public struct FindingBuilder: Sendable {
                             subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.item.name),
                             title: project?.name ?? match.project.name, installedVersion: v, fixedVersion: target, severity: severity,
                             advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                            note: says(v, target), bigIssue: label,
+                            note: check.note(v, target), bigIssue: label,
                             origins: [match.item.origin], pageURL: SiteURL.projectPage(slug: issue.slug),
                             upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
                             verification: project?.verificationMark ?? .none, grade: project?.grade,

@@ -323,26 +323,19 @@ extension FindingBuilder {
     /// by the verified core against the installed version.
     func managedFindings(_ managed: [ManagedMatch], projects: [String: ProjectResponse]) -> [Finding] {
         var out: [Finding] = []
-        let core = Core.shared
         for match in managed {
             guard let project = projects[match.project.slug] else { continue }
             let installed = match.package.version
-            var hits: [(advisory: ProjectResponse.Advisory, fix: String?)] = []
-            for a in project.recent where Self.weighed(a) {
-                if core.affectedness(installed: installed, fixedVersions: a.fixedHint) == .affected {
-                    hits.append((a, core.nearestVersion(in: a.fixedHint, above: installed)))
-                }
-            }
-            guard !hits.isEmpty else { continue }
-            let target = core.newestVersion(hits.compactMap(\.fix))
-            let exploited = hits.contains { $0.advisory.kev }
+            // Each advisory by the issuer's ranges when it has them, else by its first fixed versions (AdvisoryCheck).
+            guard let d = AdvisoryCheck.decide(installed, project.recent) else { continue }
+            let target = d.target
             let advice = UpgradeCommand.advice(for: match.package.origin, name: match.package.name, ecosystem: nil, target: target, malicious: false)
             out.append(Finding(
-                id: Self.managedID(match.package), group: exploited ? .exploited : .criticalHigh,
+                id: Self.managedID(match.package), group: d.exploited ? .exploited : .criticalHigh,
                 subject: .project(slug: project.slug, name: project.name, installedAs: match.package.name), title: project.name,
-                installedVersion: installed, fixedVersion: target, severity: hits.compactMap { Severity(api: $0.advisory.severity) }.max(),
-                advisoryIDs: hits.map(\.advisory.id), flawCount: hits.count, exploited: exploited, malicious: false,
-                note: [target.map { "Likely affected: the issuer names \($0) as fixed." }, advice.note].compactMap { $0 }.joined(separator: " "),
+                installedVersion: installed, fixedVersion: target, severity: d.severity,
+                advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
+                note: [d.note, advice.note].compactMap { $0 }.joined(separator: " "),
                 bigIssue: nil, origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: project.slug),
                 upgradeCommand: advice.command, verification: project.verificationMark, grade: project.grade))
         }
@@ -362,15 +355,15 @@ extension FindingBuilder {
     /// The site's "patch these first" list, for packages matched through R lines (as for Homebrew's).
     func applyBigIssues(_ issues: [StateResponse.BigIssue], toManaged managed: [ManagedMatch], findings: inout [Finding],
                         projects: [String: ProjectResponse]) {
-        let core = Core.shared
         for issue in issues where !issue.fixedIn.isEmpty {
             let label = "On the site's “patch these first” list: \(issue.title.isEmpty ? issue.name : issue.title)"
             let severity = Severity(api: issue.severity)
             let group: Finding.Group = issue.exploited ? .exploited : (severity ?? .low) >= .high ? .criticalHigh : .other
+            let check = IssueCheck(issue, project: projects[issue.slug])        // the project's ranges when it has them
             for match in managed where match.project.slug == issue.slug {
                 let v = match.package.version
-                guard core.affectedness(installed: v, fixedVersions: issue.fixedIn) == .affected else { continue }
-                let target = core.nearestVersion(in: issue.fixedIn, above: v)
+                guard check.affects(v) else { continue }
+                let target = check.fix(v)
                 let id = Self.managedID(match.package)
                 if let i = findings.firstIndex(where: { $0.id == id }) {
                     findings[i].bigIssue = label
@@ -385,7 +378,7 @@ extension FindingBuilder {
                         id: id, group: group, subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.package.name),
                         title: project?.name ?? match.project.name, installedVersion: v, fixedVersion: target, severity: severity,
                         advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                        note: target.map { "Likely affected: the issuer names \($0) as fixed." }, bigIssue: label,
+                        note: check.note(v, target), bigIssue: label,
                         origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: issue.slug), upgradeCommand: advice.command,
                         verification: project?.verificationMark ?? .none, grade: project?.grade))
                 }

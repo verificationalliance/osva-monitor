@@ -185,6 +185,16 @@ import Testing
         #expect(AdvisoryCheck.decide("0.4", open.recent) == nil)
     }
 
+    @Test func macPortsAndNixPackagesFollowTheRangesToo() throws {
+        let project = try #require(index.project(slug: "postgres"))
+        let current = ManagedPackage(manager: .macports, name: "postgresql16-server", version: "16.16", origin: .macports(port: "postgresql16-server"))
+        let older = ManagedPackage(manager: .macports, name: "postgresql16-server", version: "16.14", origin: .macports(port: "postgresql16-server"))
+        let f = FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [], projects: ["postgres": postgres], bigIssues: [],
+                                                      managed: [current, older].map { .init(package: $0, project: project) })
+        #expect(f.count == 1 && f.first?.installedVersion == "16.14" && f.first?.fixedVersion == "16.16")
+        #expect(f.first?.note?.hasPrefix("The issuer lists 16.14 as affected and 16.16 as fixed.") == true)
+    }
+
     // MARK: Apps and bundled libraries
 
     @Test func productsAreDecidedByRangesToo() throws {
