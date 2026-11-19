@@ -149,6 +149,9 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var commandInputs: UpgradeCommand.Inputs?
     public var verification: Verification
     public var grade: String?
+    /// Where each copy is on this Mac and why it is there, one per copy (nil in reports saved before, or when nothing
+    /// could be told). Read from local files after the API was asked; never sent.
+    public var provenance: [Provenance]? = nil
 
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String, fixedVersion: String?,
                 severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
