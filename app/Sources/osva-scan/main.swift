@@ -1,19 +1,20 @@
 // osva-scan: one OSVA Monitor scan from the command line, with the code the app runs.
 //
-//   osva-scan [--folder PATH]... [--data-dir PATH] [--json] [--quiet]
+//   osva-scan [--folder PATH]... [--data-dir PATH] [--json] [--quiet] [--why]
 //
 // --folder    a project folder to look for lockfiles in (repeatable; adds to the app's watched folders)
 // --data-dir  where the index, caches and the last report are kept (default: the app's, or $OSVA_SUPPORT_DIR)
 // --json      print the whole report as JSON
+// --why       also time explaining where each finding's copies are and why (a second pass, after the scan)
 import Foundation
 import OSVAKit
 
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: osva-scan [--folder PATH]... [--data-dir PATH] [--json] [--quiet]\n".utf8))
+    FileHandle.standardError.write(Data("usage: osva-scan [--folder PATH]... [--data-dir PATH] [--json] [--quiet] [--why]\n".utf8))
     exit(2)
 }
 
-var folders: [String] = [], dataDir: String?, json = false, quiet = false
+var folders: [String] = [], dataDir: String?, json = false, quiet = false, why = false
 var args = CommandLine.arguments.dropFirst()
 while let a = args.popFirst() {
     switch a {
@@ -21,6 +22,7 @@ while let a = args.popFirst() {
     case "--data-dir": guard let v = args.popFirst() else { usage() }; dataDir = v
     case "--json": json = true
     case "--quiet": quiet = true
+    case "--why": why = true
     default: usage()
     }
 }
@@ -70,6 +72,13 @@ if report.findings.isEmpty {
             if let g = f.grade { tags.append("grade \(g)") }
             print("  \(f.title)  \(version)  [\(tags.joined(separator: ", "))]")
             print("      from \(f.originSummary)")
+            for p in f.provenance ?? [] {
+                if let path = p.path { print("      where: \(Paths.abbreviatingHome(path))") }
+                if let w = p.why { print("      why: \(w)") }
+                if let a = p.advice { print("      \(a)") }
+                for d in p.dependents { print("        · \(d.line)") }
+                for d in p.details { print("        · \(d)") }
+            }
             if let n = f.note { print("      \(n)") }
             for u in f.unresolved { print("      · \(u.severity.map { $0.label + ", " } ?? "")\(u.id): \(u.explanation)") }
             if let b = f.bigIssue { print("      \(b)") }
@@ -96,6 +105,23 @@ for r in report.sent.requests {
     for i in r.items.prefix(quiet ? 0 : 400) { print("      \(i)") }
 }
 print("  \(report.sent.answeredFromCache) answered from the local cache; \(report.sent.withheldCount) installed items are not in the public index and were not sent.")
+if why {
+    // Explaining again from scratch, as the scan did: what it adds to a scan's time.
+    let stripped = report.findings.map { f -> Finding in var c = f; c.provenance = nil; return c }
+    let clock = ContinuousClock(), started = clock.now
+    let explained = await ProvenanceExplainer().explain(stripped, inventory: report.inventory)
+    let elapsed = clock.now - started
+    let copies = explained.reduce(0) { $0 + ($1.provenance?.count ?? 0) }
+    print("")
+    print("Where and why: \(copies) copies of \(explained.count) findings explained in \(elapsed.formatted(.units(allowed: [.milliseconds])))")
+    for kind in SourceKind.allCases {                               // each source alone, from scratch
+        let some = stripped.filter { $0.origins.first?.kind == kind }
+        guard !some.isEmpty else { continue }
+        let t = clock.now
+        _ = await ProvenanceExplainer().explain(some, inventory: report.inventory)
+        print("  \(kind.title): \(some.count) findings in \((clock.now - t).formatted(.units(allowed: [.milliseconds])))")
+    }
+}
 if !report.problems.isEmpty {
     print("")
     print("Problems:")

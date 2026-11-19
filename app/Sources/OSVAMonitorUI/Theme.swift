@@ -195,5 +195,7 @@ public enum Typeface {
     public static let code = Font.system(size: 11, design: .monospaced)
     /// A fix's live log: small enough for a useful line, monospaced like the command.
     public static let log = Font.system(size: 10.5, design: .monospaced)
+    /// A name as sent, one per line in a list window ("PyPI setuptools 58.0.4 · Python 3.9.6").
+    public static let listCode = Font.system(size: 12, design: .monospaced)
     public static func count(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight, design: .rounded).monospacedDigit() }
 }

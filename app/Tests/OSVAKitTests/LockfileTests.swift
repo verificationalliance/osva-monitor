@@ -148,3 +148,22 @@ final class Locked<T>: @unchecked Sendable {
         #expect(Manifests.isDirect("Requests", .pypi, in: ["requests"]))
     }
 }
+
+/// Test data must never look like this repository's own dependencies: GitHub's dependency graph reads these names
+/// anywhere in a repository and raised 298 alerts for deliberately old fixtures. Store such files as `<name>.fixture`.
+@Suite struct NoManifestsInTests {
+    static let manifestNames: Set<String> = ["package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+        "requirements.txt", "requirements-dev.txt", "Pipfile", "Pipfile.lock", "poetry.lock", "pyproject.toml", "setup.py", "Cargo.toml",
+        "Cargo.lock", "go.mod", "go.sum", "Gemfile", "Gemfile.lock", "composer.json", "composer.lock", "pom.xml", "build.gradle"]
+
+    @Test func noFileUnderTestsHasAManifestName() throws {
+        let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let all = FileManager.default.enumerator(at: tests, includingPropertiesForKeys: nil)!
+        var bad: [String] = []
+        for case let f as URL in all {
+            let name = f.lastPathComponent
+            if Self.manifestNames.contains(name) || (name.hasPrefix("requirements") && name.hasSuffix(".txt")) { bad.append(f.path) }
+        }
+        #expect(bad.isEmpty, "store these as <name>.fixture: \(bad)")
+    }
+}

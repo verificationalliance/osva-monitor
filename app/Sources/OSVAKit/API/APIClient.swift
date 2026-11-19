@@ -48,6 +48,12 @@ public actor APIClient {
         return try decode(ProjectResponse.self, await send(URLRequest(url: SiteURL.project(project)), budgets: [.read]))
     }
 
+    /// GET api/v1/product/<key>: an app's or a bundled library's record, with its recent advisories.
+    public func product(_ product: ApprovedProduct) async throws -> ProductResponse {
+        record("GET api/v1/product", [product.sentDescription])
+        return try decode(ProductResponse.self, await send(URLRequest(url: SiteURL.product(product)), budgets: [.read]))
+    }
+
     /// GET api/v1/state. Names nothing about this Mac.
     public func state() async throws -> StateResponse {
         try decode(StateResponse.self, await send(URLRequest(url: SiteURL.state), budgets: [.read]))

@@ -231,47 +231,112 @@ public struct GroupContainer<Content: View>: View {
     }
 }
 
-/// A row that opens to show the names behind a number: "Apps that do not bundle Electron · 61".
+/// A row with a list of names behind its number ("Apps with no security record · 141"). A short list opens in
+/// place, one name per line; one long enough to need a search field opens in its own window (NameListView), as the
+/// lists in Settings do. Either way the names are NameRows, an app's with its icon.
 public struct ListDisclosureRow: View {
-    public var title: String
-    public var items: [String]
-    @State private var open = false
+    public var list: NameList
+    var openList: (NameList) -> Void
+    @State private var open: Bool
 
-    public init(_ title: String, items: [String], open: Bool = false) {
-        self.title = title; self.items = items; _open = State(initialValue: open)
+    public init(_ list: NameList, open: Bool = false, openList: @escaping (NameList) -> Void = { _ in }) {
+        self.list = list; self.openList = openList; _open = State(initialValue: open)
     }
 
+    /// A list this long opens in a window with a search field rather than in the panel.
+    public var opensWindow: Bool { list.searchable }
+
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
-                Text(title).font(Typeface.small).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                Text(list.title).font(Typeface.small).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                Text(items.count.formatted()).font(Typeface.count(11.5, weight: .medium)).foregroundStyle(.secondary)
-                Image(systemName: "chevron.down")
+                Text(list.shown.formatted()).font(Typeface.count(11.5, weight: .medium)).foregroundStyle(.secondary)
+                Image(systemName: opensWindow ? "chevron.right" : "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(open ? 180 : 0))
+                    .rotationEffect(.degrees(open && !opensWindow ? 180 : 0))
+                    .frame(width: 10)
                     .accessibilityHidden(true)
             }
-            if open {
-                Text(Self.listing(items)).font(Typeface.small).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+            if open && !opensWindow {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(Array(list.sections.flatMap { s in s.items.enumerated().map { (s.items[$0.offset], s.paths?[$0.offset]) } }.enumerated()),
+                            id: \.offset) { _, item in
+                        NameRow(item.0, path: item.1, style: list.style, font: list.style == .code ? Typeface.code : Typeface.small)
+                            .foregroundStyle(.primary)            // what the row was opened to read, as in the list window
+                    }
+                }
+                .textSelection(.enabled)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .rowHover()
         .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.smooth(duration: 0.25)) { open.toggle() } }
+        .onTapGesture {
+            if opensWindow { openList(list) } else { withAnimation(.smooth(duration: 0.25)) { open.toggle() } }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint(open ? "Hides the list" : "Shows the list")
+        .accessibilityHint(opensWindow ? "Opens the list in a window" : open ? "Hides the list" : "Shows the list")
+    }
+}
+
+/// What could not be vouched for, as lists of names: titled by where they come from, with what that means.
+public enum CoverageLists {
+    public enum Part: Sendable { case notChecked, updatedElsewhere, notInIndex }
+
+    public static func list(_ bucket: Coverage.Bucket, in part: Part) -> NameList {
+        // A list of apps, or of what apps bundle, reads as names with icons; packages as they are written, monospaced.
+        let ofApps = part == .updatedElsewhere || bucket.source == AppCoverage.noRecord
+        let apps = ofApps || bucket.paths != nil
+        return NameList(title: bucket.source, explanation: explanation(bucket.source, in: part), count: bucket.items.count,
+                        sections: [.init(title: nil, items: bucket.items, paths: bucket.paths)], style: apps ? .names : .code,
+                        one: ofApps ? "app" : "name", many: ofApps ? "apps" : "names")
     }
 
-    static func listing(_ items: [String], limit: Int = 300) -> String {
-        let shown = items.prefix(limit).joined(separator: ", ")
-        return items.count > limit ? shown + ", and \(items.count - limit) more" : shown
+    /// Who keeps them up to date, in a few words: "App Store and web apps — not checked here".
+    public static func keepersCaption(_ buckets: [Coverage.Bucket]) -> String {
+        let titles = buckets.map(\.source)
+        let keepers = [titles.contains(AppCoverage.appStore) ? "App Store" : nil, titles.contains(AppCoverage.macOS) ? "macOS" : nil,
+                       titles.contains { $0.hasSuffix(" web apps") } ? "web apps" : nil].compactMap { $0 }
+        let named = keepers.count <= 1 ? keepers.joined() : keepers.dropLast().joined(separator: ", ") + " and " + keepers.last!
+        return (named.isEmpty ? "Updated elsewhere" : named) + " — not checked here"
+    }
+
+    /// What a list's names are, and what was or was not done with them.
+    public static func explanation(_ source: String, in part: Part) -> String {
+        switch source {
+        case AppCoverage.noRecord:
+            return "Apps the site has no security record of, so nothing checks their own code. Libraries they bundle that the site knows are checked, and appear with the findings."
+        case AppCoverage.appStore:
+            return "Apps from the Mac App Store, which updates them when automatic updates are on in its settings. The site has no security record of them, so they are not checked here."
+        case AppCoverage.macOS:
+            return "Apple's apps that come with macOS and are updated with it, in Software Update. They are not checked here."
+        case "Homebrew packages with no graded project":
+            return "Formulae and casks that belong to no project the site grades, so nothing here checks them."
+        case "Packages the site cannot check":
+            return "Packages from registries the site does not check, or with versions no registry would have."
+        case "Apps with no readable version":
+            return "Apps the site has a record of whose Info.plist gives no version to check."
+        case "Bundled libraries with no readable version":
+            return "Libraries the site knows, found inside these apps, whose version could not be read from their files."
+        case "Bundled libraries with no product record":
+            return "Libraries found inside these apps that the site has no record of yet."
+        case "Bundled libraries numbered unlike their advisories":
+            return "These libraries carry their own version numbers, which their advisories do not use, so the two cannot be compared."
+        default:
+            if source.hasSuffix(" web apps") {
+                let browser = String(source.dropLast(" web apps".count))
+                return "Websites \(browser) installed as apps. Each is \(browser) showing the site, so it is updated with \(browser); they are not checked here."
+            }
+            switch part {
+            case .notInIndex: return "Installed, and not in the public index: nothing has ever been reported about them. That is no known problem, not proof of safety."
+            case .updatedElsewhere: return "Kept up to date by something else; not checked here."
+            case .notChecked: return "Nothing here checks these."
+            }
+        }
     }
 }
 

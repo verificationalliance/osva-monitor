@@ -59,7 +59,8 @@ public struct PythonSource: Sendable {
                         ?? (python.userSite.map { Self.samePath(e.location ?? "", $0) } ?? false)
                     let formula = e.installer == "brew" ? (e.location.flatMap { Self.homebrewFormula(of: e.name, in: $0) } ?? "") : nil
                     packages.append(InstalledPackage(ecosystem: .pypi, name: e.name, version: e.version,
-                                                     origin: .pip(python: python, user: user, formula: formula)))
+                                                     origin: .pip(python: python, user: user, formula: formula),
+                                                     provenance: e.location.map { Provenance(path: $0) }))
                 }
             } catch { errors.append("\(python.label): \(error.localizedDescription)") }
         }

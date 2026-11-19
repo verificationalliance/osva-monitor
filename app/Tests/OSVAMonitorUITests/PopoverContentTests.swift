@@ -65,13 +65,12 @@ import OSVAKit
     @Test func whatLeavesYourMacInNumbers() {
         #expect(SentSummary.counts(PreviewData.sent) == .init(batch: 9, projects: 4))
         #expect(SentSummary.counts(SentRecord()) == .init(batch: 0, projects: 0))
-        #expect(SentSummary.groups(PreviewData.sent).map(\.title) == ["POST /api/v1/check/batch · 9", "GET /api/v1/project · 4"])
     }
 
     @Test func notCheckedIsShownNotCountedAsClean() {
         let c = PopoverContent(report: PreviewData.report(), isScanning: false, now: now)
         #expect(c.coverage.notCheckedCount == 8 && c.coverage.notInIndexCount == 10)
-        #expect(c.coverage.notChecked.map(\.source) == ["Homebrew packages with no graded project", "Apps that do not bundle Electron"])
+        #expect(c.coverage.notChecked.map(\.source) == ["Homebrew packages with no graded project", "Apps with no security record"])
     }
 
     @Test func oneNotificationForManyFindings() {

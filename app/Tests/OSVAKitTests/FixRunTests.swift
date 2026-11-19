@@ -289,7 +289,7 @@ final class UpdateRecorder: @unchecked Sendable {
         let t = tool("sleep 300 & echo $! > '\(pids.path)'; '\(cleaner.path)' & echo started; sleep 300", in: dir)
         let start = Date()
         let (ending, log) = await run(FixInvocation(executable: t.path, arguments: []), stopAfter: 0.5)
-        #expect(ending == .stopped && log.lines == ["started"])
+        #expect(ending == .stopped && log.lines.first == "started")            // sh may also say what it killed
         #expect(Date().timeIntervalSince(start) < 4)
         try await Task.sleep(for: .milliseconds(300))
         #expect(FileManager.default.fileExists(atPath: marker.path))

@@ -60,6 +60,11 @@ public enum Origin: Hashable, Codable, Sendable {
     /// A lockfile inside a folder the person asked us to watch. `direct` is whether the project's manifest names the
     /// package itself (nil when there is no manifest to tell).
     case folder(root: String, lockfile: String, direct: Bool?)
+    /// An app checked by its own product record or by a library bundled inside it. `caskToken` is set when Homebrew
+    /// installed the app.
+    case application(name: String, bundlePath: String, caskToken: String?)
+    /// An editor or browser extension, or a package bundled inside one.
+    case addOn(host: ExtensionHost, id: String, name: String, profile: String?, path: String)
 
     /// A short human description: "Homebrew", "Slack", "global npm", "~/code/site/package-lock.json".
     public var label: String {
@@ -76,6 +81,8 @@ public enum Origin: Hashable, Codable, Sendable {
         case let .folder(_, lockfile, direct):
             let path = Paths.abbreviatingHome(lockfile)
             switch direct { case true?: return path; case false?: return "\(path) · indirect"; case nil: return path }
+        case let .application(name, _, _): return name
+        case let .addOn(host, _, name, _, _): return "\(name) (\(host.title))"
         }
     }
 
@@ -85,6 +92,13 @@ public enum Origin: Hashable, Codable, Sendable {
         if case let .electronApp(_, path, cask) = self {
             let folder = Paths.abbreviatingHome((path as NSString).deletingLastPathComponent)
             return "App in \(folder)" + (cask != nil ? " · Homebrew cask" : "")
+        }
+        if case let .application(_, path, cask) = self {
+            let folder = Paths.abbreviatingHome((path as NSString).deletingLastPathComponent)
+            return "App in \(folder)" + (cask != nil ? " · Homebrew cask" : "")
+        }
+        if case let .addOn(host, id, _, profile, _) = self {
+            return "\(host.title) extension · " + (host.isEditor ? id : (profile ?? "default profile"))
         }
         return label
     }
@@ -115,18 +129,22 @@ public enum Origin: Hashable, Codable, Sendable {
         case .cargoInstall: return .cargo
         case .gem: return .gem
         case .folder: return .folders
+        case .application: return .apps
+        case .addOn: return .extensions
         }
     }
 }
 
 /// The places OSVA Monitor looks.
 public enum SourceKind: String, Codable, Sendable, CaseIterable, Comparable {
-    case homebrew, electron, npm, pip, cargo, gem, folders
+    case homebrew, electron, apps, extensions, npm, pip, cargo, gem, folders
 
     public var title: String {
         switch self {
         case .homebrew: return "Homebrew"
         case .electron: return "Electron apps"
+        case .apps: return "Apps"
+        case .extensions: return "Extensions"
         case .npm: return "npm"
         case .pip: return "pip"
         case .cargo: return "cargo"
@@ -146,9 +164,12 @@ public struct InstalledPackage: Hashable, Codable, Sendable {
     public var name: String
     public var version: String
     public var origin: Origin
+    /// Where it is and why, as far as its source could tell cheaply (pip: the site-packages directory pip reported).
+    /// Stays on this Mac; `ProvenanceExplainer` completes it for the copies behind findings.
+    public var provenance: Provenance?
 
-    public init(ecosystem: Ecosystem, name: String, version: String, origin: Origin) {
-        self.ecosystem = ecosystem; self.name = name; self.version = version; self.origin = origin
+    public init(ecosystem: Ecosystem, name: String, version: String, origin: Origin, provenance: Provenance? = nil) {
+        self.ecosystem = ecosystem; self.name = name; self.version = version; self.origin = origin; self.provenance = provenance
     }
 }
 
@@ -192,9 +213,15 @@ public struct Inventory: Codable, Sendable, Hashable {
     /// Apps in /Applications and ~/Applications that do not bundle Electron: not checked.
     public var otherApps: [String] = []
     public var reports: [SourceReport] = []
+    /// Every app in /Applications and ~/Applications, for its product record and the libraries it bundles.
+    public var apps: [InstalledApp] = []
+    /// Editor and browser extensions (the packages bundled inside them are in `packages`).
+    public var extensions: [InstalledExtension] = []
 
-    public init(packages: [InstalledPackage] = [], homebrew: [HomebrewItem] = [], otherApps: [String] = [], reports: [SourceReport] = []) {
+    public init(packages: [InstalledPackage] = [], homebrew: [HomebrewItem] = [], otherApps: [String] = [], reports: [SourceReport] = [],
+                apps: [InstalledApp] = [], extensions: [InstalledExtension] = []) {
         self.packages = packages; self.homebrew = homebrew; self.otherApps = otherApps; self.reports = reports
+        self.apps = apps; self.extensions = extensions
     }
 
     public init(from decoder: Decoder) throws {                  // reports saved before otherApps existed
@@ -203,6 +230,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         homebrew = try c.decode([HomebrewItem].self, forKey: .homebrew)
         otherApps = try c.decodeIfPresent([String].self, forKey: .otherApps) ?? []
         reports = try c.decode([SourceReport].self, forKey: .reports)
+        apps = try c.decodeIfPresent([InstalledApp].self, forKey: .apps) ?? []
+        extensions = try c.decodeIfPresent([InstalledExtension].self, forKey: .extensions) ?? []
     }
 
     /// This inventory with the given sources replaced by `other`'s.
@@ -211,6 +240,8 @@ public struct Inventory: Codable, Sendable, Hashable {
         out.packages = packages.filter { !kinds.contains($0.origin.kind) } + other.packages.filter { kinds.contains($0.origin.kind) }
         out.homebrew = kinds.contains(.homebrew) ? other.homebrew : homebrew
         out.otherApps = kinds.contains(.electron) ? other.otherApps : otherApps
+        out.apps = kinds.contains(.apps) ? other.apps : apps
+        out.extensions = kinds.contains(.extensions) ? other.extensions : extensions
         out.reports = (reports.filter { !kinds.contains($0.kind) } + other.reports.filter { kinds.contains($0.kind) }).sorted { $0.kind < $1.kind }
         return out
     }

@@ -68,10 +68,14 @@ public actor Scanner {
         let brew = inventory.homebrew.compactMap { item in
             ProjectMatcher.project(for: item, in: index).map { FindingBuilder.BrewMatch(item: item, project: $0) }
         }
-        let approvedProjects = filter.approve(projects: brew.map(\.project.slug))
+        // Apps, the libraries they bundle, and extensions are matched to the index here, on this Mac (BundleCheck).
+        progress("Reading apps and extensions…")
+        let bundles = BundleCheck.match(inventory, index: index)
+        let approvedProducts = filter.approve(products: bundles.productKeys)
+        let approvedProjects = filter.approve(projects: brew.map(\.project.slug) + bundles.projectSlugs)
         let allowed = Set(approvedProjects.map(\.slug))
         let brewChecked = brew.filter { allowed.contains($0.project.slug) }
-        var fromCache = 0
+        var fromCache: [String] = []                         // what the cache answered, as it was sent
 
         // 4. Exact versions, 200 at a time.
         let packages = selection.approved.keys.sorted { $0.cacheKey < $1.cacheKey }
@@ -80,7 +84,7 @@ public actor Scanner {
         for p in packages {
             if let cached = cache.readJSON(CachedVerdict.self, "batch", p.cacheKey, maxAge: Freshness.batchVerdict) {
                 if let r = cached.result { verdicts[p] = r }
-                fromCache += 1
+                fromCache.append(p.sentDescription)
             } else {
                 toAsk.append(p)
             }
@@ -107,7 +111,7 @@ public actor Scanner {
         var projects: [String: ProjectResponse] = [:]
         for p in approvedProjects {
             if let cached = cache.readJSON(ProjectResponse.self, "project", p.slug, maxAge: Freshness.project) {
-                projects[p.slug] = cached; fromCache += 1; continue
+                projects[p.slug] = cached; fromCache.append(p.sentDescription); continue
             }
             progress("Reading \(p.slug)'s advisories…")
             do {
@@ -119,6 +123,11 @@ public actor Scanner {
                 if error as? APIClient.APIError == .keptRateLimiting { break }
             }
         }
+
+        // 5b. Product records of the apps and bundled libraries the index lists.
+        let products = await BundleCheck.records(approvedProducts, api: api, cache: cache, maxAge: Freshness.project, progress: progress)
+        problems += products.problems
+        fromCache += products.fromCache
 
         // 6. The site's "patch these first" list.
         var bigIssues: [StateResponse.BigIssue] = []
@@ -135,14 +144,21 @@ public actor Scanner {
         }
 
         // 7. Findings, and what could not be vouched for.
-        let findings = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
-                                                             brew: brewChecked, projects: projects, bigIssues: bigIssues)
+        let built = FindingOrder.sorted(FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts,
+                                                                              brew: brewChecked, projects: projects, bigIssues: bigIssues)
+                                        + bundles.findings(products: products.records, projects: projects))
+        // Where each finding's copies are and why: read from this Mac's files, after every request was made.
+        let findings = await ProvenanceExplainer(tools: configuration.tools).explain(built, inventory: inventory)
         let checkedBrew = Set(brewChecked.map(\.item))
-        let coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
-                                     otherApps: inventory.otherApps)
-        let sent = SentRecord(requests: await api.takeSentRequests(),
-                              withheldCount: selection.withheld.count + (inventory.homebrew.count - brewChecked.count),
-                              answeredFromCache: fromCache)
+        let accounted = bundles.accountedApps(products: products.records)
+        let apps = AppCoverage.buckets(inventory.otherApps.filter { !accounted.contains($0) }, apps: inventory.apps)
+        var coverage = Self.coverage(withheld: selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) },
+                                     apps: apps.notChecked)
+        coverage.notChecked += bundles.notChecked(products: products.records, projects: projects)
+        coverage.updatedElsewhere = apps.updatedElsewhere
+        let withheld = Self.withheld(selection.withheld, unmatchedBrew: inventory.homebrew.filter { !checkedBrew.contains($0) })
+        let sent = SentRecord(requests: await api.takeSentRequests(), withheldCount: withheld.reduce(0) { $0 + $1.items.count },
+                              answeredFromCache: fromCache.count, cached: fromCache, withheld: withheld)
         progress("")
         return ScanReport(startedAt: started, finishedAt: Date(), inventory: inventory, findings: findings, sent: sent,
                           indexGeneratedAt: index.generatedAt, problems: problems, coverage: coverage)
@@ -198,6 +214,10 @@ public actor Scanner {
             rebuilt = builder.findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)], projects: [slug: response!],
                                        bigIssues: bigIssues)
             now = item.version
+        case .product, .addOn:
+            // An app, a library it bundles, or a malicious extension: no Fix button runs for these (FixPlan), so a fix
+            // is never followed by this. The next scan reads them again.
+            return (report, .couldNotCheck("apps and extensions are checked again by the next scan"))
         case let .package(ecosystem, name):
             let installs = updated.inventory.packages.filter { p in
                 p.ecosystem == ecosystem && PackageNames.indexName(p.name, in: ecosystem) == name
@@ -226,16 +246,17 @@ public actor Scanner {
             let versions = Array(Set(installs.map(\.version)))
             now = (finding.component.map { "\($0) " } ?? "") + (Core.shared.newestVersion(versions) ?? versions[0])
         }
-        updated = Self.replacing(finding, with: rebuilt, in: updated)
+        let explained = await ProvenanceExplainer(tools: configuration.tools).explain(rebuilt, inventory: updated.inventory)
+        updated = Self.replacing(finding, with: explained, in: updated)
         updated.sent.requests += await api.takeSentRequests()
-        return (updated, rebuilt.first.map(Recheck.stillAffected) ?? .fixed(now: now))
+        return (updated, explained.first.map(Recheck.stillAffected) ?? .fixed(now: now))
     }
 
     /// The report with `old` replaced by `new` (and no finding listed twice), still in the list's order.
     static func replacing(_ old: Finding, with new: [Finding], in report: ScanReport) -> ScanReport {
         var r = report
         let ids = Set(new.map(\.id)).union([old.id])
-        r.findings = (r.findings.filter { !ids.contains($0.id) } + new).sorted(by: FindingBuilder.precedes)
+        r.findings = FindingOrder.sorted(r.findings.filter { !ids.contains($0.id) } + new)
         return r
     }
 
@@ -254,7 +275,7 @@ public actor Scanner {
     }
 
     /// Not in the index (nothing ever reported: no known problem, not proof of safety) versus not checked at all.
-    static func coverage(withheld: [InstalledPackage], unmatchedBrew: [HomebrewItem], otherApps: [String]) -> Coverage {
+    static func coverage(withheld: [InstalledPackage], unmatchedBrew: [HomebrewItem], apps: Coverage.Bucket?) -> Coverage {
         func describe(_ p: InstalledPackage) -> String { "\(p.name) \(p.version)" }
         func checkable(_ p: InstalledPackage) -> Bool { Ecosystem.checkable.contains(p.ecosystem) && PackageNames.isPlausibleVersion(p.version) }
         let bySource = Dictionary(grouping: withheld.filter(checkable)) { $0.origin.kind }
@@ -267,12 +288,25 @@ public actor Scanner {
             notChecked.append(.init(source: "Homebrew packages with no graded project",
                                     items: unmatchedBrew.map { "\($0.name) \($0.version)" }.sorted()))
         }
-        if !otherApps.isEmpty { notChecked.append(.init(source: "Apps that do not bundle Electron", items: otherApps)) }
+        if let apps, !apps.items.isEmpty { notChecked.append(apps) }
         let uncheckable = withheld.filter { !checkable($0) }
         if !uncheckable.isEmpty {
             notChecked.append(.init(source: "Packages the site cannot check", items: Array(Set(uncheckable.map(describe))).sorted()))
         }
         return Coverage(notInIndex: notInIndex, notChecked: notChecked)
+    }
+
+    /// Everything that stayed on this Mac, by where it was found, each name and version once per source: Homebrew
+    /// packages with no graded project, then packages the privacy filter did not pass (not in the index, or with a
+    /// version no registry would have).
+    static func withheld(_ packages: [InstalledPackage], unmatchedBrew: [HomebrewItem]) -> [Coverage.Bucket] {
+        let bySource = Dictionary(grouping: packages) { $0.origin.kind }
+        return SourceKind.allCases.compactMap { kind in
+            var items = Set((bySource[kind] ?? []).map { "\($0.name) \($0.version)" })
+            if kind == .homebrew { items.formUnion(unmatchedBrew.map { "\($0.name) \($0.version)" }) }
+            guard !items.isEmpty else { return nil }
+            return Coverage.Bucket(source: kind.title, items: items.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+        }
     }
 
     /// Inventory of the given sources, run side by side.
@@ -292,11 +326,17 @@ public actor Scanner {
         async let gem = kinds.contains(.gem) ? await globals.gem() : nil
         async let apps = kinds.contains(.electron) ? ElectronSource(roots: roots, caskForApp: casks).collect() : nil
         async let lockfiles = kinds.contains(.folders) ? FolderSource(roots: folders).collect() : nil
+        async let installedApps = kinds.contains(.apps) ? AppSource(roots: roots, caskForApp: casks).collect() : nil
+        async let addOns = kinds.contains(.extensions) ? ExtensionSource(home: tools.home).collect() : nil
         let cargo = kinds.contains(.cargo) ? globals.cargo() : nil
         let electron = await apps
         inventory.otherApps = electron?.otherApps ?? []
         let appPackages = electron.map { (packages: $0.packages, report: $0.report) }
-        for r in [appPackages, await npm, await pip, cargo, await gem, await lockfiles].compactMap({ $0 }) {
+        if let a = await installedApps { inventory.apps = a.apps; inventory.reports.append(a.report) }
+        let extensions = await addOns
+        inventory.extensions = extensions?.extensions ?? []
+        let extensionPackages = extensions.map { (packages: $0.packages, report: $0.report) }
+        for r in [appPackages, extensionPackages, await npm, await pip, cargo, await gem, await lockfiles].compactMap({ $0 }) {
             inventory.packages += r.packages
             inventory.reports.append(r.report)
         }

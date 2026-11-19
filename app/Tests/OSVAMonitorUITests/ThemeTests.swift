@@ -114,11 +114,22 @@ import OSVAKit
         }
     }
 
+    /// Lists of names are NameRows, one name per line, never one paragraph of names joined by commas.
+    @Test func namesAreListedOnePerLine() throws {
+        let joined = try Regex(#"items[^\n]*\.joined\(separator: ", "\)"#)
+        for (file, text) in Self.sources("OSVAMonitorUI") {
+            #expect(text.firstMatch(of: joined) == nil, "\(file) joins a list of names into one line")
+        }
+        let lists = Self.sources("OSVAMonitorUI").filter { $0.1.contains("ForEach(") && $0.1.contains("items") && $0.1.contains("NameRow(") }.map(\.0)
+        #expect(Set(lists).isSuperset(of: ["Components.swift", "NameListView.swift"]))
+    }
+
     @Test func eachSharedThingIsDefinedOnce() {
         let all = (Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor")).map(\.1).joined(separator: "\n")
         for component in ["SeverityMark", "StatusChip", "GradeTile", "VerificationMark", "GroupContainer", "FindingRow", "CommandBlock",
                           "FixButton", "FixConfirmation", "FixStatusLine", "FixRunCard", "FixProblemCard", "FixLogView", "FixStepLine",
-                          "FixElapsed", "SiteLink", "RowHover"] {
+                          "FixElapsed", "SiteLink", "RowHover", "ProvenanceView", "FactRow", "NameListView", "NameRow",
+                          "ListDisclosureRow", "QuietCoverageSection", "AppIcon"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
@@ -129,7 +140,9 @@ import OSVAKit
     /// lightens under dark mode's light text.
     @Test func hoverAndLinksGoThroughTheirComponents() {
         for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") {
-            #expect(!text.contains(".buttonStyle(.link)"), "\(file) draws a system link")
+            #expect(!text.contains(".buttonStyle(.link)") && text.firstMatch(of: /Text\([^\n]*\)[^\n]*\.foregroundStyle\(\.tint\)/) == nil
+                    && text.firstMatch(of: /Text\([^\n]*\)[^\n]*\.foregroundStyle\(Color\.accentColor\)/) == nil,
+                    "\(file) draws link-coloured text on the glass")
             #expect(!text.contains(".fill(.quaternary)") && !text.contains(".fill(.quinary)") && !text.contains("(.quaternary, in:")
                     && !text.contains("(.quinary, in:"), "\(file) uses a system fill that lightens in dark mode")
             let hovers = text.components(separatedBy: ".onHover").count - 1

@@ -102,8 +102,9 @@ public struct FindingRow: View {
 
     @ViewBuilder private var details: some View {
         VStack(alignment: .leading, spacing: 8) {
+            ProvenanceView(finding.provenance)
             if !fix.isResolved { advice }
-            SiteLink("Open on verificationalliance.org", url: finding.pageURL, open: actions.open)
+            SiteLink(finding.pageLabel, url: finding.pageURL, open: actions.open)
         }
         .padding(.top, 4)
         .transition(.opacity)

@@ -9,10 +9,16 @@ public struct PopoverActions {
     public var open: (URL) -> Void
     public var copy: (String) -> Void
     public var fix: FixActions
+    /// A check for a new version of the app, the person's own (Sparkle's window shows what it finds).
+    public var checkForUpdates: () -> Void
+    /// Opens a long list of names (the apps nothing checks) in its own window.
+    public var openList: (NameList) -> Void
 
     public init(scanNow: @escaping () -> Void, openSettings: @escaping () -> Void, quit: @escaping () -> Void,
-                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none) {
+                open: @escaping (URL) -> Void, copy: @escaping (String) -> Void, fix: FixActions = .none,
+                checkForUpdates: @escaping () -> Void = {}, openList: @escaping (NameList) -> Void = { _ in }) {
         self.scanNow = scanNow; self.openSettings = openSettings; self.quit = quit; self.open = open; self.copy = copy; self.fix = fix
+        self.checkForUpdates = checkForUpdates; self.openList = openList
     }
 
     public static var none: PopoverActions { PopoverActions(scanNow: {}, openSettings: {}, quit: {}, open: { _ in }, copy: { _ in }) }
@@ -29,15 +35,23 @@ public struct PopoverView: View {
     public var actions: PopoverActions
     /// Each finding's fix: its button, its confirmation, how its last run went.
     public var fixes: [String: FixRowState]
+    public var updates: UpdateState
     public var maxListHeight: CGFloat
     /// False draws the list without a scroll view (for ImageRenderer, which does not draw scroll views' content).
     public var scrolls: Bool
     @State private var expanded: Set<String>
     @State private var listHeight: CGFloat = 0
+    @State private var gearFrame: CGRect = .zero
 
-    public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], expanded: Set<String> = [],
-                maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true) {
-        self.content = content; self.actions = actions; self.fixes = fixes; self.maxListHeight = maxListHeight; self.scrolls = scrolls
+    /// Lists opened from the start (`coverageOpen`: bucket titles, and "notInIndex" or "updatedElsewhere" for the quiet
+    /// sections), for renders.
+    let coverageOpen: Set<String>
+
+    public init(content: PopoverContent, actions: PopoverActions, fixes: [String: FixRowState] = [:], updates: UpdateState = .none,
+                expanded: Set<String> = [], maxListHeight: CGFloat = PopoverView.maxListHeight, scrolls: Bool = true,
+                coverageOpen: Set<String> = []) {
+        self.content = content; self.actions = actions; self.fixes = fixes; self.updates = updates; self.maxListHeight = maxListHeight
+        self.scrolls = scrolls; self.coverageOpen = coverageOpen
         _expanded = State(initialValue: expanded)
     }
 
@@ -47,7 +61,7 @@ public struct PopoverView: View {
             if content.isScanning {
                 ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
             }
-            if !content.sections.isEmpty || content.coverage.notCheckedCount + content.coverage.notInIndexCount > 0 {
+            if !content.sections.isEmpty || content.coverage.notCheckedCount + content.coverage.notInIndexCount + content.coverage.updatedElsewhereCount > 0 {
                 if scrolls {
                     ScrollView(.vertical) {
                         groups.background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
@@ -58,6 +72,9 @@ public struct PopoverView: View {
                 } else {
                     groups
                 }
+            }
+            if let version = updates.waitingVersion {
+                UpdateWaitingRow(version: version, install: actions.checkForUpdates)
             }
             footer
         }
@@ -84,21 +101,34 @@ public struct PopoverView: View {
         }
     }
 
-    /// What could not be vouched for: what nothing classifies, then what was never reported. Neither is "clean".
+    /// What could not be vouched for: what nothing classifies, what something else keeps up to date, then what was
+    /// never reported. None of it is "clean".
     @ViewBuilder private var coverage: some View {
         let c = content.coverage
         if c.notCheckedCount > 0 {
             GroupContainer(.notChecked, count: c.notCheckedCount) {
                 ForEach(Array(c.notChecked.enumerated()), id: \.element.id) { i, bucket in
                     if i > 0 { Divider().padding(.leading, 12) }
-                    ListDisclosureRow(bucket.source, items: bucket.items)
+                    ListDisclosureRow(CoverageLists.list(bucket, in: .notChecked), open: coverageOpen.contains(bucket.id), openList: actions.openList)
                 }
             }
         }
-        if c.notInIndexCount > 0 { NotInIndexSection(coverage: c) }
+        if c.updatedElsewhereCount > 0 {
+            QuietCoverageSection(symbol: "arrow.triangle.2.circlepath", title: "\(c.updatedElsewhereCount.formatted()) kept up to date elsewhere",
+                                 caption: CoverageLists.keepersCaption(c.updatedElsewhere),
+                                 lists: c.updatedElsewhere.map { CoverageLists.list($0, in: .updatedElsewhere) },
+                                 open: coverageOpen.contains("updatedElsewhere"), rowsOpen: coverageOpen, openList: actions.openList)
+        }
+        if c.notInIndexCount > 0 {
+            QuietCoverageSection(symbol: "checkmark.circle", title: "\(c.notInIndexCount.formatted()) not in the index",
+                                 caption: "No known problems — not proof of safety",
+                                 lists: c.notInIndex.map { CoverageLists.list($0, in: .notInIndex) },
+                                 open: coverageOpen.contains("notInIndex"), rowsOpen: coverageOpen, openList: actions.openList)
+        }
     }
 
-    /// Scan Now is the one prominent control and takes the accent colour; Settings and Quit are quiet symbols.
+    /// Scan Now is the one prominent control and takes the accent colour; Settings and Quit are quiet symbols. In the
+    /// installed app the gear opens a short menu: Settings, and Check for Updates.
     private var footer: some View {
         HStack(spacing: 4) {
             Button(action: actions.scanNow) {
@@ -108,7 +138,15 @@ public struct PopoverView: View {
             .controlSize(.large)
             .disabled(content.isScanning)
             Spacer()
-            quiet("gearshape", "Settings…", action: actions.openSettings)
+            quiet("gearshape", updates.isAvailable ? "Settings and updates" : "Settings…") {
+                if updates.isAvailable {
+                    AppMenu.show(below: gearFrame, updates: updates, openSettings: actions.openSettings, checkForUpdates: actions.checkForUpdates)
+                } else {
+                    actions.openSettings()
+                }
+            }
+            .background(GeometryReader { g in Color.clear.onAppear { gearFrame = g.frame(in: .global) }
+                .onChange(of: g.frame(in: .global)) { _, f in gearFrame = f } })
             quiet("power", "Quit OSVA Monitor", action: actions.quit)
         }
     }
@@ -125,19 +163,33 @@ public struct PopoverView: View {
     }
 }
 
-/// The worst thing in one shield, one number and one sentence; no card, no tint. Colour lives in the glyph only.
-/// "1,186 not in the index", captioned "No known problems — not proof of safety", opening to the lists by source.
-struct NotInIndexSection: View {
-    let coverage: Coverage
-    @State private var open = false
+/// A quiet line under the groups, with lists behind it: "1,186 not in the index — No known problems, not proof of
+/// safety", "37 kept up to date elsewhere — By the App Store, macOS or their browser; not checked here". It opens to
+/// its lists, one row each.
+struct QuietCoverageSection: View {
+    let symbol: String
+    let title: String
+    let caption: String
+    let lists: [NameList]
+    let openList: (NameList) -> Void
+    /// Lists opened from the start, by title (for renders).
+    let rowsOpen: Set<String>
+    @State private var open: Bool
+
+    init(symbol: String, title: String, caption: String, lists: [NameList], open: Bool = false, rowsOpen: Set<String> = [],
+         openList: @escaping (NameList) -> Void) {
+        self.symbol = symbol; self.title = title; self.caption = caption; self.lists = lists; self.openList = openList
+        self.rowsOpen = rowsOpen
+        _open = State(initialValue: open)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                Image(systemName: symbol).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("\(coverage.notInIndexCount.formatted()) not in the index").foregroundStyle(.secondary)
-                    Text("No known problems — not proof of safety").font(Typeface.caption).foregroundStyle(.secondary)
+                    Text(title).foregroundStyle(.secondary)
+                    Text(caption).font(Typeface.caption).foregroundStyle(.secondary)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
@@ -154,9 +206,9 @@ struct NotInIndexSection: View {
             .accessibilityAddTraits(.isButton)
             if open {
                 VStack(spacing: 0) {
-                    ForEach(Array(coverage.notInIndex.enumerated()), id: \.element.id) { i, bucket in
+                    ForEach(Array(lists.enumerated()), id: \.element.id) { i, list in
                         if i > 0 { Divider().padding(.leading, 12) }
-                        ListDisclosureRow(bucket.source, items: bucket.items)
+                        ListDisclosureRow(list, open: rowsOpen.contains(list.id), openList: openList)
                     }
                 }
                 .background {

@@ -150,6 +150,8 @@ public struct FixPlan: Hashable, Sendable {
                 if action == .upgrade { plan.homebrew = Homebrew(brew: b, name: f, cask: false, versionIsTheFix: false, label: f) }
             } else {
                 guard tools.isExecutable(python.executable) else { return .failure(.toolNotFound(python.label)) }
+                // An upgrade is offered only after what depends on the package is checked (FixAdvisor, PipGuard), and
+                // checked again before and after it runs (AppModel): 0.2.0 broke fastapi this way, 0.2.1 refused them all.
                 plan.use(tool: python.executable, name: "pip", pathFirst: false)
                 let toUser = command.contains(" --user ")
                 plan.place = python.label + (toUser || user ? ", your user site" : "")
@@ -157,6 +159,11 @@ public struct FixPlan: Hashable, Sendable {
                     plan.pip = Pip(python: python.executable, requirement: "\(inputs.name)==\(t)", user: toUser, name: inputs.name, target: t)
                 }
             }
+
+        case .application, .addOn:
+            // An app updates itself or through its cask, an extension through its editor or browser: the command is
+            // there to read and copy; the app does not run it for you yet.
+            return .failure(.noCommand)
 
         case .cargoInstall:
             guard let cargo = tools.firstExecutable(["~/.cargo/bin/cargo", "/opt/homebrew/bin/cargo", "/usr/local/bin/cargo"]) else {

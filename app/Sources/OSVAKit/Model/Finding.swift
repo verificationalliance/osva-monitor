@@ -115,6 +115,10 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         case package(ecosystem: Ecosystem, name: String)
         /// A project our site grades (matched from Homebrew), checked against its recent advisories.
         case project(slug: String, name: String, installedAs: String)
+        /// An app or a library bundled in one, checked against its product record's recent advisories.
+        case product(key: String, name: String)
+        /// An editor or browser extension its store reported as malicious.
+        case addOn(store: String, id: String)
     }
 
     public var id: String
@@ -149,6 +153,9 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var commandInputs: UpgradeCommand.Inputs?
     public var verification: Verification
     public var grade: String?
+    /// Where each copy is on this Mac and why it is there, one per copy (nil in reports saved before, or when nothing
+    /// could be told). Read from local files after the API was asked; never sent.
+    public var provenance: [Provenance]? = nil
 
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String, fixedVersion: String?,
                 severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
@@ -174,6 +181,7 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         if case let .project(_, _, installedAs) = subject, let first = origins.first, first.kind == .homebrew {
             return "\(first.label) \(installedAs)"
         }
+        if let profiles = Origin.profilesSummary(origins) { return profiles }
         var seen = Set<String>(), labels: [String] = []
         for o in origins where seen.insert(o.location).inserted { labels.append(o.location) }
         let shown = labels.prefix(3).joined(separator: ", ")

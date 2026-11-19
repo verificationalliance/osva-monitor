@@ -33,7 +33,7 @@ public enum PreviewData {
                      .init(source: "RubyGems", items: ["CFPropertyList 2.3.6", "did_you_mean 1.3.0", "minitest 5.11.3"]),
                      .init(source: "Folders", items: ["@next/env 14.0.0", "accepts 1.3.8", "express 4.18.2"])],
         notChecked: [.init(source: "Homebrew packages with no graded project", items: ["abseil 20260817.0", "ack 3.10.0", "aom 3.15.3", "slack 4.51.180"]),
-                     .init(source: "Apps that do not bundle Electron", items: ["Firefox", "Google Chrome", "iTerm", "Xcode"])])
+                     .init(source: "Apps with no security record", items: ["Firefox", "Google Chrome", "iTerm", "Xcode"])])
 
     public static let findings: [Finding] = {
         let home = NSHomeDirectory()
@@ -148,6 +148,15 @@ public enum PreviewData {
     public static func offer(_ id: String, homebrew: String? = nil) -> FixOffer {
         guard case let .success(plan) = FixPlan.make(for: fixFinding(id), tools: fixtureTools) else { preconditionFailure("no fix for \(id)") }
         return FixOffer(plan: plan, homebrew: homebrew)
+    }
+
+    /// What FixPlan decides for a fixture finding: its plan, or the refusal the row shows (a pip or lockfile upgrade
+    /// is not run for you since 0.2.1).
+    static func availability(_ id: String) -> FixRowState.Availability {
+        switch FixPlan.make(for: finding(id), tools: fixtureTools) {
+        case let .success(plan): return .offered(FixOffer(plan: plan, homebrew: nil))
+        case let .failure(refusal): return .withheld(refusal.explanation)
+        }
     }
 
     public enum FixID {
@@ -269,7 +278,34 @@ public enum PreviewData {
                                                              "PyPI setuptools 58.0.4 · Python 3.9.6 · macOS", "PyPI urllib3 1.26.5 · Python 3.15.2 · macOS",
                                                              "RubyGems nokogiri 1.13.8 · macOS", "crates.io time 0.1.43"]),
         SentRequest(endpoint: "GET api/v1/project", items: ["project cpython", "project nginx", "project openssh", "project openssl"]),
-    ], withheldCount: 683, answeredFromCache: 0)
+    ], withheldCount: withheld.reduce(0) { $0 + $1.items.count }, answeredFromCache: cached.count, cached: cached, withheld: withheld)
+
+    /// Answered from the cache in the fixture scan: checked a few hours before, not sent again.
+    public static let cached = [
+        "npm @babel/traverse 7.22.5", "npm braces 3.0.2", "npm cookie 0.5.0", "npm cross-spawn 7.0.3", "npm express 4.18.2 · macOS",
+        "npm micromatch 4.0.5", "npm path-to-regexp 0.1.7", "npm semver 7.5.2", "npm ws 8.13.0",
+        "PyPI certifi 2023.7.22 · Python 3.9.6 · macOS", "PyPI idna 3.4 · Python 3.15.2 · macOS", "PyPI requests 2.31.0 · Python 3.15.2 · macOS",
+        "RubyGems rexml 3.2.5 · macOS", "crates.io regex 1.9.1",
+        "project curl", "project git", "project libxml2", "project sqlite",
+    ]
+
+    /// What the fixture scan never sent, by where it was found.
+    public static let withheld: [Coverage.Bucket] = [
+        .init(source: "Homebrew", items: ["abseil 20260817.0", "ack 3.10.0", "aom 3.15.3", "brotli 1.2.0", "c-ares 1.34.6", "ca-certificates 2026-09-30",
+                                          "cairo 1.18.6", "fontconfig 2.17.1", "gettext 0.26", "glib 2.86.2", "harfbuzz 12.3.0", "icu4c@78 78.1",
+                                          "jq 1.8.1", "libevent 2.1.12", "libuv 1.52.0", "little-cms2 2.17", "lz4 1.10.0", "mpdecimal 4.0.1",
+                                          "oniguruma 6.9.10", "pcre 8.45", "pkgconf 2.5.1", "readline 8.3.3", "ripgrep 15.1.0", "slack 4.51.180",
+                                          "tree 2.2.1", "webp 1.6.0", "zstd 1.5.7"]),
+        .init(source: "pip", items: ["altgraph 0.17.2", "annotated-types 0.8.0", "beniget 0.4.2.post1", "macholib 1.15.2", "mlx 0.32.4",
+                                     "mlx-metal 0.32.4", "packaging 25.0", "pydantic-core 2.41.5", "six 1.15.0", "typing-extensions 4.15.0"]),
+        .init(source: "RubyGems", items: ["CFPropertyList 2.3.6", "did_you_mean 1.3.0", "minitest 5.11.3", "net-telnet 0.2.0",
+                                          "power_assert 1.1.3", "test-unit 3.2.9", "xmlrpc 0.3.0"]),
+        .init(source: "Folders", items: ["@next/env 14.0.0", "@swc/helpers 0.5.2", "accepts 1.3.8", "array-flatten 1.1.1", "busboy 1.6.0",
+                                         "caniuse-lite 1.0.30001660", "content-disposition 0.5.4", "depd 2.0.0", "destroy 1.2.0", "ee-first 1.1.1",
+                                         "encodeurl 1.0.2", "escape-html 1.0.3", "etag 1.8.1", "finalhandler 1.2.0", "fresh 0.5.2",
+                                         "graceful-fs 4.2.11", "merge-descriptors 1.0.1", "methods 1.1.2", "nanoid 3.3.7", "our-design-system 3.0.0",
+                                         "picocolors 1.1.0", "range-parser 1.2.1", "source-map-js 1.2.1", "styled-jsx 5.1.1", "vary 1.1.2"]),
+    ]
 
     public static func report(findings: [Finding] = findings, problems: [String] = [], coverage: Coverage = coverage) -> ScanReport {
         ScanReport(startedAt: now.addingTimeInterval(-300), finishedAt: now.addingTimeInterval(-240),
@@ -280,6 +316,11 @@ public enum PreviewData {
     public static func settings(report: ScanReport? = report()) -> SettingsState {
         let home = NSHomeDirectory()
         return SettingsState(folders: [home + "/code/storefront", home + "/code/tools"], intervalHours: 6, notifications: true,
-                             notificationsAvailable: true, launchAtLogin: true, launchAtLoginAvailable: true, lastReport: report)
+                             notificationsAvailable: true, launchAtLogin: true, launchAtLoginAvailable: true, lastReport: report,
+                             updates: updates)
     }
+
+    /// The installed app's updater, checked this morning.
+    public static let updates = UpdateState(isAvailable: true, canCheck: true, checksAutomatically: true, version: "0.1.1",
+                                            lastChecked: now.addingTimeInterval(-3 * 3600))
 }
