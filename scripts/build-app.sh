@@ -145,7 +145,13 @@ if [ -n "${DEVELOPER_ID:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
   kc_args=()
   if [ -n "${SIGNING_KEYCHAIN:-}" ]; then
     saved_list=$(security list-keychains -d user | tr -d '" ')
-    restore_keychains() { security list-keychains -d user -s $saved_list; security lock-keychain "$SIGNING_KEYCHAIN" || true; }
+    # An account whose search list was empty (the Mac server's build account) gets it back empty: list-keychains -s with
+    # no names would leave the signing keychain in it.
+    restore_keychains() {
+      if [ -n "$saved_list" ]; then security list-keychains -d user -s $saved_list
+      else defaults delete com.apple.security DLDBSearchList 2>/dev/null || true; fi
+      security lock-keychain "$SIGNING_KEYCHAIN" || true
+    }
     trap restore_keychains EXIT
     security unlock-keychain -p "$(cat "${SIGNING_KEYCHAIN_PASSWORD_FILE:?set SIGNING_KEYCHAIN_PASSWORD_FILE}")" "$SIGNING_KEYCHAIN"
     security list-keychains -d user -s $saved_list "$SIGNING_KEYCHAIN"
