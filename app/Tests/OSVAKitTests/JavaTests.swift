@@ -214,6 +214,23 @@ enum JDK {
         #expect(JavaCheck.match(r.runtimes, index: index, checkedBrew: ["openjdk@17"]).matches.map(\.runtime.place) == [.sdkman, .mise])
         #expect(JavaCheck.match(r.runtimes, index: index).matches.count == 3)             // when brew could not say, it is checked here
     }
+
+    /// Every folder the source lists is under the environment's home or its system root, so a test's scan reads no JDK of
+    /// the Mac it runs on (CI's macOS runners have Temurin in /Library/Java/JavaVirtualMachines and Homebrew's openjdk).
+    @Test func readsOnlyTheHomeAndTheSystemRoot() {
+        let home = URL(fileURLWithPath: "/Users/ana", isDirectory: true)
+        let tools = ToolEnvironment.fixture(home: home)
+        let source = JavaSource(environment: tools)                                    // the app's own Homebrew prefixes
+        let folders = (source.optFolders() + source.roots().map(\.folder)).map(\.path)
+        #expect(folders.count == 8, "\(folders)")
+        #expect(folders.allSatisfy { $0.hasPrefix(home.path + "/") }, "\(folders)")
+        #expect(folders.contains(tools.systemRoot + "/Library/Java/JavaVirtualMachines"))
+        #expect(folders.contains(tools.systemRoot + "/opt/homebrew/opt") && folders.contains(tools.systemRoot + "/usr/local/opt"))
+        // and in the app, nothing changes: the root is empty
+        let app = JavaSource(environment: ToolEnvironment(home: home, base: [:]))
+        #expect(app.optFolders().map(\.path) == ["/opt/homebrew/opt", "/usr/local/opt"])
+        #expect(app.roots().first?.folder.path == "/Library/Java/JavaVirtualMachines")
+    }
 }
 
 @Suite struct JavaCheckTests {

@@ -625,10 +625,10 @@ func date(_ s: String) -> Date { ISO8601DateFormatter().date(from: s + "T12:00:0
                 site.dist("secret-project", "0.1.0", requires: ["setuptools>=40"], directURL: #"{"url":"file:///Users/ana/secret-project","dir_info":{"editable":true}}"#)
                 site.dist("setuptools", "58.0.4")
             }
-            let exe = "/opt/homebrew/bin/python3"
+            let exe = home.appendingPathComponent("system-root/opt/homebrew/bin/python3").path        // Homebrew's, on the fixture Mac
             let describe = #"{"version": "3.9.6", "executable": "\#(exe)", "prefix": "/opt/homebrew/opt/python@3.9/Frameworks/Python.framework/Versions/3.9", "base_prefix": "/opt/homebrew/opt/python@3.9/Frameworks/Python.framework/Versions/3.9", "stdlib": "/nonexistent", "usersite": null}"#
             let list = #"[{"name": "setuptools", "version": "58.0.4", "location": "\#(site.path)", "installer": "pip"}, {"name": "secret-project", "version": "0.1.0", "location": "\#(site.path)", "installer": "pip"}]"#
-            let tools = ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [
+            let tools = ToolEnvironment.fixture(home: home, runner: RecordedRunner(outputs: [
                 "\(exe) -c \(PythonSource.describeScript)": CommandResult(status: 0, stdout: Data(describe.utf8), stderr: Data()),
                 "\(exe) -m pip list -v --format=json --disable-pip-version-check": CommandResult(status: 0, stdout: Data(list.utf8), stderr: Data()),
             ]), isExecutable: { $0 == exe })

@@ -689,7 +689,7 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         let runner = SwitchableRunner([:])
         runner.set(Self.brewKey, Self.nginx("1.30.2"))
         runner.set(Self.npmKey, Self.lodash("4.17.20"))
-        let tools = ToolEnvironment(home: dir, base: [:], runner: runner, isExecutable: { $0 == Self.brew || $0 == Self.npm })
+        let tools = ToolEnvironment.fixture(home: dir, runner: runner, isExecutable: { $0 == Self.brew || $0 == Self.npm })
         let later = Later()
         let transport = Self.site(later)
         let scanner = Scanner(configuration: ScanConfiguration(storage: Storage(directory: dir), tools: tools, folders: [], applicationRoots: []),

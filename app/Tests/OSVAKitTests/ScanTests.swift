@@ -231,7 +231,7 @@ import Testing
               to: project.appendingPathComponent("package-lock.json"))
         let brew = "/opt/homebrew/bin/brew"
         let brewJSON = #"{"formulae":[{"name":"nginx","installed":[{"version":"1.30.2"}],"linked_keg":"1.30.2","homepage":"https://nginx.org/","urls":{"stable":{"url":"https://nginx.org/download/nginx-1.30.2.tar.gz"}}},{"name":"our-internal-tool","installed":[{"version":"1.0"}],"homepage":"https://git.example.com/x"}],"casks":[]}"#
-        let tools = ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [
+        let tools = ToolEnvironment.fixture(home: home, runner: RecordedRunner(outputs: [
             "\(brew) info --json=v2 --installed": CommandResult(status: 0, stdout: Data(brewJSON.utf8), stderr: Data()),
         ]), isExecutable: { $0 == brew })
         let transport = RecordedTransport.site(batch: "api/check-batch-malicious.json")
@@ -317,7 +317,7 @@ import Testing
     @Test func withoutTheIndexNothingIsSent() async {
         let home = temporaryDirectory()
         let transport = RecordedTransport { _, _ in .init(status: 503, body: Data()) }
-        let tools = ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false })
+        let tools = ToolEnvironment.fixture(home: home)
         let scanner = Scanner(configuration: ScanConfiguration(storage: Storage(directory: home), tools: tools, folders: [], applicationRoots: []),
                               transport: transport, pause: { _ in })
         let report = await scanner.scan()
