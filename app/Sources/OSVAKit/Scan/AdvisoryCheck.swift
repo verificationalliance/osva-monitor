@@ -1,7 +1,7 @@
 import Foundation
 
-/// Which of a project's or a product's advisories an installed version is affected by, and the one upgrade that clears
-/// them. Used for Homebrew formulae and casks (projects), and for apps and the libraries they bundle (products). Only
+/// Which of a project's or a product's advisories an installed version is affected by, and the one upgrade to propose.
+/// Used for Homebrew formulae and casks (projects), and for apps and the libraries they bundle (products). Only
 /// critical and high advisories, and any exploited in the wild, are weighed (`FindingBuilder.weighed`).
 ///
 /// Each advisory is decided by the verified core on one of two paths, and `Hit.basis` records which:
@@ -19,7 +19,9 @@ public struct AdvisoryCheck: Sendable {
 
     public var installed: String
     public var hits: [Hit]
-    /// The one upgrade that clears them all: the newest of the upgrades each path proposes.
+    /// The one upgrade to propose: the newest of the upgrades each path proposes. Only the ranges path's
+    /// (`Core.upgrade(from:ranges:)`) is proved to lie in none of the ranges; the first-fixed path's is the nearest
+    /// first fixed version above the installed one.
     public var target: String?
     /// With no upgrade known: the newest last affected version of the ranges the version lies in, when every one of
     /// them ends at a last affected version rather than a fixed one (Oracle names the newest affected update of each

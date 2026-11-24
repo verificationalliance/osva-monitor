@@ -1,10 +1,13 @@
 /*
  * OSVA Monitor's verified core: the C interface the Swift app calls.
  *
- * Every decision in the app where a bug would mislead the person using it goes through these functions. Each is
- * written in Lean 4 (the .lean files in core/OSVACore) together with theorems about it that Lean checks for every input; Lean
- * compiles those same definitions to C, which is linked into the app. A small shim (core/ffi/osva_shim.c) converts
- * between C bytes and Lean values; it is the only unproved code on this path.
+ * These functions decide version order, whether a version is affected by an advisory (by its ranges or by its first
+ * fixed versions), the upgrade that leaves the ranges behind, which names may be sent, and how a name is written into a
+ * URL, where the app asks them to (app/Sources/OSVAKit/Core.swift says where). Not every decision in the app goes
+ * through them: packages checked by exact version are flagged, and their upgrades chosen, by the server. Each function
+ * is written in Lean 4 (the .lean files in core/OSVACore) together with theorems about it that Lean checks for every
+ * input; Lean compiles those same definitions to C, which is linked into the app. A small shim (core/ffi/osva_shim.c)
+ * converts between C bytes and Lean values; it is the only unproved code on this path.
  *
  * Strings are byte buffers with explicit lengths (not NUL-terminated). Call osva_core_init() once before anything
  * else, and call the functions from one thread at a time.

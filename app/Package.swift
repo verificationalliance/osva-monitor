@@ -7,8 +7,10 @@
 // Targets
 //   OSVACore       C. The verified core: version order, affectedness, the privacy filter, URL encoding.
 //   OSVAKit        What the app knows how to do: take inventory (Homebrew, Electron apps, global packages, project
-//                  folders), download the public index, ask the API, and turn answers into findings. Every decision
-//                  of the four kinds above goes through Sources/OSVAKit/Core.swift and nowhere else.
+//                  folders), download the public index, ask the API, and turn answers into findings. It calls the
+//                  core only through Sources/OSVAKit/Core.swift, but not every decision of the four kinds above is
+//                  the core's: packages checked by exact version are flagged, and their upgrades chosen, by the
+//                  server. Core.swift says which decisions are which.
 //   OSVAMonitorUI  SwiftUI views and the app model, and the app's changelog (Resources/CHANGELOG.md, What's New).
 //   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
 //   osva-scan      One scan from the command line, with the same code the app runs.

@@ -1,7 +1,8 @@
 import Foundation
 
 /// Turns the API's answers into findings. Pure: everything it needs is passed in, so the tests drive it directly.
-/// Affectedness and version choices are the verified core's.
+/// For a project's or product's advisories, affectedness and the upgrade are the verified core's (AdvisoryCheck); for
+/// packages checked by exact version, they are the server's verdict and plan (`packageFindings`).
 public struct FindingBuilder: Sendable {
     public let index: PublicIndex
     private let core = Core.shared

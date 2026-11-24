@@ -8,4 +8,4 @@ package osvaCore where
 
 @[default_target]
 lean_lib OSVACore where
-  -- `lake build OSVACore:static` gives libOSVACore.a, which the app links (with the shim in ffi/)
+  -- `lake build OSVACore:static` gives .lake/build/lib/libosvaCore_OSVACore.a, which the app links (with the shim in ffi/)
