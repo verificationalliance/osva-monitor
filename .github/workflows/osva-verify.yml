@@ -1,0 +1,19 @@
+name: osva-verify
+
+# Re-checks the Lean core's claimed theorems (listed in .verificationalliance.json) with the
+# Verification Alliance's workflow, and has GitHub sign the result for the commit.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: verificationalliance/verify/.github/workflows/lean.yml@f209d201e5b4078bbd8b1d19aa306d110a6ae8ee # workflow-1
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
