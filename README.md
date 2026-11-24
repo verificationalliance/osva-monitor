@@ -175,7 +175,7 @@ The server the app talks to uses the same version order, and its implementation 
 ## Build
 
 You need macOS 26, Xcode 26 or later, and [elan](https://github.com/leanprover/elan). The Lean version is pinned in
-`core/lean-toolchain`.
+`core/lean-toolchain`; `build-app.sh` builds the core with that toolchain, and links the app with its runtime.
 
 ```sh
 ./scripts/check-core.sh   # re-check every proof, audit the axioms, test the bridge
