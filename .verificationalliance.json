@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "project": "core",
+  "modules": ["OSVACore"],
+  "ships": ["OSVACore"],
+  "claims": [
+    {"says": "A version is flagged only if it falls inside a published range.", "theorem": "OSVA.affectedIn_sound", "about": "code"},
+    {"says": "Every upgrade it suggests is outside every affected range.", "theorem": "OSVA.upgradeIn_clears", "about": "code"},
+    {"says": "Names it sends to the server never contain a delimiter.", "theorem": "OSVA.encode_no_delimiters", "about": "code"}
+  ]
+}
