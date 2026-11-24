@@ -1,0 +1,36 @@
+name: app-mac
+
+# The app's tests, on our own Mac (runner hq-mac-osva), never on a GitHub-hosted one. A self-hosted runner must not
+# run code from pull requests to a public repository, so only a push to main or a maintainer's dispatch starts this
+# workflow. It lives in its own file so that no pull_request trigger can reach it; do not add one.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One job at a time on the Mac.
+concurrency:
+  group: app-mac
+
+jobs:
+  app:
+    name: App tests (macOS)
+    runs-on: [self-hosted, macOS, ARM64, osva-mac]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          # elan v4.4.0, pinned to its commit
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/3cc76985a1becb3c03cd65c1c5007e6f186ae474/elan-init.sh -o elan-init.sh
+          sh elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build the Lean core
+        run: cd core && lake build OSVACore:static
+      - name: Swift tests
+        run: cd app && swift test
