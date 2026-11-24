@@ -48,8 +48,8 @@ if [ -n "${DEVELOPER_ID:-}" ]; then
 fi
 [ "${UPDATE_TESTING:-}" != 1 ] || swift_flags+=(-Xswiftc -DOSVA_UPDATE_TESTING)
 
-# The app's executable has the core inside it, from libosvaCore_OSVACore.a (app/Package.swift): it must not load the
-# core from a dylib, which would be whatever file of that name is on the Mac at run time, not the archive Lean built.
+# The app's executable has the core inside it, from libosvaCore_OSVACore.a (app/Package.swift). It must not load the
+# core from a dylib: that would be whatever file is at the dylib's path when the app runs, not code inside the app.
 check_core_inside() {
   local loads
   loads="$(otool -L "$1")" || die "otool cannot read $1"
