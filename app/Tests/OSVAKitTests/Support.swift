@@ -86,6 +86,19 @@ struct RecordedRunner: CommandRunner {
     }
 }
 
+extension ToolEnvironment {
+    /// A Mac made of the test's own folders: `home` is its home folder and `home`/system-root its "/" (`systemRoot`),
+    /// and it has none of this process's environment variables. A scan with it reads nothing machine-wide of the Mac
+    /// the tests run on: no JDK in /Library/Java/JavaVirtualMachines or Homebrew's opt (CI's macOS runners have both),
+    /// no Nix profile, no Python.
+    static func fixture(home: URL, base: [String: String] = [:], runner: any CommandRunner = RecordedRunner(outputs: [:]),
+                        isExecutable: @escaping @Sendable (String) -> Bool = { _ in false }) -> ToolEnvironment {
+        var tools = ToolEnvironment(home: home, base: base, runner: runner, isExecutable: isExecutable)
+        tools.systemRoot = home.appendingPathComponent("system-root", isDirectory: true).path
+        return tools
+    }
+}
+
 /// A fresh temporary directory, removed when the test process ends.
 func temporaryDirectory(_ name: String = #function) -> URL {
     let url = FileManager.default.temporaryDirectory

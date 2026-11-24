@@ -214,7 +214,7 @@ import Testing
         Make.editorExtension(vscode, publisher: "eamodio", name: "gitlens", version: "17.2.1", displayName: "GitLens", dependencies: [("axios", "1.14.1")])
         Make.chromiumExtension(home.appendingPathComponent(ExtensionHost.chrome.folder), profile: "Default", id: "abcdefghijklmnopabcdefghijklmnop",
                                folder: "1.0_0", manifest: ["name": "Ad Blocker", "version": "1.0"])
-        let tools = ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false })
+        let tools = ToolEnvironment.fixture(home: home)
         let transport = RecordedTransport.bundleSite()
         let scanner = Scanner(configuration: ScanConfiguration(storage: Storage(directory: home.appendingPathComponent("support")), tools: tools,
                                                                folders: [], applicationRoots: [applications]),
@@ -258,7 +258,7 @@ import Testing
         let home = temporaryDirectory()
         let applications = home.appendingPathComponent("Applications")
         Make.app(applications, "Slack", id: "com.tinyspeck.slackmacgap", short: "4.53.292")       // an A line, but no record (404)
-        let tools = ToolEnvironment(home: home, base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false })
+        let tools = ToolEnvironment.fixture(home: home)
         let transport = RecordedTransport.bundleSite()
         let scanner = Scanner(configuration: ScanConfiguration(storage: Storage(directory: home.appendingPathComponent("support")), tools: tools,
                                                                folders: [], applicationRoots: [applications]),

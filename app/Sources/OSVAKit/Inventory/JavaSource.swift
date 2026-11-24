@@ -68,10 +68,14 @@ public struct JavaSource: Sendable {
         var formula: String?
     }
 
+    /// Homebrew's opt folders, one per prefix: a link per installed formula, the openjdk ones among them.
+    func optFolders() -> [URL] {
+        homebrewPrefixes.map { URL(fileURLWithPath: environment.system($0 + "/opt"), isDirectory: true) }
+    }
+
     func candidates() -> [Candidate] {
         var out: [Candidate] = []
-        for prefix in homebrewPrefixes {
-            let opt = URL(fileURLWithPath: environment.system(prefix + "/opt"), isDirectory: true)
+        for opt in optFolders() {
             for name in Directory.entries(opt, limit: Self.maxOpt) where JavaVersion.isHomebrewFormula(name) && FixSafety.isSafeName(name) {
                 let jdk = opt.appendingPathComponent(name).appendingPathComponent("libexec/openjdk.jdk", isDirectory: true)
                 if let c = Self.layout(jdk) { out.append(Candidate(place: .homebrew, path: jdk, home: c.home, plist: c.plist, formula: name)) }
