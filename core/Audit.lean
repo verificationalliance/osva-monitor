@@ -9,6 +9,8 @@ open OSVA
 #print axioms vcmp_antisymm
 #print axioms vcmp_trans
 #print axioms vcmp_lt_trans
+#print axioms versionUncertain_spec
+#print axioms versionUncertain_without_hyphen
 #print axioms affected_has_upgrade
 #print axioms affected_not_when_fixed_on_branch
 #print axioms affected_not_when_newest
@@ -38,6 +40,7 @@ open OSVA
 #print axioms encode_no_delimiters
 #print axioms encode_length
 #print axioms ffiVcmp_spec
+#print axioms ffiVersionUncertain_spec
 #print axioms ffiAffected_one_iff
 #print axioms ffiAffectedRanges_one_iff
 #print axioms ffiUpgradeRanges_spec

@@ -15,8 +15,9 @@ import OSVACore.Version
 
 namespace OSVA
 
-/-- The first two numbers of a version as written (as keys, so "007" and "7" are the same branch number). -/
-def branchKey (s : Bytes) : List (List Nat) := ((keys s).filter isNumKey).take 2
+/-- The first two release numbers of a version as the order reads them, a missing one as 0: "2", "2.0" and "2.0.4"
+  are all on branch 2.0 (and "007" is "7"). -/
+def branchKey (s : Bytes) : List (List Nat) := ((tokens s).takeWhile isNumKey ++ [[3, 0], [3, 0]]).take 2
 
 /-- `none` when there is nothing to compare against; otherwise whether `v` is affected. -/
 def affected (v : Bytes) (fixed : List Bytes) : Option Bool :=
@@ -64,5 +65,10 @@ theorem affected_unknown_without_fixes (v : Bytes) : affected v [] = none := by
 #guard affected (bytes "10.6p1") [bytes "10.6p2"] == some true
 #guard affected (bytes "10.6p2") [bytes "10.6p2"] == some false
 #guard affected (bytes "1.0") [] == none
+-- "2" is "2.0", on the branch of its fix "2.0", as the order reads them
+#guard affected (bytes "2") [bytes "2.0", bytes "3.0.5"] == some false
+#guard affected (bytes "2.0") [bytes "2.0", bytes "3.0.5"] == some false
+#guard affected (bytes "2.0.4") [bytes "2.0", bytes "3.0.5"] == some false
+#guard affected (bytes "1.0rc1") [bytes "1.0.2", bytes "2.0.1"] == some true
 
 end OSVA

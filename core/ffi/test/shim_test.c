@@ -22,6 +22,25 @@ int main(void) {
     CHECK(osva_vcmp(S("v1.2.3"), S("1.2.3")) == 0, "v1.2.3 = 1.2.3");
     CHECK(osva_vcmp(S("10.6p2"), S("10.6")) == 1, "10.6p2 > 10.6");
     CHECK(osva_vcmp((const uint8_t *)"", 0, (const uint8_t *)"", 0) == 0, "empty = empty");
+    CHECK(osva_vcmp(S("1.0"), S("1.0.0")) == 0 && osva_vcmp(S("1.0.0"), S("1.0")) == 0, "1.0 = 1.0.0");
+    CHECK(osva_vcmp(S("15.0.0-canary.12"), S("15.0.0")) == -1 && osva_vcmp(S("15.0.0"), S("15.0.0-canary.12")) == 1,
+          "15.0.0-canary.12 < 15.0.0");
+    CHECK(osva_vcmp(S("2.4.6-p3"), S("2.4.6")) == 1 && osva_vcmp(S("2.4.6"), S("2.4.6-p3")) == -1, "2.4.6-p3 > 2.4.6");
+    CHECK(osva_vcmp(S("1.0-SP1"), S("1.0")) == 1, "1.0-SP1 > 1.0");
+    CHECK(osva_vcmp(S("5.3.0-RELEASE"), S("5.3.0")) == 0 && osva_vcmp(S("5.3.0"), S("5.3.0-RELEASE")) == 0,
+          "5.3.0-RELEASE = 5.3.0");
+
+    CHECK(osva_version_uncertain(S("33.7.2-jre")) == 1, "uncertain: 33.7.2-jre");
+    CHECK(osva_version_uncertain(S("2.0.0-incubating")) == 1, "uncertain: 2.0.0-incubating");
+    CHECK(osva_version_uncertain(S("1.0.0-rc.1")) == 1, "uncertain: 1.0.0-rc.1, a pre-release word on neither list");
+    CHECK(osva_version_uncertain(S("2.4.6-p3")) == 0, "certain: 2.4.6-p3");
+    CHECK(osva_version_uncertain(S("1.0-SP1")) == 0, "certain: 1.0-SP1");
+    CHECK(osva_version_uncertain(S("5.3.0-RELEASE")) == 0, "certain: 5.3.0-RELEASE");
+    CHECK(osva_version_uncertain(S("1.2.3")) == 0 && osva_version_uncertain(S("10.6p2")) == 0, "certain without a '-'");
+    CHECK(osva_version_uncertain(S("7.1.1-41")) == 0, "certain: a number after a '-'");
+    CHECK(osva_version_uncertain(S("1.0+build-jre")) == 0, "certain: build metadata ignored");
+    CHECK(osva_version_uncertain((const uint8_t *)"", 0) == 0 && osva_version_uncertain(NULL, 0) == 0, "certain: empty");
+    CHECK(osva_version_uncertain(NULL, 3) == -2, "uncertain refuses a NULL version with a length");
 
     const uint8_t *fx[] = { (const uint8_t *)"1.30.7", (const uint8_t *)"1.31.9" };
     size_t fl[] = { 6, 6 };
