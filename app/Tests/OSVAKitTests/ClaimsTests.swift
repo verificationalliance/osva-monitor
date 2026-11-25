@@ -213,11 +213,20 @@ import Testing
 
     static var checked: [Checked] { sample.checked }
 
+    /// A finding listed with nothing to do on this Mac: every flaw outside its published ranges, or of another platform.
+    static func listedOnly(_ f: Finding) -> Bool { f.outsideItsRanges == true || f.onlyElsewhere == true }
+
+    /// The findings in today's groups that say the version is affected: malicious ones aside, and those listed with
+    /// nothing to do on this Mac, which say it is not (`everyListedFindingWithNothingToDoIsNotAffected`).
+    static var affected: [Checked] {
+        checked.filter { !$0.finding.malicious && [.exploited, .criticalHigh, .other].contains($0.finding.group) && !listedOnly($0.finding) }
+    }
+
     /// The sample reaches every kind of finding these claims are about, each with findings in today's groups and with
     /// versions named, and every finding is read against its own answer: none is skipped.
     @Test func theClaimsAreCheckedOnEveryKindOfFinding() {
         #expect(Self.sample.missed == [], "findings whose answer the check could not find")
-        let affected = Set(Self.checked.filter { !$0.finding.malicious && [.exploited, .criticalHigh, .other].contains($0.finding.group) }.map(\.kind))
+        let affected = Set(Self.affected.map(\.kind))
         let named = Set(Self.checked.filter { $0.finding.fixedVersion != nil && !$0.finding.malicious }.map(\.kind))
         let kinds: Set = ["package", "program", "project", "product", "managed", "item"]
         #expect(affected == kinds, "kinds with affected findings: \(affected.sorted())")
@@ -228,7 +237,7 @@ import Testing
     /// every finding in today's groups, malicious ones aside, has an advisory whose published ranges hold its version,
     /// by the test's own comparisons (RangesTests.holds).
     @Test func everyAffectedFindingLiesInsideAPublishedRange() {
-        let affected = Self.checked.filter { !$0.finding.malicious && [.exploited, .criticalHigh, .other].contains($0.finding.group) }
+        let affected = Self.affected
         #expect(affected.count >= 20, "the sample has affected findings to check")
         for c in affected {
             let f = c.finding
@@ -237,9 +246,32 @@ import Testing
         }
     }
 
+    /// What is listed with nothing to do on this Mac is in Other, never counted and never "not checked", and does not
+    /// look affected: a finding outside its published ranges has none that holds its version and no severity; one whose
+    /// flaws are all of another platform has a severity only when a published range holds its version there. Neither
+    /// names a version. The claims fixture has both kinds, so this is never checked on nothing.
+    @Test func everyListedFindingWithNothingToDoIsNotAffected() {
+        let listed = Self.checked.filter { !$0.finding.malicious && Self.listedOnly($0.finding) }
+        #expect(listed.contains { $0.finding.outsideItsRanges == true } && listed.contains { $0.finding.onlyElsewhere == true },
+                "the sample has findings outside their ranges and findings of another platform")
+        for c in listed {
+            let f = c.finding
+            let holding = f.advisoryIDs.filter { id in (c.ranges[id] ?? []).contains { RangesTests.holds($0, f.installedVersion) } }
+            #expect(f.group == .other && !f.exploited && f.notChecked == nil && f.fixedVersion == nil && f.upgradeCommand == nil,
+                    "\(c.kind) \(f.id) is listed with nothing to do, yet looks like something to do")
+            if f.outsideItsRanges == true {
+                #expect(holding.isEmpty && f.severity == nil, "\(c.kind) \(f.id) is outside its ranges, with \(holding) holding it, severity \(String(describing: f.severity))")
+            }
+            if f.severity != nil {
+                #expect(!holding.isEmpty, "\(c.kind) \(f.id) has another platform's severity with no published range holding \(f.installedVersion)")
+            }
+        }
+    }
+
     /// "Every version it suggests upgrading to is newer than yours and lies outside the published ranges of every
     /// advisory it says that version fixes": the advisories whose ranges hold the installed version, less those the
-    /// finding lists as not fixed.
+    /// finding lists as not fixed. And for a package checked by exact version (ruling 8), it lands inside none of the
+    /// published ranges the installed version is outside of: the core's own upgrades never do (`upgradeFor_leaves`).
     @Test func everyNamedVersionLeavesTheAdvisoriesItFixes() {
         let named = Self.checked.filter { $0.finding.fixedVersion != nil && !$0.finding.malicious }
         #expect(named.count >= 20, "the sample names versions to check")
@@ -252,7 +284,50 @@ import Testing
                 guard rs.contains(where: { RangesTests.holds($0, installed) }) else { continue }
                 #expect(!rs.contains { RangesTests.holds($0, fixed) }, "\(c.kind) \(f.id): \(fixed) lies inside \(id)'s published ranges")
             }
+            guard c.kind == "package" || c.kind == "program" else { continue }
+            for (id, rs) in c.ranges.sorted(by: { $0.key < $1.key }) where !notFixed.contains(id) && !rs.isEmpty && !rs.contains(where: { RangesTests.holds($0, installed) }) {
+                #expect(!rs.contains { RangesTests.holds($0, fixed) }, "\(c.kind) \(f.id): \(fixed) lands inside \(id)'s published ranges, which \(installed) is outside of")
+            }
         }
+        #expect(Self.package("lands-inside").fixedVersion == nil, "the claims fixture's lands-inside names a version inside GHSA-land-b")
+    }
+
+    /// A flaw's "Fixed in X, not by this upgrade" is held to what a named version is: above the installed version, and
+    /// outside that flaw's published ranges when they hold the installed version. A malicious package names none: the
+    /// core checked none, and the advice is to remove it.
+    @Test func everyFlawsFixedInLeavesThatFlaw() {
+        var named = 0
+        for c in Self.checked {
+            let f = c.finding
+            for u in f.unresolved {
+                guard let fixedIn = u.fixedIn else { continue }
+                named += 1
+                #expect(!f.malicious, "\(c.kind) \(f.id), malicious, names \(fixedIn) as \(u.id)'s fix")
+                let rs = (c.same[u.id] ?? [u.id]).flatMap { c.ranges[$0] ?? [] }
+                guard c.kind != "program" || !rs.isEmpty else { continue }       // a program's row shows its worst part's version only
+                #expect(core.compareVersions(fixedIn, f.installedVersion) > 0, "\(c.kind) \(f.id): \(u.id)'s \(fixedIn) is not above \(f.installedVersion)")
+                guard rs.contains(where: { RangesTests.holds($0, f.installedVersion) }) else { continue }
+                #expect(!rs.contains { RangesTests.holds($0, fixedIn) }, "\(c.kind) \(f.id): \(u.id)'s \(fixedIn) lies inside its published ranges")
+            }
+        }
+        #expect(named >= 2, "the sample names fixed-in versions to check")
+        #expect(Self.package("unfixed-fixed-in").unresolved.map(\.id) == ["GHSA-uf-b"], "the claims fixture's unfixed-fixed-in lists its flaw")
+        #expect(Self.package("malicious-remaining").unresolved.map(\.id) == ["GHSA-mr"], "the claims fixture's malicious-remaining lists its flaw")
+    }
+
+    /// A note that names a version as fixed ("the issuer names X as fixed", "lists V as affected and X as fixed") names
+    /// the version the finding shows, which the core checked: never the issuer's own word, unchecked.
+    @Test func aNoteNamesOnlyTheCheckedVersion() {
+        var said = 0
+        for c in Self.checked {
+            let f = c.finding
+            for m in (f.note ?? "").matches(of: /(?:names|and) ([^\s,]+) as fixed/) {
+                said += 1
+                #expect(String(m.output.1) == f.fixedVersion, "\(c.kind) \(f.id) says \(m.output.0) but shows \(f.fixedVersion ?? "no version")")
+            }
+        }
+        #expect(said >= 10, "the sample has notes that name a fixed version")
+        #expect(Self.package("likely-unconfirmed").note == "Likely affected: the site publishes no affected ranges. No checked fixed version yet; see the site.")
     }
 
     // MARK: The routing, in the source
@@ -333,6 +408,11 @@ import Testing
             ("OSVAKit/Scan/AdvisoryCheck.swift", "return core.newestVersion(holding.compactMap(\\.lastAffected))"),
         ])
         #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])(?:newestVersion|sortedVersions)(?![A-Za-z0-9_])/, except: picks) == [])
+        // what the core weighs is made only from what the site publishes (the answers' readers), by the project path's
+        // reading of a record, and by the previews: no advisory or range of the app's own
+        let readers: Set = ["OSVAKit/API/Responses.swift", "OSVAKit/Scan/AdvisoryCheck.swift"]
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])(?:CoreAdvisory|AffectedRange)\s*(?:\.\s*init\s*)?\(|(?:CoreAdvisory|AffectedRange)\??\s*=\s*\.init\s*\(/,
+                           except: { path, _ in readers.contains(path) || path.hasPrefix("OSVAMonitorUI/PreviewData") }) == [])
         // the server's planned target is read only where the core judges it (and where it is decoded)
         #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])unjudgedTarget(?![A-Za-z0-9_])/, except: { path, _ in
             path == "OSVAKit/Scan/BatchCheck.swift" || path == "OSVAKit/API/Responses.swift"
@@ -426,8 +506,8 @@ import Testing
 
     /// A version, a command and what a command is made from live in a `Finding`, and are saved only in a report's
     /// findings: no other property or enum case is named `fixedVersion`, `upgradeCommand` or `commandInputs`, and no
-    /// `Codable` type but `Finding` and `ScanReport` names a `Finding` or an `UpgradeCommand.Inputs` in its body (one would
-    /// bring them back from text past `onlyTheSavedReportIsDecoded`), wherever it is made `Codable`.
+    /// `Codable` type but `Finding` and `ScanReport` names a `Finding`, an `UpgradeCommand.Inputs` or a `ScanReport` in its
+    /// body (one would bring them back from text past `onlyTheSavedReportIsDecoded`), wherever it is made `Codable`.
     @Test func versionsAndCommandsLiveOnlyInAFinding() throws {
         let finding = "OSVAKit/Model/Finding.swift"
         #expect(Self.lines(matching: /(?:^|[{;])\h*(?:@[A-Za-z0-9_]+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|package|open|static|class|final|lazy|weak|unowned|nonisolated|override|dynamic|required|convenience|mutating)(?:\([a-z]+\))?\h+)*(?:(?:var|let)\h+|(?:indirect\h+)?case\h+(?:`?[A-Za-z0-9_]+`?(?:\([^)]*\))?(?:\h*=\h*[^,]+)?\h*,\h*)*)`?(?:fixedVersion|upgradeCommand|commandInputs)`?(?![A-Za-z0-9_])/,
@@ -436,7 +516,7 @@ import Testing
         let codable = Set(types.flatMap { $0.declared.filter { $0.inherits.contains(/(?:^|[^A-Za-z0-9_])(?:Codable|Decodable)(?![A-Za-z0-9_])/) }.map { $0.name } })
         try #require(codable.isSuperset(of: ["Finding", "ScanReport", "Inputs", "Coverage"]), "the scan finds the Codable types")
         let carriers = types.flatMap { file in
-            file.declared.filter { $0.keyword != "extension" && codable.contains($0.name) && $0.body.contains(/(?:^|[^A-Za-z0-9_])(?:Finding|Inputs)(?![A-Za-z0-9_.])/) }
+            file.declared.filter { $0.keyword != "extension" && codable.contains($0.name) && $0.body.contains(/(?:^|[^A-Za-z0-9_])(?:Finding|Inputs|ScanReport)(?![A-Za-z0-9_.])/) }
                 .map { "\(file.path): \($0.name)" }
         }
         #expect(carriers.sorted() == ["OSVAKit/Model/Finding.swift: Finding", "OSVAKit/Model/ScanReport.swift: ScanReport"])
@@ -492,6 +572,8 @@ import Testing
         "In the app's code, only the verified core can make a version to upgrade to, and the commands are built only from such versions: "
             + "the types allow nothing else, and a guard test scans the source for ways around them.",
         "A report saved on disk is shown as it was saved until the app scans again.",
+        "Rebuilds, the exception above, may use the installed version.",
+        "On the project and product paths, an advisory that states no versions shows only if it is exploited, or beside another finding.",
     ]
 
     static let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

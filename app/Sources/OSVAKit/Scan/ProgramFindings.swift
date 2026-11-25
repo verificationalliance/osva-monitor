@@ -54,6 +54,8 @@ extension FindingBuilder {
         var unconfirmed = false
         /// Its affected and likely flaws on this Mac, which the program's sentence weighs the newest upgrade against.
         var flagged: [BatchResponse.Flaw]
+        /// Its other flaws with published ranges (BatchCheck.unflagged): the newest upgrade must not land inside any.
+        var unflagged: [BatchResponse.Flaw]
         /// The flaws on this Mac it is not shown for (likely ones of an affected part, reported ones and those past the
         /// list), and the most urgent of them: said in the sentence, never hidden.
         var more: Int
@@ -112,16 +114,14 @@ extension FindingBuilder {
         let state = Self.state(verdict, check, onThisMac: true, program: true)
         let upgrade = state.malicious || state.onlyElsewhere || state.check == .reported ? nil : check.upgrade(for: state.here)
         let unresolved = state.malicious
-            ? (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
-                UnresolvedFlaw(id: r.id, severity: Severity(api: verdict.flaws.first { $0.id == r.id }?.severity), fixedIn: r.fixedIn,
-                               reason: Self.reason(r.reason), detail: r.detail, python: package.python, onThisMac: true)
-            }
+            ? Self.maliciousUnresolved(verdict, python: package.python, onThisMac: true)
             : state.check == .reported ? [] : Self.unresolved(check, upgrade: upgrade, python: package.python, onThisMac: true)
         let decided = (state.check == .affected || state.check == .likely) && !state.onlyElsewhere
         let target = check.target(for: state.here)
         var c = Component(package: package, name: name, group: state.group, severity: state.severity, flawCount: state.flawCount,
                          exploited: state.exploited, malicious: state.malicious, check: state.check, upgrade: upgrade,
-                         flagged: decided ? check.flagged.filter(\.affectsThisMac) : [], more: state.moreLikely + state.moreReported,
+                         flagged: decided ? check.flagged.filter(\.affectsThisMac) : [], unflagged: decided ? check.unflagged : [],
+                         more: state.moreLikely + state.moreReported,
                          moreAlert: .worse(state.likelyAlert, state.reportedAlert), notChecked: state.notChecked,
                          advisories: verdict.advisories, unresolved: unresolved,
                          fixes: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), own: own, onlyElsewhere: state.onlyElsewhere)
@@ -262,6 +262,7 @@ extension FindingBuilder {
                 unresolved: unresolved, commandInputs: shown == nil ? nil : Self.inputs(origin: g.origins[0], malicious: malicious),
                 notChecked: notChecked)
             if here.isEmpty { program.onlyElsewhere = true }
+            if parts.allSatisfy(\.outsideOnly) { program.outsideItsRanges = true }   // its row says so, as a package's does
             findings.append(program)
         }
     }
@@ -378,18 +379,23 @@ extension FindingBuilder {
             let alert = same.map(\.notChecked).reduce(nil, Finding.NotChecked.worse)
             return " — reported, not checked" + BatchCheck.parenthetical(alert, count: same.map(\.flawCount).max() ?? 0)
         }
-        // judged from this Mac's flaws, at the versions they were found in (a version with only reported flaws is not one)
+        // judged from this Mac's flaws, at the versions they were found in (a version with only reported flaws is not one),
+        // and never inside the published ranges of another of their flaws (BatchCheck.unflagged)
         let core = Core.shared
         let decided = same.filter { !$0.flagged.isEmpty }
-        var seen = Set<String>(), flaws: [BatchResponse.Flaw] = []
+        var seen = Set<String>(), flaws: [BatchResponse.Flaw] = [], others: [BatchResponse.Flaw] = []
         for f in decided.flatMap(\.flagged) where seen.insert(f.id).inserted { flaws.append(f) }
-        let advisories = flaws.compactMap(\.coreAdvisory)                    // every flagged flaw has one (BatchCheck)
+        for f in decided.flatMap(\.unflagged) where seen.insert(f.id).inserted { others.append(f) }
+        let advisories = (flaws + others).compactMap(\.coreAdvisory)         // every flagged and unflagged flaw has one (BatchCheck)
+        let unchecked = decided.contains(where: \.unconfirmed) ? " — no checked fixed version yet" : " — no fixed release yet"
         guard let target = core.newestVersion(decided.compactMap { $0.upgrade?.version }),
-              let installed = core.newestVersion(decided.map(\.package.version)), advisories.count == flaws.count,
-              let judged = core.judge(target, from: installed, advisories: advisories, flagged: [Bool](repeating: true, count: advisories.count)),
-              let upgrade = judged.upgrade else { return decided.contains(where: \.unconfirmed) ? " — no checked fixed version yet" : " — no fixed release yet" }
+              let installed = core.newestVersion(decided.map(\.package.version)), advisories.count == flaws.count + others.count,
+              let judged = core.judge(target, from: installed, advisories: advisories,
+                                      flagged: flaws.map { _ in true } + others.map { _ in false }) else { return unchecked }
+        guard !judged.leaves.dropFirst(flaws.count).contains(false) else { return " — no checked fixed version yet" }
+        guard let upgrade = judged.upgrade else { return unchecked }
         let shown = Component.shown(upgrade.version)
-        return judged.leaves.allSatisfy { $0 } ? " — fixed in \(shown)" : " — partly fixed in \(shown)"
+        return judged.leaves.prefix(flaws.count).allSatisfy { $0 } ? " — fixed in \(shown)" : " — partly fixed in \(shown)"
     }
 
     /// ", and 2 more reported, not checked (CVE-X, exploited in the wild)": the flaws on this Mac one package's versions

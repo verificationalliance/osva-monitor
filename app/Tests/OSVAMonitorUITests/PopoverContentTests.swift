@@ -92,8 +92,36 @@ import SwiftUI
         let numeric = PreviewData.crowdedFindings.first { $0.title == "numeric" }!
         #expect(numeric.group == .other && numeric.severity == nil && numeric.statusChips.isEmpty)
         #expect(numeric.withoutVersion == "outside its published ranges")
-        #expect(c.sections.first { $0.group == .other }?.findings.map(\.id) == [numeric.id])
+        let windows = PreviewData.crowdedFindings.first { $0.title == "win-path" }!
+        #expect(c.sections.first { $0.group == .other }?.findings.map(\.id) == [numeric.id, windows.id])
         #expect(c.subline.hasPrefix(PopoverContent.unbroken("1 not checked against published ranges") + PopoverContent.dot))
+    }
+
+    /// A finding whose every flaw is of another platform, not affected there by published ranges: in Other, with no
+    /// severity, and a version line that says it does not affect this Mac, never "no fixed release known".
+    @Test func anotherPlatformsFindingSaysItDoesNotAffectThisMac() {
+        let windows = PreviewData.crowdedFindings.first { $0.title == "win-path" }!
+        #expect(windows.group == .other && windows.severity == nil && windows.statusChips.isEmpty && windows.fixedVersion == nil)
+        #expect(windows.withoutVersion == "does not affect this Mac")
+        // whatever its flaws' lines say: a finding with no unresolved flaws to tell it by
+        let bare = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1.0", upgrade: nil,
+                           severity: nil, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
+                           origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil)
+        var elsewhere = bare
+        elsewhere.onlyElsewhere = true
+        #expect(bare.withoutVersion == "no fixed release known" && elsewhere.withoutVersion == "does not affect this Mac")
+    }
+
+    /// The hero counts as lower-severity only what is in Other for something to do here: never a finding outside its
+    /// published ranges, nor one whose flaws are all of another platform.
+    @Test func whatAffectsNothingHereIsNoLowerSeverityFinding() {
+        func content(_ findings: [Finding]) -> PopoverContent { PopoverContent(report: PreviewData.report(findings: findings), isScanning: false, now: now) }
+        let other = PreviewData.findings.filter { $0.group == .other }
+        let listed = PreviewData.crowdedFindings.filter { $0.title == "numeric" || $0.title == "win-path" }
+        #expect(listed.count == 2 && listed.allSatisfy { $0.group == .other })
+        let c = content(other + listed)
+        #expect(c.hero == .clean && c.subline.hasPrefix(PopoverContent.unbroken("4 lower-severity findings") + PopoverContent.dot), "\(c.subline)")
+        #expect(!content(listed).subline.contains("lower-severity"))
     }
 
     @MainActor @Test func whatNothingChecksIsNoRecord() {

@@ -353,6 +353,30 @@ enum JDK {
         #expect(f.advisoryIDs.contains("CVE-2026-114938") && f.fixedVersion == nil && f.note?.contains("changelog") == false)
     }
 
+    /// A vendor's build that fixes only some of the advisories the row is shown for is a partial fix: the row says how
+    /// many it fixes and lists the ones it leaves, as every partial fix does. One that lands inside the published ranges
+    /// of a weighed advisory the runtime is outside of is never named, as the core's own upgrade never is (ruling 8).
+    @Test func aVendorBuildThatFixesSomeListsWhatItLeaves() throws {
+        func record(_ more: String = "") throws -> ProjectResponse {
+            try JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
+                {"slug":"openjdk","name":"OpenJDK","recent":[
+                 {"id":"CVE-V","sev":"HIGH","title":"Fixed in Corretto's build","ranges":[{"introduced":"27","last_affected":"27.0.1.0.3"}],
+                  "fixed_builds":[{"dist":"Amazon Corretto","build":"27.0.1.1.4"}]},
+                 {"id":"CVE-O","sev":"CRITICAL","title":"Not fixed yet","ranges":[{"introduced":"27"}]}\#(more)]}
+                """#.utf8))
+        }
+        var r = JDK.runtime("27.0.1", .corretto, path: "/Library/Java/JavaVirtualMachines/Corretto-27.0.1.1.3.jdk")
+        r.implementorVersion = "Corretto-27.0.1.1.3"
+        let f = try #require(JavaCheck.match([r], index: Make.index).findings(products: [:], projects: ["openjdk": try record()]).first)
+        #expect(f.group == .criticalHigh && f.flawCount == 2 && f.fixedVersion == "27.0.1.1.4" && f.fixesCount == 1)
+        #expect(f.unresolved.map(\.id) == ["CVE-O"] && f.unresolved.map(\.explanation) == ["Not fixed by this upgrade"])
+        #expect(f.unresolved.first?.name == "Not fixed yet" && f.note?.contains("changelog lists the fix in Corretto 27.0.1.1.4") == true)
+        // the same build inside a range 27.0.1 is outside of: never named
+        let landing = #",{"id":"CVE-I","sev":"HIGH","title":"From 27.0.1.1","ranges":[{"introduced":"27.0.1.1","fixed":"27.0.1.2"}]}"#
+        let inside = try #require(JavaCheck.match([r], index: Make.index).findings(products: [:], projects: ["openjdk": try record(landing)]).first)
+        #expect(inside.fixedVersion == nil && inside.fixesCount == nil && inside.unresolved.isEmpty && inside.note?.contains("changelog") == false)
+    }
+
     /// The live record (2026-11-19) states nothing for most of Java 8's advisories ("version '8u511-b32' is not a
     /// version"), two of them critical, none exploited: openjdk@8 8u502 has no finding for them alone; where a finding
     /// is made for other reasons, CVE-2026-114820 is named in its note and marked.

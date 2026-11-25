@@ -720,3 +720,85 @@ extension BatchCheckTests {
         #expect(f.group == .criticalHigh && !f.exploited && f.notChecked == Alert(id: "CVE-X", exploited: true, critical: false))
     }
 }
+
+/// The final review of core-decisions: what affects nothing here never looks affected, a suggested version never lands
+/// inside a published range the installed version is outside of, and a malicious package names no fixed version.
+extension BatchCheckTests {
+    /// A macOS package whose one flaw, high, is Windows-only: listed in Other with nothing to do on this Mac. It is as
+    /// serious as its flaw only when the core found the version inside the flaw's published ranges; without ranges, or
+    /// with ranges that leave the version out, it has no severity. It names no version either way.
+    @Test func anotherPlatformsFlawLooksAffectedOnlyWhenItIs() throws {
+        func elsewhere(_ ranges: String, fixedIn: String = "[]", plan: String = BatchCheckTests.plan(nil)) throws -> Finding {
+            try #require(Self.findings([try Self.result("npm", "p", "1.0.0", flaws: [Self.flaw("WIN", ranges: ranges, fixedIn: fixedIn, platform: "windows")],
+                                                        plan: plan)]).first)
+        }
+        let unranged = try elsewhere("null", fixedIn: #"["2.0.0"]"#, plan: Self.plan("2.0.0"))           // likely, on Windows
+        let outside = try elsewhere(#"[{"introduced":"3.0.0","fixed":"3.1.0"}]"#)                         // outside its ranges
+        let unstated = try elsewhere("null")                                                              // states nothing
+        for (name, f) in [("no ranges", unranged), ("ranges that leave it out", outside), ("nothing stated", unstated)] {
+            #expect(f.group == .other && f.onlyElsewhere == true && f.severity == nil, "\(name)")
+            #expect(f.fixedVersion == nil && f.upgradeCommand == nil && f.commandInputs == nil && f.note == nil, "\(name)")
+            #expect(!f.exploited && f.notChecked == nil && !f.group.needsAction, "\(name)")
+        }
+        // inside its published ranges, on Windows: its severity stays, still nothing to do here and no version
+        let affected = try elsewhere(#"[{"fixed":"2.0.0"}]"#, plan: Self.plan("2.0.0"))
+        #expect(affected.group == .other && affected.onlyElsewhere == true && affected.severity == .high)
+        #expect(affected.fixedVersion == nil && affected.upgradeCommand == nil)
+        // in a project folder, which may be deployed anywhere, the flaw is the finding's own
+        let folder = try #require(Self.findings([try Self.result("npm", "p", "1.0.0", flaws: [Self.flaw("WIN", fixedIn: #"["2.0.0"]"#, platform: "windows")],
+                                                                 plan: Self.plan("2.0.0"))]) { _ in .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true) }.first)
+        #expect(folder.group == .likely && folder.onlyElsewhere == nil && folder.severity == .high && folder.fixedVersion == "2.0.0")
+    }
+
+    /// Ruling 8: the server's target is judged against every flaw with published ranges, not only the ones the app
+    /// flags. 2.0.0 leaves A, but lands inside B, whose range 1.0.0 is outside of: refused, as the core's own upgrade on
+    /// the project path would be. 2.1.0 leaves both. A Windows-only flaw's range counts as much.
+    @Test func aSuggestedVersionNeverLandsInsideAnotherPublishedRange() throws {
+        let a = Self.flaw("A", ranges: #"[{"fixed":"2.0.0"}]"#)
+        func answer(_ target: String, platform: String? = nil) throws -> BatchResponse.Result {
+            try Self.result("npm", "p", "1.0.0", flaws: [a, Self.flaw("B", ranges: #"[{"introduced":"2.0.0","fixed":"2.1.0"}]"#, platform: platform)],
+                            plan: Self.plan(target))
+        }
+        let inside = BatchCheck.read(try answer("2.0.0"), installed: "1.0.0")
+        #expect(inside.check == .affected && inside.affected.map(\.id) == ["A"] && inside.reported.map(\.reason) == [.outsideRanges])
+        #expect(inside.upgrade == nil && inside.target == .unconfirmed && inside.fixed.isEmpty && inside.notFixed.map(\.flaw.id) == ["A"])
+        let f = try #require(Self.findings([try answer("2.0.0")]).first)
+        #expect(f.group == .criticalHigh && f.fixedVersion == nil && f.upgradeCommand == nil && f.commandInputs == nil)
+        #expect(f.note?.hasPrefix("No checked fixed version yet; see the site.") == true, "\(f.note ?? "")")
+        // the core's answer about a version the app did not pick says so too: it leaves A, and not B
+        #expect(inside.judge("2.0.5")?.leaves == [true, false])
+        let clear = BatchCheck.read(try answer("2.1.0"), installed: "1.0.0")
+        #expect(clear.upgrade?.version == "2.1.0" && clear.fixed == ["A"] && clear.judge("2.1.0")?.leaves == [true, true])
+        let ok = try #require(Self.findings([try answer("2.1.0")]).first)
+        #expect(ok.fixedVersion == "2.1.0" && ok.fixesCount == 1 && ok.upgradeCommand == "npm install -g p@2.1.0")
+        // another platform's range is a published range too
+        let windows = BatchCheck.read(try answer("2.0.0", platform: "windows"), installed: "1.0.0")
+        #expect(windows.upgrade == nil && windows.target == .unconfirmed)
+        // a partial fix within constraints is judged the same way
+        let partial = FixAdvisor.partial(try answer("2.0.0"), finding: f)
+        #expect(partial == nil)
+    }
+
+    /// A malicious package's other flaws name no fixed version: the core did not check one, and the advice is to remove
+    /// the package. Nor is any "not fixed by this upgrade", with no upgrade. A program's malicious part the same.
+    @Test func aMaliciousPackageNamesNoFixedVersion() throws {
+        let plan = #"{"target":null,"fixes":[],"remaining":[{"id":"MAL-X","fixed_in":null,"reason":"malicious"},"#
+            + #"{"id":"CVE-P","fixed_in":"2.0.0","reason":"other-platform","detail":"Windows"},{"id":"CVE-Q","fixed_in":"3.0.0","reason":"unknown"}]}"#
+        let r = try Self.result("npm", "evil", "1.0.0", flaws: [Self.flaw("MAL-X", malicious: true),
+                                                              Self.flaw("CVE-P", ranges: #"[{"fixed":"2.0.0"}]"#, fixedIn: #"["2.0.0"]"#, platform: "windows"),
+                                                              Self.flaw("CVE-Q", ranges: #"[{"fixed":"3.0.0"}]"#, fixedIn: #"["3.0.0"]"#)], plan: plan)
+        let f = try #require(Self.findings([r]).first)
+        #expect(f.group == .malicious && f.malicious && f.fixedVersion == nil)
+        #expect(f.unresolved.map(\.id) == ["CVE-P"] && f.unresolved.allSatisfy { $0.fixedIn == nil })
+        #expect(f.unresolved.map(\.explanation) == ["Windows only, does not affect this Mac"])
+        // inside a program
+        let fd = BuiltProgram(language: .rust, path: "/Users/ana/.cargo/bin/fd", name: "fd", version: "10.5.2", place: .cargoInstall, formula: nil,
+                              package: "fd-find", module: "fd-find", toolchain: nil)
+        let python = #"{"target":null,"fixes":[],"remaining":[{"id":"MAL-X","fixed_in":null,"reason":"malicious"},"#
+            + #"{"id":"CVE-P","fixed_in":"2.0.0","reason":"needs-python","detail":"Python >=3.10"}]}"#
+        let crate = try Self.result("crates.io", "evil", "1.0.0", flaws: [Self.flaw("MAL-X", malicious: true),
+                                                                          Self.flaw("CVE-P", ranges: #"[{"fixed":"2.0.0"}]"#, fixedIn: #"["2.0.0"]"#)], plan: python)
+        let program = try #require(Self.findings([crate]) { _ in .program(fd) }.first)
+        #expect(program.malicious && program.unresolved.map(\.id) == ["CVE-P"] && program.unresolved.allSatisfy { $0.fixedIn == nil })
+    }
+}

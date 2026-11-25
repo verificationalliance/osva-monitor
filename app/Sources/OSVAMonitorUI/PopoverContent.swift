@@ -110,7 +110,8 @@ public struct PopoverContent: Sendable {
         tallies = [TallyCount(tally: .malicious, count: malicious), TallyCount(tally: .exploited, count: exploited),
                    TallyCount(tally: .severity(.critical), count: critical), TallyCount(tally: .severity(.high), count: high)].filter { $0.count > 0 }
 
-        let lower = findings.filter { $0.group == .other }.count
+        // a finding listed with nothing to do on this Mac (outside its published ranges, or of another platform) is none
+        let lower = findings.filter { $0.group == .other && !$0.affectsNothingHere }.count
         let notChecked = findings.filter(\.group.isNotChecked).count
         // an exploited or critical flaw the core could not check, on any finding
         let alerting = findings.contains { $0.notCheckedMark != nil }

@@ -238,7 +238,7 @@ public struct BundleCheck: Sendable {
                         progress: @Sendable (String) -> Void) async -> (records: [String: ProductResponse], fromCache: [String], problems: [String]) {
         var records: [String: ProductResponse] = [:], fromCache: [String] = [], problems: [String] = []
         for p in approved {
-            if let cached = cache.readJSON(CachedProduct.self, "product", p.key, maxAge: maxAge) {
+            if let cached = cache.readJSON(CachedProduct.self, Self.productCache, p.key, maxAge: maxAge) {
                 if let r = cached.record { records[p.key] = r }
                 fromCache.append(p.sentDescription)
                 continue
@@ -247,9 +247,9 @@ public struct BundleCheck: Sendable {
             do {
                 let r = try await api.product(p)
                 records[p.key] = r
-                cache.writeJSON(CachedProduct(record: r), "product", p.key)
+                cache.writeJSON(CachedProduct(record: r), Self.productCache, p.key)
             } catch APIClient.APIError.http(404, _) {
-                cache.writeJSON(CachedProduct(record: nil), "product", p.key)
+                cache.writeJSON(CachedProduct(record: nil), Self.productCache, p.key)
             } catch {
                 problems.append("Product \(p.key): \(error.localizedDescription)")
                 if error as? APIClient.APIError == .keptRateLimiting { break }
@@ -259,6 +259,10 @@ public struct BundleCheck: Sendable {
     }
 
     struct CachedProduct: Codable { var record: ProductResponse? }
+
+    /// Where product records are cached. Records saved by 0.5.1 and before ("product") were decoded leniently and saved
+    /// again as decoded, so a range they could not read may be missing from them: never read as checked records.
+    static let productCache = "product-v2"
 }
 
 extension BundleAdvice {

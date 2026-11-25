@@ -172,6 +172,15 @@ public enum PreviewData {
                 f.outsideItsRanges = true
                 return f
             }(),
+            // its one flaw, high, is Windows-only and has no published ranges: in Other, with no severity and nothing to do
+            { () -> Finding in
+                var f = finding("crowded|win-path", .other, .package(ecosystem: .npm, name: "win-path"), "win-path", "1.4.0", nil, nil, flaws: 1,
+                                origins: [storefront], page: SiteURL.packagePage(.npm, "win-path", version: "1.4.0"), ecosystem: .npm, runnable: false,
+                                unresolved: [UnresolvedFlaw(id: "CVE-2026-50116", severity: .high, fixedIn: nil, reason: .otherPlatform, detail: "windows",
+                                                            summary: "Path traversal through drive-relative paths on Windows")])
+                f.onlyElsewhere = true
+                return f
+            }(),
         ]
     }()
 

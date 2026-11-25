@@ -13,8 +13,9 @@ import Foundation
 /// Malicious flaws are none of these: the malware record flags the package itself (FindingBuilder).
 ///
 /// The server's plan is read only through the core. Its target is the upgrade only when `Core.judge` finds it above the
-/// installed version and clear of at least one affected or likely flaw; the flaws it fixes are the ones the core says
-/// it leaves; and a remaining flaw's fixed version is named only when the core says it clears that flaw. Every version
+/// installed version, clear of at least one affected or likely flaw, and inside the published ranges of no other flaw
+/// (`unflagged`: a version the installed one is outside of may still land in one); the flaws it fixes are the ones the
+/// core says it leaves; and a remaining flaw's fixed version is named only when the core says it clears that flaw. Every version
 /// judged must first read as a version and nothing else (FixSafety). The core is called off the main thread.
 struct BatchCheck: Sendable {
     /// Why a flaw is reported rather than decided.
@@ -42,7 +43,8 @@ struct BatchCheck: Sendable {
         case none
         /// It does not read as a version and nothing else (FixSafety): never judged, never shown.
         case notAVersion
-        /// The core does not confirm it: it is not above the installed version, or leaves no affected or likely flaw.
+        /// The core does not confirm it: it is not above the installed version, leaves no affected or likely flaw, or
+        /// lands inside the published ranges of another flaw.
         case unconfirmed
         /// The core confirmed it: `upgrade`.
         case confirmed
@@ -83,6 +85,12 @@ struct BatchCheck: Sendable {
     /// asked about these, with every one flagged.
     let flagged: [BatchResponse.Flaw]
     private let advisories: [CoreAdvisory]
+    /// Every other flaw with published ranges the app can read, in the answer's order: the installed version lies
+    /// outside them (or is one whose order the core may not share with the ecosystem). `upgrade` and `judge` are asked
+    /// about these too, none flagged: a version that lands inside any of them is never the upgrade, as the core's own
+    /// upgrades (AdvisoryCheck) never are.
+    let unflagged: [BatchResponse.Flaw]
+    private let others: [CoreAdvisory]
 
     /// The finding's state: affected when any flaw is, else likely when any flaw is, else reported.
     var check: Finding.Check { !affected.isEmpty ? .affected : !likely.isEmpty ? .likely : .reported }
@@ -128,18 +136,23 @@ struct BatchCheck: Sendable {
             }
         }
 
-        // The server's target, judged against every affected and likely flaw: one leaves[i] per flagged[i].
+        // Every other flaw with published ranges: a suggested version must land inside none of them.
+        var unflagged: [BatchResponse.Flaw] = [], others: [CoreAdvisory] = []
+        for r in reported { if let a = r.flaw.coreAdvisory, !(a.ranges ?? []).isEmpty { unflagged.append(r.flaw); others.append(a) } }   // claims-mutant: flagged-only-judge
+
+        // The server's target, judged against every affected and likely flaw (one leaves[i] per flagged[i]) and every
+        // other flaw with published ranges, which it must leave too.
         let planned = verdict.plan?.unjudgedTarget
-        let judged = flagged.isEmpty ? nil : planned.flatMap { Self.judge($0, from: installed, advisories) }
-        let upgrade = judged?.upgrade
+        let judged = flagged.isEmpty ? nil : planned.flatMap { Self.judge($0, from: installed, advisories, others) }
+        let upgrade = judged.flatMap { Self.landsInside($0, flagged: advisories.count) ? nil : $0.upgrade }
         let target: Target = planned.map { FixSafety.isSafeVersion($0) ? (upgrade == nil ? .unconfirmed : .confirmed) : .notAVersion } ?? .none
-        let leaves = upgrade == nil ? [Bool](repeating: false, count: flagged.count) : judged!.leaves
+        let leaves = upgrade == nil ? [Bool](repeating: false, count: flagged.count) : Array(judged!.leaves.prefix(flagged.count))
         let remaining = verdict.plan?.remaining ?? []
         var fixed: [String] = [], notFixed: [NotFixed] = []
         for (k, f) in flagged.enumerated() {
             if leaves[k] { fixed.append(f.id); continue }
             let r = remaining.first { $0.id == f.id && $0.reason != .malicious }
-            let fixedIn = r?.fixedIn.flatMap { Self.judge($0, from: installed, [advisories[k]])?.upgrade }
+            let fixedIn = r?.fixedIn.flatMap { Self.judge($0, from: installed, [advisories[k]], [])?.upgrade }   // claims-mutant: fixed-in-for-another-flaw
             notFixed.append(NotFixed(flaw: f, reason: r?.reason, detail: r?.detail, fixedIn: fixedIn))
         }
         let unlisted = max(verdict.distinctFlaws - flaws.count, 0)
@@ -152,7 +165,7 @@ struct BatchCheck: Sendable {
                           unlistedExploited: unlisted > 0 ? verdict.exploited.filter { !listedIDs.contains($0) } : [],
                           unlistedWorst: unlisted > 0 ? worst : nil,
                           upgrade: upgrade, target: target, fixed: fixed, notFixed: notFixed,
-                          flagged: flagged, advisories: advisories)
+                          flagged: flagged, advisories: advisories, unflagged: unflagged, others: others)
     }
 
     /// The upgrade a finding shown for the flaws `here` names: the confirmed target, only when it leaves at least one of
@@ -162,15 +175,22 @@ struct BatchCheck: Sendable {
     /// What became of the target for a finding shown for the flaws `here`: confirmed only as `upgrade(for:)` is.
     func target(for here: Set<String>) -> Target { target == .confirmed && upgrade(for: here) == nil ? .unconfirmed : target }
 
-    /// The core's answer about a version the app did not pick (Task 7's partial fixes and pip's choice), over the
-    /// affected and likely flaws, all flagged. Nil when it is not above the installed version, or does not read as a
-    /// version and nothing else.
-    func judge(_ candidate: String) -> Judgement? { Self.judge(candidate, from: installed, advisories) }
+    /// The core's answer about a version the app did not pick (Task 7's partial fixes and pip's choice): its `leaves` are
+    /// one per affected or likely flaw (`flagged`), all flagged, then one per other flaw with published ranges
+    /// (`unflagged`), none flagged. Nil when it is not above the installed version, or does not read as a version and
+    /// nothing else.
+    func judge(_ candidate: String) -> Judgement? { Self.judge(candidate, from: installed, advisories, others) }
 
-    private static func judge(_ candidate: String, from installed: String, _ advisories: [CoreAdvisory]) -> Judgement? {
+    /// Whether a judged version lands inside the published ranges of a flaw the app does not flag: never an upgrade.
+    func landsInside(_ judgement: Judgement) -> Bool { Self.landsInside(judgement, flagged: advisories.count) }
+
+    private static func judge(_ candidate: String, from installed: String, _ flagged: [CoreAdvisory], _ others: [CoreAdvisory]) -> Judgement? {
         guard FixSafety.isSafeVersion(candidate) else { return nil }
-        return Core.shared.judge(candidate, from: installed, advisories: advisories, flagged: [Bool](repeating: true, count: advisories.count))
+        return Core.shared.judge(candidate, from: installed, advisories: flagged + others,
+                                 flagged: [Bool](repeating: true, count: flagged.count) + [Bool](repeating: false, count: others.count))
     }
+
+    private static func landsInside(_ judgement: Judgement, flagged: Int) -> Bool { judgement.leaves.dropFirst(flagged).contains(false) }
 }
 
 // MARK: What a finding says about its flaws

@@ -330,6 +330,40 @@ import Testing
         #expect(report.findings.first { $0.title == "lodash" }?.group == .criticalHigh)
     }
 
+    /// Project and product records cached by 0.5.1 were decoded leniently and saved again as decoded: never read as
+    /// checked records. A scan asks again, and keeps the new record under the new namespace.
+    @Test func theProjectAndProductCachesIgnoreRecordsSavedBy051() async throws {
+        let home = temporaryDirectory()
+        let support = home.appendingPathComponent("support")
+        let brew = "/opt/homebrew/bin/brew"
+        let brewJSON = #"{"formulae":[{"name":"nginx","installed":[{"version":"1.30.2"}],"linked_keg":"1.30.2","homepage":"https://nginx.org/","urls":{"stable":{"url":"https://nginx.org/download/nginx-1.30.2.tar.gz"}}}],"casks":[]}"#
+        let tools = ToolEnvironment.fixture(home: home, runner: RecordedRunner(outputs: [
+            "\(brew) info --json=v2 --installed": CommandResult(status: 0, stdout: Data(brewJSON.utf8), stderr: Data()),
+        ]), isExecutable: { $0 == brew })
+        let storage = Storage(directory: support)
+        // 0.5.1's record, as it saved it: nothing it could read
+        let old = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"{"slug":"nginx","name":"nginx","recent":[]}"#.utf8))
+        storage.cache.writeJSON(old, "project", "nginx")
+        let transport = RecordedTransport.site()
+        let scanner = Scanner(configuration: ScanConfiguration(storage: storage, tools: tools, folders: [], applicationRoots: []),
+                              transport: transport, pause: { _ in })
+        let report = await scanner.scan()
+        #expect(transport.requests.contains { $0.url?.path == "/api/v1/project/nginx" } && !report.sent.cached.contains("project nginx"))
+        #expect(report.findings.contains { $0.id == "brew|nginx|1.30.2" })
+        let saved = try #require(storage.cache.readJSON(ProjectResponse.self, "project-v2", "nginx", maxAge: 3600))
+        #expect(!saved.recent.isEmpty)
+
+        // a product's record the same: 0.5.1's "no record" is asked again
+        let cache = Storage(directory: temporaryDirectory()).cache
+        cache.writeJSON(BundleCheck.CachedProduct(record: nil), "product", "zoom")
+        let site = RecordedTransport.bundleSite()
+        let approved = PrivacyFilter(index: Make.index).approve(products: ["zoom"])
+        let fetched = await BundleCheck.records(approved, api: APIClient(transport: site, pause: { _ in }), cache: cache, maxAge: 3600) { _ in }
+        #expect(fetched.records["zoom"] != nil && fetched.fromCache.isEmpty && fetched.problems.isEmpty)
+        #expect(site.requests.contains { $0.url?.path == "/api/v1/product/zoom" })
+        #expect(cache.readJSON(BundleCheck.CachedProduct.self, "product-v2", "zoom", maxAge: 3600)?.record != nil)
+    }
+
     /// Each name once per source, sources in their usual order, Homebrew's unmatched formulae under Homebrew.
     @Test func withheldByWhereItWasFound() {
         let folder = Origin.folder(root: "/r", lockfile: "/r/package-lock.json", direct: true)

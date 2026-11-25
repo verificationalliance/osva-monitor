@@ -842,6 +842,35 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         #expect(FixOutcome.make(status: 1, before: lodash, recheck: outcome, homebrew: nil) == .failed(1))
     }
 
+    /// After a fix, a version the core finds clear is fixed: one whose every flaw lies outside its published ranges, or
+    /// is of another platform, is listed in Other with nothing to do, never "Still affected", and Fix all counts it fixed.
+    @Test func aRecheckThatFindsNothingToDoOnThisMacIsFixed() async throws {
+        func recheck(_ flaw: String) async throws -> (OSVAKit.Scanner.Recheck, Finding, ScanReport) {
+            let (scanner, runner, _, later) = setUp()
+            let report = await scanner.scan()
+            let lodash = try #require(report.findings.first { $0.title == "lodash" })
+            runner.set(Self.npmKey, Self.lodash("4.17.21"))
+            let answer = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.21","distinct_flaws":1,"worst_severity":"HIGH","#
+                + #""advisories":["CVE-L"],"flaws":[\#(flaw)]}]}"#
+            later.lock.withLock { later.batch = Data(answer.utf8) }
+            let (updated, outcome) = await scanner.recheck(lodash, in: report)
+            return (outcome, lodash, updated)
+        }
+        let outside = #"{"id":"CVE-L","severity":"HIGH","ranges":[{"introduced":"5.0.0","fixed":"5.1.0"}],"fixed_in":["5.1.0"]}"#
+        let windows = #"{"id":"CVE-L","severity":"HIGH","platform":"windows","ranges":[{"fixed":"4.17.22"}],"fixed_in":["4.17.22"]}"#
+        for (name, flaw) in [("outside its ranges", outside), ("another platform's", windows)] {
+            let (outcome, before, updated) = try await recheck(flaw)
+            #expect(outcome == .fixed(now: "4.17.21"), "\(name): \(outcome)")
+            // still listed, in Other, with nothing to do
+            let now = try #require(updated.findings.first { $0.title == "lodash" }, "\(name)")
+            #expect(now.group == .other && (now.outsideItsRanges == true || now.onlyElsewhere == true) && now.fixedVersion == nil && now.upgradeCommand == nil, "\(name)")
+            for made in [FixOutcome.make(status: 0, before: before, recheck: outcome, homebrew: nil),
+                         FixOutcome.make(ending: .exited(0), before: before, recheck: outcome, homebrew: nil)] {
+                #expect(made == .fixed(now: "4.17.21") && made.isResolved && !made.isProblem, "\(name): \(made)")
+            }
+        }
+    }
+
     @Test func aRecheckKeepsItsAnswerWhereScansReadThem() async throws {
         let dir = temporaryDirectory()
         let (scanner, runner, _, later) = setUp(dir)
