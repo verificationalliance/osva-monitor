@@ -67,7 +67,7 @@ import OSVAKit
         let finding = Finding(id: "pkg|PyPI|six|1.16.0|py\(version)", group: .criticalHigh, subject: .package(ecosystem: .pypi, name: "six"), title: "six",
                               installedVersion: "1.16.0", upgrade: inputs.target.map { _ in PreviewData.fix("1.17.0", above: "1.16.0") }, severity: .high, advisoryIDs: ["TEST-1"], flawCount: 1, exploited: false,
                               malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(.pypi, "six", version: "1.16.0"),
-                              upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
+                              advice: UpgradeCommand.advice(inputs), verification: .none, grade: nil, commandInputs: inputs)
         let storage = Storage(directory: root.appendingPathComponent("support", isDirectory: true))
         storage.save(ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(packages: [
             InstalledPackage(ecosystem: .pypi, name: "six", version: "1.16.0", origin: inputs.origin)]), findings: [finding], sent: SentRecord(),

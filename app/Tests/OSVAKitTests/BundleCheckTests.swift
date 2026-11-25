@@ -205,7 +205,7 @@ import Testing
             Finding(id: id, group: .criticalHigh, subject: .product(key: id, name: id), title: title, installedVersion: "1", upgrade: Fixture.fix("2", above: "1"),
                     severity: s, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
                     origins: app.map { [.application(name: title, bundlePath: $0, caskToken: nil)] } ?? [.homebrewFormula(name: title)],
-                    pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
+                    pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil)
         }
         let f = FindingOrder.sorted([
             finding("a1", "Zoom", .high, app: "/A/zoom.us.app"), finding("b", "curl", .critical, app: nil),

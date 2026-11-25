@@ -56,16 +56,19 @@ extension PreviewData {
                     note: "Docker’s 6 programs were built with golang.org/x/crypto 0.14.0 to 0.37.0 — fixed in 0.56.0 · built with Go 1.21.9 to 1.23.8, "
                         + "whose stdlib has up to 74 known flaws. Docker ships them.",
                     origins: [.program(docker)], page: SiteURL.packagePage(.go, "stdlib", version: "1.21.9"),
-                    command: "brew upgrade --cask docker-desktop"),
+                    advice: UpgradeCommand.rebuild(docker, rebuildOnly: true, own: nil, toolchain: nil, malicious: false)),
             programFinding("brew|nginx|1.30.2", .criticalHigh, .project(slug: "nginx", name: "nginx", installedAs: "nginx"), "nginx", "1.30.2", "1.30.7",
                     .critical, flaws: 6, note: "The issuer lists 1.30.2 as affected and 1.30.7 as fixed. Run sudo port selfupdate first, so MacPorts knows the newest version.",
                     bigIssue: "On the site's “patch these first” list", origins: [.macports(port: "nginx")],
-                    page: SiteURL.projectPage(slug: "nginx"), command: "sudo port upgrade nginx", grade: "C"),
+                    page: SiteURL.projectPage(slug: "nginx"),
+                    advice: UpgradeCommand.advice(for: .macports(port: "nginx"), name: "nginx", ecosystem: nil, target: fix("1.30.7", above: "1.30.2"),
+                                                  malicious: false), grade: "C"),
             programFinding("tool|pipx|black", .criticalHigh, .package(ecosystem: .pypi, name: "black"), "black", "24.1.0", "26.10.1", .critical, flaws: 8,
                     note: "black 24.1.0 has 4 known flaws — fixed in 26.10.1 · uses requests 2.25.0 — fixed in 2.33.0. "
                         + "pip upgrades them together with black, within the versions it allows; if they conflict, pip changes nothing.",
                     origins: [.pythonTool(black)], page: SiteURL.packagePage(.pypi, "black", version: "24.1.0"),
-                    command: "pipx runpip black install --upgrade black==26.10.1 requests==2.33.0"),
+                    advice: UpgradeCommand.tool(black, upgrades: [("black", fix("26.10.1", above: "24.1.0")), ("requests", fix("2.33.0", above: "2.25.0"))],
+                                                malicious: false)),
             programFinding("pkg|PyPI|pyyaml|5.3|py3.11.5", .criticalHigh, .package(ecosystem: .pypi, name: "pyyaml"), "pyyaml", "5.3", "5.4", .critical,
                     flaws: 2, note: "Needs pyyaml 5.4 or later in the environment's channels.", origins: [.conda(env: base)],
                     page: SiteURL.packagePage(.pypi, "pyyaml", version: "5.3"),
@@ -73,17 +76,19 @@ extension PreviewData {
                                                   malicious: false)),
             programFinding("prog|" + gopls.path, .other, .package(ecosystem: .go, name: "stdlib"), "gopls", component: "Go", "1.23.0", "1.23.11", .moderate,
                     flaws: 3, note: "gopls 0.16.1 was built with Go 1.23.0, whose stdlib has 3 known flaws. "
-                        + "Builds gopls 0.16.1 again with the Go you have, and that Go's standard library; "
-                        + "the modules it was built with change only in a newer release.",
+                        + "Builds gopls 0.16.1 again with the Go you have; its standard library's fix needs Go 1.23.11 or later, "
+                        + "and the modules it was built with change only in a newer release.",
                     origins: [.program(gopls)], page: SiteURL.packagePage(.go, "stdlib", version: "1.23.0"),
-                    command: "go install golang.org/x/tools/gopls@v0.16.1"),
+                    advice: UpgradeCommand.rebuild(gopls, rebuildOnly: true, own: nil, toolchain: fix("1.23.11", above: "1.23.0"), malicious: false)),
             programFinding("prog|" + rg.path, .other, .package(ecosystem: .crates, name: "regex"), "rg", component: "regex", "1.5.4", "1.5.5", .moderate,
                     flaws: 1, note: "rg 13.0.0 was built with regex 1.5.4 — fixed in 1.5.5. Builds rg 13.0.0 again, with the newest compatible crates.",
-                    origins: [.program(rg)], page: SiteURL.packagePage(.crates, "regex", version: "1.5.4"), command: "cargo install --force ripgrep --version 13.0.0"),
+                    origins: [.program(rg)], page: SiteURL.packagePage(.crates, "regex", version: "1.5.4"),
+                    advice: UpgradeCommand.rebuild(rg, rebuildOnly: true, own: nil, toolchain: nil, malicious: false)),
             programFinding("nix|openssl|3.0.12|" + profile.path, .other, .project(slug: "openssl", name: "OpenSSL", installedAs: "openssl"), "OpenSSL",
                     "3.0.12", "3.0.15", .moderate, flaws: 1, note: "The issuer lists 3.0.12 as affected and 3.0.15 as fixed.",
                     origins: [.nix(profile: profile, element: "openssl")], page: SiteURL.projectPage(slug: "openssl"),
-                    command: "nix profile upgrade openssl", grade: "B"),
+                    advice: UpgradeCommand.advice(for: .nix(profile: profile, element: "openssl"), name: "openssl", ecosystem: nil,
+                                                  target: fix("3.0.15", above: "3.0.12"), malicious: false), grade: "B"),
         ]
     }()
 
@@ -92,16 +97,17 @@ extension PreviewData {
         public static let pyyaml = "pkg|PyPI|pyyaml|5.3|py3.11.5", nginx = "brew|nginx|1.30.2"
     }
 
-    /// A finding as ProgramFindings words it: the command shown, and the inputs it is made from where a scan records
-    /// them (a Homebrew formula's program, a conda package), so the Fix button is decided as the app decides it.
+    /// A finding as ProgramFindings words it: the command, from UpgradeCommand's advice, and the inputs it is made from
+    /// where a scan records them (a Homebrew formula's program, a conda package), so the Fix button is decided as the app
+    /// decides it.
     static func programFinding(_ id: String, _ group: Finding.Group, _ subject: Finding.Subject, _ title: String, component: String? = nil,
                                _ installed: String, _ fixed: String?, _ severity: Severity?, flaws: Int, note: String? = nil,
-                               bigIssue: String? = nil, origins: [Origin], page: URL, command: String? = nil,
+                               bigIssue: String? = nil, origins: [Origin], page: URL, advice: UpgradeCommand.Advice? = nil,
                                inputs: UpgradeCommand.Inputs? = nil, grade: String? = nil) -> Finding {
         Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed,
                 upgrade: fixed.map { fix($0, above: installed).displayed(.program) },
                 severity: severity, advisoryIDs: [], flawCount: flaws, exploited: false, malicious: false, note: note, bigIssue: bigIssue,
-                origins: origins, pageURL: page, upgradeCommand: inputs.flatMap { UpgradeCommand.advice($0).command } ?? command,
+                origins: origins, pageURL: page, advice: inputs.map { UpgradeCommand.advice($0) } ?? advice,
                 verification: .none, grade: grade, commandInputs: inputs)
     }
 

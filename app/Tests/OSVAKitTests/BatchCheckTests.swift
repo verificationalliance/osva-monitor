@@ -182,7 +182,7 @@ import Testing
         // a report saved by 0.5.1 reads with the same group
         let saved = Finding(id: "x", group: .criticalHigh, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1",
                             upgrade: Fixture.fix("2", above: "1"), severity: .high, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil,
-                            bigIssue: nil, origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
+                            bigIssue: nil, origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil)
         let json = String(decoding: try JSONEncoder().encode(saved), as: UTF8.self)
         #expect(json.contains(#""group":2"#))
         #expect(try JSONDecoder().decode(Finding.self, from: Data(json.utf8)).group == .criticalHigh)
@@ -224,7 +224,7 @@ import Testing
                           installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
                           malicious: false, note: "The issuer lists 4.41.2 as affected and 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
-                          upgradeCommand: nil, verification: .none, grade: nil)
+                          advice: nil, verification: .none, grade: nil)
         let d = try #require(FindingBuilder.foldingProgramsIntoApps([program, app]).first)
         #expect(d.id == app.id && d.group == .criticalHigh && d.flawCount == 6 && !d.exploited && d.severity == .high)
         #expect(d.notChecked == Finding.NotChecked(id: "GO-R", exploited: true, critical: true))
@@ -306,7 +306,7 @@ import Testing
                 let c = BatchCheck.read(r, installed: r.version)
                 #expect(c.reported.isEmpty && c.unlisted == 0, "\(r.name)")
                 #expect(c.check == (r.name == "time" ? .likely : .affected), "\(r.name)")
-                #expect(c.upgrade?.version == r.plan?.target, "\(r.name)")
+                #expect(c.upgrade?.version == r.plan?.unjudgedTarget, "\(r.name)")
                 #expect(c.notFixed.map(\.flaw.id) == notLeft[r.name, default: []], "\(r.name)")
                 packages += 1
             }
@@ -489,7 +489,7 @@ extension BatchCheckTests {
         func f(_ group: Finding.Group, exploited: Bool = false, notChecked: Alert? = nil, big: String? = nil) -> Finding {
             Finding(id: "x", group: group, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", upgrade: nil,
                     severity: .high, advisoryIDs: [], flawCount: 1, exploited: exploited, malicious: false, note: nil, bigIssue: big,
-                    origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil, notChecked: notChecked)
+                    origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil, notChecked: notChecked)
         }
         let kev = Alert(id: "CVE-1", exploited: true, critical: false)
         // 0.5.1 said exploited; the server's ranges cannot check it now: no second notification

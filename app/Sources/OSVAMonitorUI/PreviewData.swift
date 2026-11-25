@@ -34,11 +34,11 @@ public enum PreviewData {
         // The command is UpgradeCommand's, from the same inputs a scan would record, and the version one the core checked.
         let upgrade = malicious ? nil : fixed.map { fix($0, above: installed) }
         let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem, target: upgrade, malicious: malicious)
-        let command = runnable ? UpgradeCommand.advice(inputs).command : nil
+        let advice = runnable ? UpgradeCommand.advice(inputs) : nil
         return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, upgrade: upgrade,
                        severity: severity, advisoryIDs: [], flawCount: flaws, exploited: exploited, malicious: malicious, note: note,
-                       bigIssue: bigIssue, origins: origins, pageURL: page, upgradeCommand: command, verification: mark, grade: grade,
-                       fixesCount: fixes, unresolved: unresolved, commandInputs: command == nil ? nil : inputs)
+                       bigIssue: bigIssue, origins: origins, pageURL: page, advice: advice, verification: mark, grade: grade,
+                       fixesCount: fixes, unresolved: unresolved, commandInputs: advice?.command == nil ? nil : inputs)
     }
 
     public static let applePython = PythonEnvironment(executable: "/usr/bin/python3", version: "3.9.6", kind: .apple, externallyManaged: false,

@@ -202,7 +202,7 @@ extension FindingBuilder {
                    return false
                }) {
                 let checked = here.filter { !$0.group.isNotChecked }
-                findings[i].note = [findings[i].note, sentence].compactMap { $0 }.joined(separator: " ")
+                findings[i].addNote(sentence)
                 findings[i].advisoryIDs += advisories.filter { !findings[i].advisoryIDs.contains($0) }
                 if findings[i].group.isNotChecked && !checked.isEmpty {
                     findings[i].flawCount = Self.flawCount(checked)
@@ -237,7 +237,7 @@ extension FindingBuilder {
             if worst.upgrade == nil { unresolved.removeAll { $0.reason == .unknown } }
             unresolved = Array(unresolved.sorted { ($0.severity ?? .low, $1.id) > ($1.severity ?? .low, $0.id) }.prefix(3))
             let allElsewhere = parts.allSatisfy { $0.group == .other && $0.upgrade == nil && !$0.malicious }
-            let command = allElsewhere || (!fixable && !malicious) ? nil : advice.command
+            let shown = allElsewhere || (!fixable && !malicious) || advice.command == nil ? nil : advice
             var program = Finding(
                 id: id, group: group, subject: .package(ecosystem: worst.package.ecosystem, name: worst.package.name), title: title,
                 component: Component.rowLabel(worst.label, installed: Component.shown(worst.package.version), fixed: worst.shownUpgrade),
@@ -246,8 +246,8 @@ extension FindingBuilder {
                 flawCount: flaws, exploited: exploited, malicious: malicious,
                 note: [sentence, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil, origins: g.origins,
                 pageURL: SiteURL.packagePage(worst.package.ecosystem, worst.package.name, version: worst.package.version),
-                upgradeCommand: command, verification: .none, grade: nil, fixesCount: parts.count == 1 ? worst.fixes : nil,
-                unresolved: unresolved, commandInputs: command == nil ? nil : Self.inputs(origin: g.origins[0], malicious: malicious),
+                advice: shown, verification: .none, grade: nil, fixesCount: parts.count == 1 ? worst.fixes : nil,
+                unresolved: unresolved, commandInputs: shown == nil ? nil : Self.inputs(origin: g.origins[0], malicious: malicious),
                 notChecked: notChecked)
             if here.isEmpty { program.onlyElsewhere = true }
             findings.append(program)
@@ -273,7 +273,7 @@ extension FindingBuilder {
             // core did not check, taking in a checked program, is decided by it, as for a formula's project finding.
             let elsewhere = f.onlyElsewhere == true                 // nothing to do on this Mac: said, never weighed
             let checked = !f.group.isNotChecked && !elsewhere
-            out[i].note = [out[i].note, f.note.map(Self.firstSentence)].compactMap { $0 }.joined(separator: " ")
+            out[i].addNote(f.note.map(Self.firstSentence))
             out[i].advisoryIDs += f.advisoryIDs.filter { !out[i].advisoryIDs.contains($0) }
             if checked && out[i].group.isNotChecked {
                 out[i].flawCount = f.flawCount; out[i].exploited = f.exploited; out[i].severity = f.severity
@@ -424,17 +424,16 @@ extension FindingBuilder {
     /// version or where it is.
     static func programAdvice(origin: Origin, programs: Int = 1, parts: [Component], malicious: Bool) -> UpgradeCommand.Advice {
         let advice: UpgradeCommand.Advice, rebuild: Bool, name: String
-        let own = parts.first { $0.own && $0.upgrade != nil }?.upgrade?.version
         switch origin {
         case var .program(p):
             name = p.name
             if programs > 1, p.formula == nil, p.app != nil { p.name = "them" }      // "Docker ships them."
-            advice = UpgradeCommand.program(p, rebuildOnly: !parts.contains(where: \.own), own: own,
-                                            toolchain: parts.contains { $0.isStdlib && $0.upgrade != nil }, malicious: malicious)
+            advice = UpgradeCommand.rebuild(p, rebuildOnly: !parts.contains(where: \.own), own: parts.first { $0.own && $0.upgrade != nil }?.upgrade,
+                                            toolchain: parts.first { $0.isStdlib && $0.upgrade != nil }?.upgrade, malicious: malicious)
             rebuild = p.place == .goInstall || p.place == .cargoInstall
         case let .pythonTool(t):
             name = t.name
-            advice = UpgradeCommand.pythonTool(t, upgrades: parts.map { ($0.name, $0.upgrade?.version) }, malicious: malicious)
+            advice = UpgradeCommand.tool(t, upgrades: parts.map { ($0.name, $0.upgrade) }, malicious: malicious)
             rebuild = t.manager == .uv
         default:
             return UpgradeCommand.Advice(command: nil)
@@ -479,7 +478,7 @@ extension FindingBuilder {
             advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
             note: sentences(d.note, advice.note),
             bigIssue: nil, origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: slug),
-            upgradeCommand: advice.command, verification: mark, grade: grade, notChecked: d.notChecked)
+            advice: advice, verification: mark, grade: grade, notChecked: d.notChecked)
     }
 
     /// MacPorts, Nix and conda pick the version themselves, and only Homebrew's picks are taken without one the core

@@ -218,8 +218,8 @@ import Testing
                 "\(modules.note ?? "")")
         let toolchain = try row(.program(tool), [try own(nil, B.flaw("OWN")), net, stdlib])
         #expect(toolchain.upgradeCommand == "go install example.com/tool/cmd/tool@v1.0.0")
-        #expect(toolchain.note?.hasSuffix(" Builds tool 1.0.0 again with the Go you have, and that Go's standard library;"
-                                          + " the modules it was built with change only in a newer release.") == true, "\(toolchain.note ?? "")")
+        #expect(toolchain.note?.hasSuffix(" Builds tool 1.0.0 again with the Go you have; its standard library's fix needs Go 1.22.11 or later,"
+                                          + " and the modules it was built with change only in a newer release.") == true, "\(toolchain.note ?? "")")
         // Homebrew's formula: Homebrew picks
         var brewed = tool; brewed.place = .homebrew; brewed.formula = "tool"
         #expect(try row(.program(brewed), [try own("v1.1.0"), net]).upgradeCommand == "brew upgrade tool")
@@ -285,7 +285,10 @@ import Testing
         #expect(UpgradeCommand.program(program(.homebrew, formula: "gh"), rebuildOnly: false, malicious: true).command == "brew uninstall gh")
         let gopls = program(.goInstall, package: "golang.org/x/tools/gopls", version: "v0.16.1")
         #expect(UpgradeCommand.program(gopls, rebuildOnly: true, own: "v0.17.0", malicious: false).command == "go install golang.org/x/tools/gopls@v0.17.0")
-        #expect(UpgradeCommand.program(gopls, rebuildOnly: true, toolchain: true, malicious: false).command == "go install golang.org/x/tools/gopls@v0.16.1")
+        let toolchain = UpgradeCommand.program(gopls, rebuildOnly: true, toolchain: "1.23.11", malicious: false)
+        #expect(toolchain.command == "go install golang.org/x/tools/gopls@v0.16.1")
+        #expect(toolchain.note == "Builds tool 0.16.1 again with the Go you have; its standard library's fix needs Go 1.23.11 or later,"
+                + " and the modules it was built with change only in a newer release.")
         #expect(UpgradeCommand.program(gopls, rebuildOnly: true, malicious: false).command == nil)
         #expect(UpgradeCommand.program(program(.goInstall, package: nil), rebuildOnly: true, own: "1.0", malicious: false).command == nil)
         #expect(UpgradeCommand.program(program(.cargoInstall, package: "ripgrep", version: "13.0.0"), rebuildOnly: true, malicious: false).command
@@ -441,10 +444,10 @@ private extension Finding {
     }
 
     func finding(_ origin: Origin, inputs: UpgradeCommand.Inputs?) -> Finding {
-        let command = inputs.flatMap { UpgradeCommand.advice($0).command } ?? UpgradeCommand.advice(for: origin, name: "x", ecosystem: nil, target: nil, malicious: false).command
+        let advice = inputs.map { UpgradeCommand.advice($0) } ?? UpgradeCommand.advice(for: origin, name: "x", ecosystem: nil, target: nil, malicious: false)
         return Finding(id: "f", group: .criticalHigh, subject: .package(ecosystem: .go, name: "golang.org/x/net"), title: "gh", component: "golang.org/x/net",
                        installedVersion: "0.23.0", upgrade: Fixture.fix("0.33.0", above: "0.23.0"), severity: .critical, advisoryIDs: [], flawCount: 1, exploited: false,
-                       malicious: false, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.home, upgradeCommand: command,
+                       malicious: false, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.home, advice: advice,
                        verification: .none, grade: nil, commandInputs: inputs)
     }
 
@@ -529,10 +532,10 @@ extension ProgramFindingTests {
                           title: "Docker", installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6,
                           exploited: false, malicious: false, note: "Likely affected: the issuer names 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
-                          upgradeCommand: nil, verification: .none, grade: nil)
+                          advice: nil, verification: .none, grade: nil)
         let other = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", upgrade: nil,
                             severity: nil, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
-                            origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
+                            origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil)
         let folded = FindingBuilder.foldingProgramsIntoApps(programs + [app, other])
         #expect(folded.map(\.id) == ["product|docker|4.41.2", "x"])
         let d = try #require(folded.first)
@@ -605,7 +608,7 @@ extension ProgramFindingTests {
                           installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
                           malicious: false, note: "The issuer lists 4.41.2 as affected and 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
-                          upgradeCommand: nil, verification: .none, grade: nil)
+                          advice: nil, verification: .none, grade: nil)
         let d = try #require(FindingBuilder.foldingProgramsIntoApps([program, app]).first)
         #expect(d.flawCount == 7 && d.notChecked == Finding.NotChecked(id: "GO-X", exploited: true, critical: true) && d.deservesNotification)
         #expect(d.note == "The issuer lists 4.41.2 as affected and 4.86.0 as fixed. docker was built with Go 1.22.3, whose stdlib has 1 known flaw,"
@@ -657,7 +660,7 @@ extension ProgramFindingTests {
                           installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .critical, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: true,
                           malicious: false, note: "Likely affected: the site publishes no affected ranges, and the issuer names 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
-                          upgradeCommand: nil, verification: .none, grade: nil)
+                          advice: nil, verification: .none, grade: nil)
         let d = try #require(FindingBuilder.foldingProgramsIntoApps([program, app]).first)
         #expect(d.id == app.id && d.group == .likely && d.flawCount == 6 && d.severity == .critical && d.exploited)
         // a program with a likely part and a part whose flaws are only elsewhere is likely, counted by its likely part

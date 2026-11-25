@@ -238,7 +238,7 @@ public struct FindingBuilder: Sendable {
                        component: component, installedVersion: package.version, upgrade: upgrade,
                        severity: state.severity, advisoryIDs: verdict.advisories, flawCount: state.flawCount,
                        exploited: state.exploited, malicious: malicious, note: note, bigIssue: nil, origins: origins, pageURL: page,
-                       upgradeCommand: advice.command, verification: .none, grade: nil,
+                       advice: advice, verification: .none, grade: nil,
                        fixesCount: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), unresolved: unresolved,
                        commandInputs: advice.command == nil ? nil : inputs, notChecked: state.notChecked)
     }
@@ -299,7 +299,7 @@ public struct FindingBuilder: Sendable {
                                              target: kept ?? fix.upgrade?.version, installed: installed)
                 var f = make(v, fix.withheld)
                 let lead = f.fixedVersion.map { "The issuer lists \(installed) as affected and \($0) as fixed." } ?? "The issuer lists \(installed) as affected."
-                f.note = FindingBuilder.sentences(lead, f.note)
+                f.addNote(lead, first: true)
                 return (f, .batch(v, installed: installed, shown: f.fixedVersion, make))
             }
         }
@@ -333,16 +333,16 @@ public struct FindingBuilder: Sendable {
         let note = d.note(showing: Self.shownVersion(slug: slug), offLine: offLine ? match.item.name : nil)
         // Homebrew picks its own version; still no command for a finding only reported, or whose upgrade the core withheld
         let inputs = Self.inputs(match.item.origin, match.item.name, nil, upgrade)
-        let command = offLine ? nil : d.advice(UpgradeCommand.advice(inputs)).command
+        let advice = offLine ? nil : d.advice(UpgradeCommand.advice(inputs))
         return Finding(
             id: "brew|\(match.item.name)|\(match.item.version)", group: d.group,
             subject: .project(slug: slug, name: name, installedAs: match.item.name), title: name,
             installedVersion: installed, upgrade: upgrade, severity: d.severity,
             advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
             note: note, bigIssue: nil, origins: [match.item.origin],
-            pageURL: SiteURL.projectPage(slug: slug), upgradeCommand: command,
+            pageURL: SiteURL.projectPage(slug: slug), advice: advice,
             verification: mark, grade: grade,
-            commandInputs: command == nil ? nil : inputs, notChecked: d.notChecked)
+            commandInputs: advice?.command == nil ? nil : inputs, notChecked: d.notChecked)
     }
 
     /// Whether `upgrade` is not a release of the versioned formula `item` stays on.
@@ -478,15 +478,15 @@ public struct FindingBuilder: Sendable {
         let isApp = install.origin.kind == .electron
         let inputs = Self.inputs(install.origin, install.name, package.ecosystem, d.target)
         // no version the core checked: only Homebrew's own upgrade; none at all for one the core withheld
-        let command = d.withheld != nil ? nil
-            : UpgradeCommand.advice(inputs).command.flatMap { d.target != nil || UpgradeCommand.isHomebrewUpgrade($0) ? $0 : nil }
+        let full = UpgradeCommand.advice(inputs)
+        let advice = d.withheld != nil || full.command.map({ d.target != nil || UpgradeCommand.isHomebrewUpgrade($0) }) != true ? nil : full
         return Finding(id: id, group: d.group, subject: .package(ecosystem: package.ecosystem, name: package.name),
                        title: isApp ? install.origin.label : install.name, component: isApp ? "Electron" : nil,
                        installedVersion: package.version, upgrade: d.target, severity: d.severity, advisoryIDs: d.advisories.map(\.id),
                        flawCount: d.flawCount, exploited: d.exploited, malicious: false, note: d.note, bigIssue: nil,
                        origins: [install.origin], pageURL: SiteURL.packagePage(package.ecosystem, package.name, version: package.version),
-                       upgradeCommand: command, verification: project?.verificationMark ?? .none, grade: project?.grade,
-                       commandInputs: command == nil ? nil : inputs, notChecked: d.notChecked)
+                       advice: advice, verification: project?.verificationMark ?? .none, grade: project?.grade,
+                       commandInputs: advice == nil ? nil : inputs, notChecked: d.notChecked)
     }
 
     /// An item on a finding that exists. One the core finds affected makes the finding again with the item in it,
