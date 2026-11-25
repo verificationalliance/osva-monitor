@@ -32,12 +32,20 @@
 #     archive, given to the link, would read the same;
 #   - no other entry is a file in the toolchain's folder (a dylib, or an archive the list above lacks);
 #   - every symbol in "# Symbols:" (what the executable holds; dead-stripped ones are not checked) whose name a Lean
-#     archive defines as a global (nm -g --defined-only) comes from an entry above whose member defines that name, and
-#     every symbol whose name starts with _lp_osvaCore_, _initialize_osvaCore_ or _osva_lean_ from a member of the
-#     core's archive. A thread-local's descriptor is the linker's own; its initial value, <name>$tlv$init, must then be
-#     from the member that defines the name. This holds for a local symbol of such a name too;
-#   - every global the core's archive defines has one of those three prefixes (SIGN_APP relies on it);
-#   - the executable takes none of those names from a library at run time (nm -u lists none);
+#     archive defines as a global (nm -g: "address type name") comes from an entry above whose member defines that
+#     name, and every symbol whose name starts with _lp_osvaCore_, _initialize_osvaCore_ or _osva_lean_ from a member
+#     of the core's archive. A thread-local's descriptor is the linker's own; its initial value, <name>$tlv$init, must
+#     then be from the member that defines the name. This holds for a local symbol of such a name too;
+#   - no symbol in "# Symbols:" has a name that a Lean archive's member imports (nm -g: "U name") and no Lean archive
+#     defines (getenv, memcpy, malloc, ...), but one the linker makes itself (___dso_handle), and that not as a
+#     thread-local: the Lean code's calls to such a name go to the system, not to the app's code (a Swift
+#     @_cdecl("getenv") would take them);
+#   - every global the core's archive defines has one of those three prefixes, and every name it imports is one a
+#     toolchain archive imports or defines (SIGN_APP relies on both);
+#   - of what the executable takes from a library at run time (nm -m: "(undefined) external name (from library)"),
+#     nothing is a name a Lean archive defines or with the core's prefixes, and every name a Lean archive imports is
+#     from a system library: one whose install name (otool -L) starts with /usr/lib/ or /System/Library/, matched to
+#     nm's short name for it (a framework's name, or a dylib's file name up to its first dot);
 #   - these are present: _lp_osvaCore_OSVA_verdict, _lp_osvaCore_OSVA_upgradeFor, _lp_osvaCore_OSVA_judge and
 #     _lp_osvaCore_OSVA_pctEncode (the compiled OSVA.verdict, upgradeFor, judge and pctEncode, which the claims in
 #     .verificationalliance.json are about), _osva_lean_<name> for every @[export osva_lean_<name>] in
@@ -45,11 +53,15 @@
 #     map is this executable's: its "# Path:" names an OSVAMonitor, and nm finds each of these in the executable,
 #     external and in __TEXT (T), at the address the map gives.
 # So no app object (a Swift @_cdecl, say), other object, archive or dylib given to the link supplies a symbol the
-# executable keeps under a name a Lean archive defines, or under the core's prefixes. Not checked: that the archives
-# hold what they should (step 1 builds the core's from the .lean files in the same run; the toolchain's are whatever
-# elan installed under that toolchain's name); which of two members with the same name gave a symbol (libInit.a has
-# several called Basic.c.o.export: "its member defines that name" means one of that name does); the shim's own
-# functions; and the system's libraries (libc++, libSystem, the Swift runtime).
+# executable keeps under a name a Lean archive defines, or under the core's prefixes, or under a name the Lean code
+# imports from the system. Not checked: that the archives hold what they should (step 1 builds the core's from the
+# .lean files in the same run; the toolchain's are whatever elan installed under that toolchain's name); which of two
+# members with the same name gave a symbol (libInit.a has several called Basic.c.o.export: "its member defines that
+# name" means one of that name does); which system library an import comes from, beyond its being one; the system's
+# libraries themselves (libc++, libSystem, the Swift runtime); the shim's own functions; and Swift's own names: a
+# function of the app's named like a core function would be called instead of the core's by Swift code in the same
+# module, which no link map shows. app/Package.swift keeps the one caller, Core.swift, alone in its module
+# (OSVAVerified), and ClaimsTests holds it there.
 #
 # SIGN_APP=<path to OSVA Monitor.app>, with DEVELOPER_ID: skip steps 1-3 and sign and notarize an app another Mac
 # built with this script (the Mac server builds and tests; the signing keys stay on the signing Mac). It is signed only
@@ -62,10 +74,11 @@
 # here (elan toolchain install <it>): without it the Lean archives' members and globals are unknown, so SIGN_APP
 # refuses rather than check less than the build did. What differs, since the build Mac's files are not here: each
 # archive's path is the build Mac's, read from the map (one folder for the toolchain, one for the core, each the only
-# one); the toolchain archives' members and globals are this Mac's copy of the same toolchain; the core's members must
-# be named after its modules (core/OSVACore/<Name>.lean is <Name>.c.o.export), its globals are unknown, so its
-# prefixed symbols are checked by prefix only and a name the toolchain archives define may not come from it; and no
-# file can be looked for at an entry's literal path. The map is required, rather than trusting that the build checked
+# one); the toolchain archives' members, globals and imports are this Mac's copy of the same toolchain; the core's
+# members must be named after its modules (core/OSVACore/<Name>.lean is <Name>.c.o.export), its globals and imports
+# are unknown, so its prefixed symbols are checked by prefix only, a name the toolchain archives define may not come
+# from it, and its imports are covered by the toolchain archives' (which the build checked); and no file can be looked
+# for at an entry's literal path. The map is required, rather than trusting that the build checked
 # it, so that this Mac refuses an app whose build did not check its code (an older script, or no map), and nm ties the
 # map to this executable. The map is the build Mac's word, not signed: it guards against a mistake on the build Mac,
 # not against a build Mac that lies.
@@ -135,14 +148,16 @@ core_required() {
   printf '%s\n' _lp_osvaCore_OSVA_verdict _lp_osvaCore_OSVA_upgradeFor _lp_osvaCore_OSVA_judge \
     _lp_osvaCore_OSVA_pctEncode _initialize_osvaCore_OSVACore "$exports"
 }
-# origin_tables <label> <archive>: "M label member" for each member ar t lists, and "D label member name" for each global
-# a member defines (nm -g --defined-only, which heads each member's symbols with "member:"), tab-separated.
+# origin_tables <label> <archive>: "M label member" for each member ar t lists, "D label member name" for each global a
+# member defines, and "U label member name" for each name a member imports (nm -g: "address type name" for a definition,
+# "U name" for an import, under a "member:" line), tab-separated.
 origin_tables() {
   local out
   out="$(ar t "$2")" || die "ar cannot read $2"
   awk -v l="$1" 'NF { print "M\t" l "\t" $0 }' <<<"$out"
-  out="$(nm -g --defined-only "$2")" || die "nm cannot read $2"
-  awk -v l="$1" '/:$/ { m = substr($0, 1, length($0) - 1); next } NF >= 3 { print "D\t" l "\t" m "\t" $3 }' <<<"$out"
+  out="$(nm -g "$2")" || die "nm cannot read $2"
+  awk -v l="$1" '/:$/ { m = substr($0, 1, length($0) - 1); next }
+    NF == 2 && $1 == "U" { print "U\t" l "\t" m "\t" $2 } NF >= 3 { print "D\t" l "\t" m "\t" $3 }' <<<"$out"
 }
 # The build Mac's folder for a path ending, read from the map's "# Object files:" (SIGN_APP); there must be exactly one.
 map_prefix() {
@@ -155,14 +170,14 @@ map_prefix() {
 # check_core_origin <link map> <executable> build|sign
 check_core_origin() {
   local map="$1" exe="$2" mode="$3" path arch tables tdir core_dir result rel f required name addr member n line
-  local problems="" listing=""
+  local problems="" listing="" core_imports imports
   [ -s "$map" ] || die "no link map at $map (build-app.sh writes it beside the app it builds)"
   path="$(sed -n 's/^# Path: //p' "$map" | head -1)"
   arch="$(sed -n 's/^# Arch: //p' "$map" | head -1)"
   [ "${path##*/}" = OSVAMonitor ] && [ -n "$arch" ] || die "$map is not the link map of an OSVAMonitor executable (# Path: $path)"
   [ -d "$runtime_dir/lib/lean" ] || die "the Lean libraries are checked against $toolchain, which is not installed here ($runtime_dir); install it with: elan toolchain install $toolchain"
   tables="$(mktemp)"
-  trap 'rm -f "$tables"' EXIT
+  trap 'rm -f "$tables" "$tables.imports"' EXIT
   # A: each Lean archive's path as the map must write it. In a build: its real path, which is how ld writes an archive.
   # With SIGN_APP: the build Mac's, read from the map; the core's members are then its modules' names, as lake names
   # them (core/OSVACore/<Name>.lean is <Name>.c.o.export), and its globals are not known here.
@@ -172,6 +187,7 @@ check_core_origin() {
     { printf 'A\tcore\t%s\n' "$f"; origin_tables core "$f"; } >> "$tables"
     line="$(awk -F '\t' -v re="$core_prefixes" '$1 == "D" && $4 !~ re { print $4 }' "$tables" | head -3 | tr '\n' ' ' || true)"
     [ -z "$line" ] || die "the core's archive defines globals without the prefixes SIGN_APP relies on ($core_prefixes): $line"
+    core_imports="$(awk -F '\t' '$1 == "U" { print $4 }' "$tables" | sort -u)"
   else
     tdir="$(map_prefix "$map" "/${runtime_dir##*/}/lib/")/${runtime_dir##*/}/"
     core_dir="$(map_prefix "$map" "$core_archive_path(")"
@@ -185,6 +201,12 @@ check_core_origin() {
     if [ "$mode" = build ]; then f="$(realpath "$runtime_dir/$rel")"; else f="$tdir$rel"; fi
     { printf 'A\t%s\t%s\n' "$rel" "$f"; origin_tables "$rel" "$runtime_dir/$rel"; } >> "$tables"
   done
+  if [ "$mode" = build ]; then
+    # Every name the core's archive imports is one the toolchain archives import or define (SIGN_APP relies on it).
+    line="$(awk -F '\t' 'FNR == NR { if ($2 != "core" || $1 == "D") known[$4] = 1; next } !($1 in known)' "$tables" - <<<"$core_imports" \
+      | head -3 | tr '\n' ' ' || true)"
+    [ -z "$line" ] || die "the core's archive imports names no toolchain archive imports or defines, which SIGN_APP relies on: $line"
+  fi
   # P: a problem; F: an entry taken as an archive member (in a build, no file may have its literal path); S: a symbol
   # with the core's prefixes (name, address, member); C: how many checked symbols each archive gave.
   result="$(awk -F '\t' -v re="$core_prefixes" -v tdir="$tdir" '
@@ -192,6 +214,7 @@ check_core_origin() {
       if ($1 == "A") { path[$2] = $3; lab[++nl] = $2 }
       else if ($1 == "M") member[$2 SUBSEP $3] = 1
       else if ($1 == "D") { def[$2 SUBSEP $3 SUBSEP $4] = 1; lean[$4] = 1; hasdef[$2] = 1 }
+      else if ($1 == "U") imp[$4] = 1
       next
     }
     /^# Object files:$/ { s = "o"; next }
@@ -214,9 +237,14 @@ check_core_origin() {
     }
     s == "s" && NF >= 3 && match($3, /^\[ *[0-9]+\] /) {
       i = substr($3, 2, RLENGTH - 3) + 0; n = substr($3, RLENGTH + 1); c = (n ~ re); g = (n in lean)
-      if (n ~ /\$tlv\$init$/ && (i in from)) tlvinit[substr(n, 1, length(n) - 9)] = from[i] SUBSEP mem[i]
-      if (!c && !g) next
-      if (file[i] == "linker synthesized") { tlv[n] = 1; next }
+      u = !c && !g && (n in imp)
+      if (n ~ /\$tlv\$init$/) {
+        tlvany[substr(n, 1, length(n) - 9)] = file[i]
+        if (i in from) tlvinit[substr(n, 1, length(n) - 9)] = from[i] SUBSEP mem[i]
+      }
+      if (!c && !g && !u) next
+      if (file[i] == "linker synthesized") { if (u) made[n] = 1; else tlv[n] = 1; next }
+      if (u) { print "P\t" n ", which the Lean archives import, is defined by " file[i] ", not left to the system"; next }
       l = from[i]
       if (l == "") print "P\t" n " is defined by " file[i] ", not by a member of a Lean archive"
       else if (c && l != "core") print "P\t" n " is defined by " file[i] ", not by a member of the core'"'"'s archive"
@@ -230,6 +258,8 @@ check_core_origin() {
         if ((n in tlvinit) && ((tlvinit[n] SUBSEP n) in def)) { split(tlvinit[n], q, SUBSEP); count[q[1]]++ }
         else print "P\t" n " is a thread-local whose initial value is not from a member of a Lean archive that defines it"
       }
+      # A name the Lean archives import may be the linker'"'"'s own (___dso_handle), but not a thread-local of other code.
+      for (n in made) if (n in tlvany) print "P\t" n ", which the Lean archives import, is a thread-local of " tlvany[n]
       for (k = 1; k <= nl; k++) print "C\t" lab[k] "\t" count[lab[k]] + 0
     }' "$tables" "$map")"
   problems="$(awk -F '\t' '$1 == "P" { print "   " $2 }' <<<"$result")"
@@ -238,10 +268,30 @@ check_core_origin() {
       [ "$line" = F ] && [ -e "$f" ] && problems+=$'\n'"   a file named $f exists: the link may have read it, not the archive's member"
     done <<<"$result"
   fi
-  line="$(nm -u -arch "$arch" "$exe")" || die "nm cannot read $exe"
-  line="$(awk -F '\t' -v re="$core_prefixes" 'FNR == NR { if ($1 == "D") g[$4] = 1; next } ($1 in g) || $1 ~ re' \
-    "$tables" - <<<"$line" | head -3 | tr '\n' ' ' || true)"
-  [ -z "$line" ] || problems+=$'\n'"   the executable takes these from a library at run time: $line"
+  # What the executable takes from a library at run time (nm -m: "(undefined) [weak] external name (from library)"), and
+  # its libraries (otool -L), each known to nm by its short name: a framework's name, or a dylib's file name up to its
+  # first dot. A system library is one under /usr/lib/ or /System/Library/.
+  line="$(otool -L -arch "$arch" "$exe")" || die "otool cannot read $exe"
+  awk 'NR > 1 { sub(/^[ \t]+/, ""); sub(/ \(compatibility version .*$/, ""); print "L\t" $0 }' <<<"$line" > "$tables.imports"
+  line="$(nm -m -arch "$arch" "$exe")" || die "nm cannot read $exe"
+  awk '/\(undefined\)/ { for (k = 1; k < NF; k++) if ($k == "external") break
+    f = ""; if (match($0, /\(from [^()]*\)$/)) f = substr($0, RSTART + 6, RLENGTH - 7); print "I\t" $(k + 1) "\t" f }' <<<"$line" \
+    >> "$tables.imports"
+  imports="$(awk -F '\t' -v re="$core_prefixes" '
+    FNR == NR { if ($1 == "D") g[$4] = 1; else if ($1 == "U") u[$4] = 1; next }
+    $1 == "L" {
+      p = $2; sn = p
+      if (match(p, /[^\/]+\.framework\//)) sn = substr(p, RSTART, RLENGTH - 11); else { sub(/^.*\//, "", sn); sub(/\..*$/, "", sn) }
+      sys = (p ~ /^\/usr\/lib\// || p ~ /^\/System\/Library\//); onsys[sn] = (sn in onsys) ? onsys[sn] && sys : sys
+      next
+    }
+    $1 == "I" { from = ($3 == "" ? "a library looked up at run time" : $3) }
+    $1 == "I" && (($2 in g) || $2 ~ re) { print "P\tthe executable takes " $2 " from " from ", not from the Lean archive that defines it"; next }
+    $1 == "I" && ($2 in u) {
+      if (onsys[$3]) { kept++; by[$3]++ } else print "P\tthe executable takes " $2 ", which the Lean archives import, from " from ", not a system library"
+    }
+    END { for (l in by) list = list (list == "" ? "" : ", ") l " " by[l]; print "K\t" kept + 0 "\t" list }' "$tables" "$tables.imports")"
+  problems+=$'\n'"$(awk -F '\t' '$1 == "P" { print "   " $2 }' <<<"$imports")"
   line="$(nm -g -U -arch "$arch" "$exe")" || die "nm cannot read $exe"
   required="$(core_required)"
   for name in $required; do
@@ -256,12 +306,14 @@ check_core_origin() {
       listing+="   $name $addr libosvaCore_OSVACore.a($member)"$'\n'
     fi
   done
-  rm -f "$tables"; trap - EXIT
+  rm -f "$tables" "$tables.imports"; trap - EXIT
   problems="$(grep . <<<"$problems" || true)"
   [ -z "$problems" ] || { echo "$problems" >&2; die "the executable has code in place of the Lean archives' (above; map: $map)"; }
   printf '%s' "$listing"
   echo "   symbols in the executable that a Lean archive defines, or with the core's prefixes, all from its members:"
   awk -F '\t' '$1 == "C" { printf "%s%s %s", (n++ ? ", " : "   "), ($2 == "core" ? "the core" : $2), $3 } END { print "" }' <<<"$result"
+  awk -F '\t' '$1 == "K" { print "   names the Lean archives import: none defined by other code; " $2 " taken from system libraries (" $3 ")" }' \
+    <<<"$imports"
 }
 
 if [ -z "${SIGN_APP:-}" ]; then
