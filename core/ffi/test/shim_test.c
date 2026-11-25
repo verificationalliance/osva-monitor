@@ -2,6 +2,8 @@
  * theorems and examples promise. Run by scripts/check-core.sh on Linux and macOS. */
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "osva_core.h"
 
 static int fails = 0;
@@ -72,9 +74,12 @@ int main(void) {
     const osva_advisory pg_99 = { 1, pg, 5, f99, f99l, 1 };
     vd[0] = 9;
     CHECK(osva_verdicts(S("16.16"), &pg_99, 1, vd) == 0 && vd[0] == 0, "verdicts: ranges decide, first fixed versions not consulted");
-    const osva_advisory none_published = { 1, NULL, 0, f1620, f1620l, 1 };
+    const osva_advisory empty_ranges = { 1, NULL, 0, f1620, f1620l, 1 };
     vd[0] = 9;
-    CHECK(osva_verdicts(S("1.0"), &none_published, 1, vd) == 0 && vd[0] == 0, "verdicts: an empty list of ranges flags no version");
+    CHECK(osva_verdicts(S("1.0"), &empty_ranges, 1, vd) == 0 && vd[0] == 2, "verdicts: an empty list of ranges is no answer, the fixed versions decide");
+    const osva_advisory states_nothing = { 1, NULL, 0, NULL, NULL, 0 };
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("1.0"), &states_nothing, 1, vd) == 0 && vd[0] == 0, "verdicts: an empty list and no fixed versions is clear");
     const osva_advisory pg_256 = { 256, pg, 5, NULL, NULL, 0 };    /* any non-zero has_ranges, not only its low byte */
     vd[0] = 9;
     CHECK(osva_verdicts(S("16.14"), &pg_256, 1, vd) == 0 && vd[0] == 1, "verdicts: has_ranges 256 has ranges");
@@ -90,9 +95,40 @@ int main(void) {
     const osva_range all[] = { R(NULL, NULL, NULL) };
     const osva_advisory rc_all[] = { { 1, rc, 1, NULL, NULL, 0 }, { 1, all, 1, NULL, NULL, 0 } };
     CHECK(osva_judge(S("2.2.0"), S("2.13.0"), rc_all, 2, jd) == 1 && jd[0] == 1 && jd[1] == 0, "judge: 2.13.0 leaves a fixed range, not an open one");
+    /* clear is no evidence: an advisory that states nothing is never fixed, and never lets an upgrade through */
+    const osva_advisory pg_nothing[] = { { 1, pg, 5, NULL, NULL, 0 }, { 0, NULL, 0, NULL, NULL, 0 } };
+    vd[0] = jd[0] = 9;
+    CHECK(osva_verdicts(S("1.1"), &pg_nothing[1], 1, vd) == 0 && vd[0] == 0 &&
+          osva_judge(S("1.0"), S("1.1"), &pg_nothing[1], 1, jd) == 1 && jd[0] == 0, "judge: clear of an advisory that states nothing is no fix");
+    jd[0] = 9;
+    CHECK(osva_judge(S("1.0"), S("1.1"), &states_nothing, 1, jd) == 1 && jd[0] == 0, "judge: nor of an empty list without fixed versions");
+    CHECK(osva_upgrade_for(S("16.14"), pg_nothing, 2, up, sizeof up) == -1, "upgrade for: none past an advisory that states nothing");
+    const osva_advisory pg_empty[] = { { 1, pg, 5, NULL, NULL, 0 }, states_nothing };
+    CHECK(osva_upgrade_for(S("16.14"), pg_empty, 2, up, sizeof up) == -1, "upgrade for: nor past an empty list without fixed versions");
+    jd[0] = 9;
+    CHECK(osva_judge(S("1.0"), S("16.20"), &empty_ranges, 1, jd) == 1 && jd[0] == 1, "judge: an empty list, fixed versions as evidence");
+    /* candidates are releases: a pre-release is never suggested, a release named beside it is */
+    const uint8_t *f271[] = { (const uint8_t *)"2.7.1" };
+    size_t f271l[] = { 5 };
+    const osva_advisory rc_only = { 1, rc, 1, NULL, NULL, 0 }, rc_and_release = { 1, rc, 1, f271, f271l, 1 };
+    CHECK(osva_upgrade_for(S("2.2.0"), &rc_only, 1, up, sizeof up) == -1, "upgrade for: never a pre-release");
+    CHECK(osva_upgrade_for(S("2.2.0"), &rc_and_release, 1, up, sizeof up) == 5 && memcmp(up, "2.7.1", 5) == 0, "upgrade for: the release named beside it");
     CHECK(osva_verdicts(S("1.0"), NULL, 0, NULL) == 0, "verdicts: no advisories");
     CHECK(osva_upgrade_for(S("1.0"), NULL, 0, up, sizeof up) == -1, "upgrade for: no advisories, no upgrade");
     CHECK(osva_judge(S("1.0"), S("2.0"), NULL, 0, NULL) == 1, "judge: no advisories, above");
+
+    /* the ranges are not read when has_ranges is 0: here a stale pointer and count into a page that cannot be read */
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(guard != MAP_FAILED, "a page that cannot be read");
+    if (guard != MAP_FAILED) {
+        const osva_advisory stale = { 0, (const osva_range *)guard, 1, f1620, f1620l, 1 };
+        vd[0] = jd[0] = 9;
+        CHECK(osva_verdicts(S("16.14"), &stale, 1, vd) == 0 && vd[0] == 2 &&
+              osva_upgrade_for(S("16.14"), &stale, 1, up, sizeof up) == 5 && memcmp(up, "16.20", 5) == 0 &&
+              osva_judge(S("16.14"), S("16.20"), &stale, 1, jd) == 1 && jd[0] == 1, "ranges not read when has_ranges is 0");
+        munmap(guard, page);
+    }
 
     /* bad arguments: -2 from all three, nothing written */
     vd[0] = 9;

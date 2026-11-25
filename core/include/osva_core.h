@@ -94,13 +94,14 @@ long osva_upgrade_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, 
 /*
  * One advisory as the site publishes it, for osva_verdicts, osva_upgrade_for and osva_judge: its affected ranges, and
  * the first fixed versions its issuer names, one per release branch (as for osva_affected). The ranges are read only
- * when has_ranges is not 0; n_ranges 0 then means the site publishes an empty list, inside which no version lies.
- * Pointers are read only during the call.
+ * when has_ranges is not 0. Without them (has_ranges 0, or n_ranges 0: an empty list is no answer, as for
+ * osva_affected_ranges) the fixed versions decide. Pointers are read only during the call.
  *
  * A bad argument, for all three: as NULL while n is not 0; an advisory's ranges NULL while its n_ranges is not 0 (even
  * when has_ranges is 0), its fixed or fixed_len NULL while its n_fixed is not 0, or one of its fixed versions NULL
  * with a length that is not 0; a version NULL with a length that is not 0; out NULL while n is not 0 (osva_upgrade_for:
- * while cap is not 0); n or any n_ranges above SIZE_MAX / 3. Every argument is checked before any is used.
+ * while cap is not 0); n or any n_ranges above SIZE_MAX / 3. Every argument is checked before any is used. All three
+ * also return -2 if the core could not start (osva_core_init failed).
  */
 typedef struct {
     int has_ranges;                     /* 0: the site publishes none it can read; fixed then decides */
@@ -112,35 +113,44 @@ typedef struct {
 } osva_advisory;
 
 /*
- * What each advisory says about an installed version. Ranges decide when an advisory has them; without them its first
- * fixed versions decide, and only as "likely":
+ * What each advisory says about an installed version. Ranges decide when an advisory has them; without them (see
+ * osva_advisory) its first fixed versions decide, and only as "likely":
  *   1 (inside a published range)  <=>  the advisory has ranges, and v lies in one of them (osva_affected_ranges);
  *   2 (likely)                    <=>  it has none, and the first-fixed rule says v is affected (osva_affected);
  *   0 (clear)                         otherwise.
+ * 0 is not evidence that a version fixes anything: an advisory with neither ranges nor fixed versions is 0 for every
+ * version. Never read 0 as "fixed"; ask osva_judge, which answers 0 for such an advisory.
  * Writes one answer per advisory to out[0 .. n-1] and returns 0; returns -2 on a bad argument (above), writing nothing.
- * Theorems (OSVACore/Decide.lean): 1 only when v lies in one of the advisory's published ranges, and always then; 2
- * only for an advisory without ranges whose first fixed versions say v is affected.
+ * Theorems (OSVACore/Decide.lean, FFI.lean): 1 only when v lies in one of the advisory's published ranges, and always
+ * then; 2 only for an advisory without ranges whose first fixed versions say v is affected.
  */
 int osva_verdicts(const uint8_t *v, size_t nv, const osva_advisory *as, size_t n, uint8_t *out);
 
 /*
- * The upgrade to suggest, given the advisories that concern an installed version: the lowest of the candidates (every
- * fixed version their ranges name, and every first fixed version) that is above v and that every advisory calls clear
- * (osva_verdicts would write 0 for each). Writes it to out and returns its length; returns -1 if there is none, -2 on
- * a bad argument (above), -3 if cap is smaller than the version (cap at least the longest fixed version given is
- * always enough).
- * Theorems (OSVACore/Decide.lean): the version is above v, lies in none of the advisories' published ranges, is not
- * flagged by the first fixed versions of any advisory without ranges, and no other candidate with those properties is
- * below it.
+ * The upgrade to suggest, given the advisories that concern an installed version: the lowest candidate that is above v
+ * and clear of every advisory, with evidence. The candidates are the releases (never a pre-release such as
+ * "2.7.1-rc1") that the advisories' ranges name as fixed or their issuers name as first fixed. A version is clear of an
+ * advisory, with evidence, when the advisory has ranges and the version lies in none of them, or has none and its first
+ * fixed versions say the version is not affected; no version is clear of an advisory with neither, so given one, there
+ * is no upgrade. Writes it to out and returns its length; returns -1 if there is none, -2 on a bad argument (above), -3
+ * if cap is smaller than the version (cap at least the longest fixed version given is always enough).
+ * Its cost grows with the square of n, since every candidate is checked against every advisory: milliseconds for 40
+ * advisories, about half a second for 400, seconds for 1,000. Give it one package's advisories, off the main thread.
+ * Theorems (OSVACore/Decide.lean): the version is above v and, for every advisory, lies in none of its published ranges
+ * or, when it has none, is not affected by its first fixed versions; no other candidate with those properties is below
+ * it; and it is one of the candidates.
  */
 long osva_upgrade_for(const uint8_t *v, size_t nv, const osva_advisory *as, size_t n, uint8_t *out, size_t cap);
 
 /*
  * Checks an upgrade u that the core did not pick (the server's target, a vendor's build, pip's choice). When u is
- * above v, sets out[i] to 1 if advisory i calls u clear (osva_verdicts would write 0 for it), else to 0, and returns
- * 1; when u is not above v, returns 0 and leaves out untouched. Returns -2 on a bad argument (above), writing nothing.
+ * above v, sets out[i] to 1 if u is clear of advisory i, with evidence (as for osva_upgrade_for), else to 0, and
+ * returns 1; when u is not above v, returns 0 and leaves out untouched. Returns -2 on a bad argument (above), writing
+ * nothing.
+ * An advisory with neither ranges nor fixed versions gets 0 here, even though osva_verdicts writes 0 (clear) for it:
+ * with nothing stated, clear is no evidence that u fixes it.
  * Theorem (OSVACore/Decide.lean): it answers only for a u above v, one answer per advisory, and out[i] is 1 only if u
- * lies in none of advisory i's published ranges (without ranges: only if its first fixed versions do not flag u).
+ * lies in none of advisory i's published ranges or, when it has none, its first fixed versions say u is not affected.
  */
 int osva_judge(const uint8_t *v, size_t nv, const uint8_t *u, size_t nu, const osva_advisory *as, size_t n,
                uint8_t *out);

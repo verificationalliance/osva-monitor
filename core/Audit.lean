@@ -26,6 +26,7 @@ open OSVA
 #print axioms verdict_inRange_complete
 #print axioms verdict_likely_spec
 #print axioms leaves_sound
+#print axioms upgradeFor_mem
 #print axioms upgradeFor_leaves
 #print axioms upgradeFor_nearest
 #print axioms judge_spec
@@ -41,9 +42,13 @@ open OSVA
 #print axioms ffiAffectedRanges_one_iff
 #print axioms ffiUpgradeRanges_spec
 #print axioms ffiVerdicts_spec
+#print axioms ffiVerdicts_length
+#print axioms verdictCode_eq_one_iff
+#print axioms verdictCode_eq_two_iff
 #print axioms ffiUpgradeFor_spec
 #print axioms ffiJudge_spec
 #print axioms decodeRanges_get
 #print axioms decodeAdvisories_get
+#print axioms decodeAdvisories_length
 #print axioms ffiEncode_spec
 #print axioms ffiSelect_length

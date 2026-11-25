@@ -64,6 +64,7 @@ def decodeAdvisories (has : Bytes) (presents : List Bytes) (bounds fixed : List 
     { ranges := if has.getD k 0 ≠ 0 then some (decodeRanges (presents.getD k []) (bounds.getD k [])) else none,
       fixed := fixed.getD k [] }
 
+/-- osva_verdicts' answer for one advisory: 0 clear, 1 inside a published range, 2 likely. -/
 def verdictCode : Verdict → UInt8
   | .clear => 0
   | .inRange => 1
@@ -157,6 +158,25 @@ theorem decodeAdvisories_get (has : Bytes) (presents : List Bytes) (bounds fixed
       { ranges := if has.getD k 0 ≠ 0 then some (decodeRanges (presents.getD k []) (bounds.getD k [])) else none,
         fixed := fixed.getD k [] } := by
   simp [decodeAdvisories]
+
+/-- osva_verdicts writes 1 exactly for "inside a published range"… -/
+theorem verdictCode_eq_one_iff (x : Verdict) : verdictCode x = 1 ↔ x = .inRange := by
+  cases x <;> decide
+
+/-- …and 2 exactly for "likely". -/
+theorem verdictCode_eq_two_iff (x : Verdict) : verdictCode x = 2 ↔ x = .likely := by
+  cases x <;> decide
+
+/-- One advisory per byte of `has`: the C caller's `n`. -/
+theorem decodeAdvisories_length (has : Bytes) (presents : List Bytes) (bounds fixed : List (List Bytes)) :
+    (decodeAdvisories has presents bounds fixed).length = has.length := by
+  simp [decodeAdvisories]
+
+/-- osva_verdicts gets one answer per advisory. -/
+theorem ffiVerdicts_length (v has : ByteArray) (presents : Array ByteArray) (bounds fixed : Array (Array ByteArray)) :
+    (toBytes (ffiVerdicts v has presents bounds fixed)).length = has.size := by
+  rw [ffiVerdicts_spec, List.length_map, decodeAdvisories_length]
+  simp [toBytes]
 
 theorem ffiEncode_spec (s : ByteArray) : toBytes (ffiEncode s) = pctEncode (toBytes s) := by
   simp [ffiEncode, toBytes, ofBytes]

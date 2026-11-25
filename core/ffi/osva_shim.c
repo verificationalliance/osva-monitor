@@ -132,14 +132,16 @@ static int advisories_ok(const osva_advisory *as, size_t n) {
 }
 
 /* The advisories as FFI.lean's decodeAdvisories reads them: byte k of `has` is 1 when advisory k has ranges, which are
- * presents[k] and bounds[k] as mk_ranges writes them; fixed[k] is its first fixed versions. Only after advisories_ok. */
+ * presents[k] and bounds[k] as mk_ranges writes them; fixed[k] is its first fixed versions. Only after advisories_ok.
+ * The ranges of an advisory whose has_ranges is 0 are not read (osva_core.h says so; Lean would ignore them). */
 static void mk_advisories(const osva_advisory *as, size_t n, lean_object **has, lean_object **presents,
                           lean_object **bounds, lean_object **fixed) {
     lean_object *h = lean_alloc_sarray(1, n, n), *p = lean_alloc_array(n, n), *b = lean_alloc_array(n, n),
                 *f = lean_alloc_array(n, n);
     for (size_t k = 0; k < n; k++) {
         lean_sarray_cptr(h)[k] = as[k].has_ranges != 0;
-        mk_ranges(as[k].ranges, as[k].n_ranges, &lean_array_cptr(p)[k], &lean_array_cptr(b)[k]);
+        size_t n_ranges = as[k].has_ranges != 0 ? as[k].n_ranges : 0;
+        mk_ranges(as[k].ranges, n_ranges, &lean_array_cptr(p)[k], &lean_array_cptr(b)[k]);
         lean_array_cptr(f)[k] = mk_byte_arrays(as[k].fixed, as[k].fixed_len, as[k].n_fixed);
     }
     *has = h; *presents = p; *bounds = b; *fixed = f;
@@ -151,7 +153,7 @@ int osva_verdicts(const uint8_t *v, size_t nv, const osva_advisory *as, size_t n
     mk_advisories(as, n, &has, &presents, &bounds, &fixed);
     lean_object *res = osva_lean_verdicts(mk_bytes(v, nv), has, presents, bounds, fixed);
     size_t m = lean_sarray_size(res);
-    if (m != n) { lean_dec(res); return -2; }        /* cannot happen (ffiVerdicts_spec); never trusted blindly */
+    if (m != n) { lean_dec(res); return -2; }        /* cannot happen (ffiVerdicts_length); never trusted blindly */
     if (m > 0) memcpy(out, lean_sarray_cptr(res), m);
     lean_dec(res);
     return 0;
@@ -175,7 +177,7 @@ int osva_judge(const uint8_t *v, size_t nv, const uint8_t *u, size_t nu, const o
     const uint8_t *r = lean_sarray_cptr(res);
     int ret;
     if (m == 0) ret = 0;                                                    /* u is not above v */
-    else if (r[0] != 1 || m - 1 != n) ret = -2;                             /* cannot happen (ffiJudge_spec) */
+    else if (r[0] != 1 || m - 1 != n) ret = -2;   /* cannot happen (ffiJudge_spec, judge_spec, decodeAdvisories_length) */
     else { if (n > 0) memcpy(out, r + 1, n); ret = 1; }
     lean_dec(res);
     return ret;
