@@ -243,17 +243,11 @@ public struct AdvisoryCheck: Sendable {
         let holding = item.holding(installed)
         guard let first = holding.first else { return self }
         var d = self
-        func raised(_ a: ProjectResponse.Advisory) -> ProjectResponse.Advisory {
-            var a = a
-            a.kev = a.kev || issue.exploited
-            if let s = Severity(api: issue.severity), Severity(api: a.severity).map({ s > $0 }) ?? true { a.severity = s.rawValue }
-            return a
-        }
         if let k = d.hits.firstIndex(where: { h in h.basis == .ranges && holding.contains { $0.id == h.advisory.id } }) {
-            d.hits[k].advisory = raised(d.hits[k].advisory)
+            d.hits[k].advisory = Self.raised(d.hits[k].advisory, by: issue)
         } else {
             d.hits.removeAll { h in holding.contains { $0.id == h.advisory.id } }
-            d.hits.append(Hit(advisory: raised(first), basis: .ranges))
+            d.hits.append(Hit(advisory: Self.raised(first, by: issue), basis: .ranges))
         }
         if let t = d.target, item.leaves(t.version, from: installed) {
             // the finding's own upgrade leaves the item too
@@ -262,6 +256,37 @@ public struct AdvisoryCheck: Sendable {
         }
         d.lastAffected = d.target == nil && d.withheld == nil ? Self.lastAffected(installed, d.hits) : nil
         return d
+    }
+
+    /// The decision of a finding a "patch these first" item makes on its own, by its verdict: affected by the published
+    /// ranges of its advisory, or likely by its own first fixed versions; the upgrade is the item's (`IssueCheck.fix`).
+    /// Call it off the main thread.
+    static func forItem(_ issue: StateResponse.BigIssue, _ item: IssueCheck, verdict: Finding.Check, installed: String) -> AdvisoryCheck {
+        let hit = verdict == .affected
+            ? item.holding(installed).first.map { Hit(advisory: raised($0, by: issue), basis: .ranges) }
+            : nil
+        var d = AdvisoryCheck(installed: installed, hits: [hit ?? Hit(advisory: ProjectResponse.Advisory(item: issue), basis: .firstFixed)], target: nil)
+        (d.target, d.withheld) = item.fix(installed)
+        if d.target == nil && d.withheld == nil { d.lastAffected = lastAffected(installed, d.hits) }
+        return d
+    }
+
+    /// An advisory with an item's word on it: exploited when the item is, and at the item's severity when higher.
+    static func raised(_ a: ProjectResponse.Advisory, by issue: StateResponse.BigIssue) -> ProjectResponse.Advisory {
+        var a = a
+        a.kev = a.kev || issue.exploited
+        if let s = Severity(api: issue.severity), Severity(api: a.severity).map({ s > $0 }) ?? true { a.severity = s.rawValue }
+        return a
+    }
+}
+
+extension ProjectResponse.Advisory {
+    /// A "patch these first" item as an advisory of its own: its first fixed versions, its severity, exploited when it
+    /// is; no published ranges.
+    init(item issue: StateResponse.BigIssue) {
+        id = issue.ids.first ?? issue.name; date = issue.date; severity = issue.severity ?? ""; title = issue.title
+        fixedHint = issue.fixedIn; fixedHintUnreadable = false; kev = issue.exploited; cve = nil
+        ranges = nil; rangesNote = nil; rangesUnreadable = false; fixedBuilds = []
     }
 }
 
@@ -322,19 +347,4 @@ struct IssueCheck {
 
     /// That upgrade, as a finding may show it (`AdvisoryCheck.shown`).
     func fix(_ installed: String) -> (upgrade: CheckedUpgrade?, withheld: AdvisoryCheck.Withheld?) { AdvisoryCheck.shown(upgrade(installed)) }
-
-    /// The note of a finding on the item's own verdict, with its version as shown (nil: none), why there is none when the
-    /// core withheld it, and the versioned formula the version is not a release of (`offLine`), when it is not one.
-    static func note(_ verdict: Finding.Check, installed v: String, upgrade t: String?, withheld: AdvisoryCheck.Withheld?, offLine formula: String? = nil) -> String {
-        let why = withheld.map { $0 == .refused ? AdvisoryCheck.notChecked : AdvisoryCheck.notAVersion }
-        if verdict == .affected {
-            if let t, let formula { return "The issuer lists \(v) as affected; its fix, \(t), is not a \(formula) release." }
-            if let t { return "The issuer lists \(v) as affected and \(t) as fixed." }
-            return "The issuer lists \(v) as affected. " + (why ?? "No fixed release yet.")
-        }
-        if let t, let formula { return "Likely affected: the site publishes no affected ranges; the issuer's fix, \(t), is not a \(formula) release." }
-        if let t { return "Likely affected: the site publishes no affected ranges, and the issuer names \(t) as fixed." }
-        return why.map { "Likely affected: the site publishes no affected ranges. " + $0 }
-            ?? "Likely affected: the site publishes no affected ranges; no fixed version clears it."
-    }
 }

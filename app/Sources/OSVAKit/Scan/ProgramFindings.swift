@@ -427,25 +427,28 @@ extension FindingBuilder {
         for match in managed {
             guard let project = projects[match.project.slug] else { continue }
             guard let d = AdvisoryCheck.decide(match.package.version, project.recent) else { continue }
-            let make = { (d: AdvisoryCheck) in Self.managedFinding(match, project, d) }
+            let make = { (d: AdvisoryCheck) in
+                Self.managedFinding(match, slug: project.slug, name: project.name, grade: project.grade, mark: project.verificationMark, d)
+            }
             let f = make(d)
-            decided[f.id] = Decided(check: d, make: make)
+            decided[f.id] = .advisories(d, make)
             out.append(f)
         }
         return out
     }
 
-    /// A MacPorts, Nix or conda package's finding, as its project's advisories decided it.
-    static func managedFinding(_ match: ManagedMatch, _ project: ProjectResponse, _ d: AdvisoryCheck) -> Finding {
+    /// A MacPorts, Nix or conda package's finding, as its project's advisories (or an item of the "patch these first"
+    /// list) decided it.
+    static func managedFinding(_ match: ManagedMatch, slug: String, name: String, grade: String?, mark: Verification, _ d: AdvisoryCheck) -> Finding {
         let advice = managedAdvice(match.package, upgrade: d.target)
         return Finding(
             id: managedID(match.package), group: d.group,
-            subject: .project(slug: project.slug, name: project.name, installedAs: match.package.name), title: project.name,
+            subject: .project(slug: slug, name: name, installedAs: match.package.name), title: name,
             installedVersion: match.package.version, upgrade: d.target, severity: d.severity,
             advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
             note: sentences(d.note, advice.note),
-            bigIssue: nil, origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: project.slug),
-            upgradeCommand: advice.command, verification: project.verificationMark, grade: project.grade, notChecked: d.notChecked)
+            bigIssue: nil, origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: slug),
+            upgradeCommand: advice.command, verification: mark, grade: grade, notChecked: d.notChecked)
     }
 
     /// MacPorts, Nix and conda pick the version themselves, and only Homebrew's picks are taken without one the core
@@ -475,22 +478,17 @@ extension FindingBuilder {
                 guard let verdict = check.verdict(v) else { continue }
                 let id = Self.managedID(match.package)
                 if let i = findings.firstIndex(where: { $0.id == id }) {
-                    Self.apply(issue, verdict: verdict, item: check, installed: v, to: &findings[i], decided: &decided)
+                    Self.apply(issue, verdict: verdict, item: check, to: &findings[i], decided: &decided)
                     continue
                 }
                 let project = projects[issue.slug]
-                let fix = check.fix(v)
-                let advice = Self.managedAdvice(match.package, upgrade: fix.upgrade)
-                findings.append(Finding(
-                    id: id, group: verdict == .affected ? Self.group(issue) : .likely,
-                    subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.package.name),
-                    title: project?.name ?? match.project.name, installedVersion: v, upgrade: fix.upgrade, severity: Severity(api: issue.severity),
-                    advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                    note: Self.sentences(IssueCheck.note(verdict, installed: v, upgrade: fix.upgrade?.version, withheld: fix.withheld), advice.note),
-                    bigIssue: Self.label(issue),
-                    origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: issue.slug), upgradeCommand: advice.command,
-                    verification: project?.verificationMark ?? .none, grade: project?.grade,
-                    notChecked: verdict == .affected ? nil : Self.signal(issue)))
+                let make = { (d: AdvisoryCheck) in
+                    Self.managedFinding(match, slug: issue.slug, name: project?.name ?? match.project.name, grade: project?.grade,
+                                        mark: project?.verificationMark ?? .none, d)
+                }
+                let d = AdvisoryCheck.forItem(issue, check, verdict: verdict, installed: v)
+                findings.append(Self.labelled(make(d), issue))
+                decided[id] = .advisories(d, make)
             }
         }
     }

@@ -369,6 +369,23 @@ enum JDK {
         #expect(f.notChecked == Finding.NotChecked(id: "CVE-2026-114820", exploited: false, critical: true))
     }
 
+    /// n2: openjdk@8's finding an item made, made again by a later item, still names its version as Java does.
+    @Test func aFindingAnItemMadeKeepsJavasVersions() throws {
+        let item = HomebrewItem(kind: .formula, name: "openjdk@8", version: "1.8.0-511", urls: ["https://openjdk.org/"])
+        let project = try #require(ProjectMatcher.project(for: item, in: Make.index))
+        let record = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
+            {"slug":"openjdk","name":"OpenJDK","recent":[{"id":"CVE-J","sev":"MODERATE","ranges":[{"introduced":"8","fixed":"8.0.512"}]}]}
+            """#.utf8))
+        func issue(_ ids: [String], _ fixedIn: [String]) throws -> StateResponse.BigIssue {
+            try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data(#"{"name":"OpenJDK","slug":"openjdk","severity":"HIGH","exploited":false,"ids":\#(ids),"fixed_in":\#(fixedIn),"title":"T"}"#.utf8))
+        }
+        let f = try #require(FindingBuilder(index: Make.index).findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)],
+                                                                        projects: ["openjdk": record],
+                                                                        bigIssues: [try issue(["CVE-Q"], ["8.0.512"]), try issue(["CVE-J"], [])]).first)
+        #expect(f.group == .criticalHigh && f.installedVersion == "8u511" && f.fixedVersion == "8u512")
+        #expect(f.note?.hasPrefix("The issuer lists 8u511 as affected and 8u512 as fixed.") == true)
+    }
+
     /// MC: a vendor's build is never named for a finding that is only reported.
     @Test func aVendorBuildIsNeverNamedForAReportedFinding() throws {
         let record = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
