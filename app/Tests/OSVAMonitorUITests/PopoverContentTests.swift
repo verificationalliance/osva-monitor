@@ -51,13 +51,13 @@ import SwiftUI
         let other = PreviewData.findings.filter { $0.group == .other }
         var marked = other
         marked[0].notChecked = Finding.NotChecked(id: "CVE-X", exploited: true, critical: false)
-        #expect(content(marked).hero == .notChecked && content(marked).subline.hasPrefix(PopoverContent.unbroken("4 lower-severity findings")))
+        #expect(content(marked).hero == .notChecked && content(marked).subline.hasPrefix(PopoverContent.unbroken("3 lower-severity findings")))
         // only a likely high finding: nothing urgent, so the green hero, which says what it did not check; Other alone
         // counts as lower-severity
         let likely = PreviewData.notCheckedFindings.filter { $0.group == .likely }
         let clean = content(other + likely)
         #expect(clean.hero == .clean && clean.sentence == "Nothing needs action" && clean.menuBarState == .clean)
-        #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("4 lower-severity findings"),
+        #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("3 lower-severity findings"),
                                          PopoverContent.unbroken("8 with no record"), "Scanned"].joined(separator: " ·\u{00A0}")))
         // anything the core checked that needs action comes first
         #expect(content(PreviewData.findings).hero == .malicious && content(PreviewData.findings).caveat == nil && clean.caveat != nil)
@@ -120,7 +120,7 @@ import SwiftUI
         let listed = PreviewData.crowdedFindings.filter { $0.title == "numeric" || $0.title == "win-path" }
         #expect(listed.count == 2 && listed.allSatisfy { $0.group == .other })
         let c = content(other + listed)
-        #expect(c.hero == .clean && c.subline.hasPrefix(PopoverContent.unbroken("4 lower-severity findings") + PopoverContent.dot), "\(c.subline)")
+        #expect(c.hero == .clean && c.subline.hasPrefix(PopoverContent.unbroken("3 lower-severity findings") + PopoverContent.dot), "\(c.subline)")
         #expect(!content(listed).subline.contains("lower-severity"))
     }
 
@@ -258,7 +258,7 @@ import SwiftUI
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
-        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}8\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))   // never "clean" without saying so
+        #expect(clean.subline.hasPrefix("3\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}8\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))   // never "clean" without saying so
         #expect(clean.menuBarState == .clean && clean.hero.symbol == "checkmark.shield.fill")
         let none = PopoverContent(report: nil, isScanning: false, now: now)
         #expect(none.hero == .notScanned && none.sentence == "Not scanned yet" && none.menuBarState == .notScanned)

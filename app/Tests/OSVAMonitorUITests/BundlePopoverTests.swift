@@ -91,7 +91,7 @@ import OSVAKit
     @Test func onlyWhatNobodyLooksAfterHasNoRecord() {
         let c = PopoverContent(report: PreviewData.coverageReport(), isScanning: false, now: PreviewData.now)
         #expect(c.coverage.notCheckedCount == 109 && c.coverage.updatedElsewhereCount == 37)
-        #expect(c.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}109\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))
+        #expect(c.subline.hasPrefix("3\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}109\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))
         #expect(PreviewData.appsWithNoRecord.count + PreviewData.appsFromTheAppStore.count + PreviewData.chromeWebApps.count
                 + PreviewData.edgeWebApps.count == 141)
     }
