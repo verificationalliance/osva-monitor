@@ -819,6 +819,27 @@ import OSVAKit
                 && row.contains("canCopy: command != nil"))
     }
 
+    /// A finding the core did not check against published ranges is never in Fix all: not offered, not reviewed, and
+    /// not counted among the lower ones, though its row offers its fix (Redis, likely, with the version the core checked).
+    @Test func notCheckedFindingsAreNeverInFixAll() throws {
+        let redis = try #require(PreviewData.notCheckedFindings.first { $0.id == PreviewData.NotCheckedID.redis })
+        guard case let .success(plan) = FixPlan.make(for: redis, tools: PreviewData.fixtureTools) else { Issue.record("no plan for redis"); return }
+        let rows = [redis.id: FixRowState(availability: .offered(FixOffer(plan: plan)))]
+        #expect(redis.group == .likely && redis.fixedVersion == "8.2.3" && rows[redis.id]?.offeredFix != nil)      // its row offers it
+        #expect(FixAll.offered([redis], fixes: rows).isEmpty)
+        let review = FixAll.review([redis], fixes: rows)
+        #expect(review.batches.isEmpty && review.proposals.isEmpty && review.skipped.isEmpty)
+        #expect(FixAll.breakdown([redis], fixes: rows)?.lower == 0)
+        // the same finding in Other is Fix all's, so it is the group that keeps it out
+        var other = redis
+        other.group = .other
+        #expect(FixAll.offered([other], fixes: rows).count == 1 && FixAll.breakdown([other], fixes: rows)?.lower == 1)
+        // and in the fixtures' review, whose rows offer it too
+        #expect(PreviewData.fixAllRows[redis.id]?.offeredFix != nil)
+        #expect(!PreviewData.fixAllReview.batches.flatMap(\.findings).contains { $0.group.isNotChecked })
+        #expect(!FixAll.offered(PreviewData.fixAllFindings, fixes: PreviewData.fixAllRows).contains { $0.0.group.isNotChecked })
+    }
+
     // MARK: The header
 
     /// What "N need action" is made of: every finding that needs action in one bucket, the buckets adding up to N.

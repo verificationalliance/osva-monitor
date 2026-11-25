@@ -56,16 +56,22 @@ public struct FindingRow: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// Malicious; or exploited (checked), severity, how many flaws, with the amber chip of a flaw not checked against
+    /// published ranges: first on a likely or reported row, in the red chip's place; last on a checked row, after what
+    /// was checked.
     private var statusChips: some View {
         HStack(spacing: 8) {
             if finding.malicious {
                 StatusChip(.malicious)
             } else {
-                if finding.exploited { StatusChip(.exploited) }
+                let leads = finding.group.isNotChecked, amber = finding.notCheckedChip.map(StatusChip.init)
+                if finding.checkedExploited { StatusChip(.exploited) }
+                if leads, let amber { amber }
                 if let s = finding.severity { SeverityLabel(s) }
                 if finding.flawCount > 1 {
                     Text("\(finding.flawCount) flaws").font(Typeface.count(11.5, weight: .medium)).foregroundStyle(.secondary)
                 }
+                if !leads, let amber { amber }
             }
         }
     }
@@ -96,10 +102,8 @@ public struct FindingRow: View {
                 if let fixed = finding.fixedVersion {
                     Text(" → ").foregroundStyle(.tertiary)
                     Text(fixed).foregroundStyle(.primary)
-                } else if !finding.unresolved.isEmpty && finding.unresolved.allSatisfy({ !$0.affectsThisMac }) {
-                    Text("  does not affect this Mac").font(Typeface.small).foregroundStyle(.secondary)
                 } else {
-                    Text("  no fixed release known").font(Typeface.small).foregroundStyle(.secondary)
+                    Text("  " + finding.withoutVersion).font(Typeface.small).foregroundStyle(.secondary)
                 }
             }
         }
@@ -261,5 +265,34 @@ public struct FindingRow: View {
             .help(copied ? "Copied" : "Copy the command")
             .accessibilityLabel(copied ? "Copied" : "Copy the command")
         }
+    }
+}
+
+/// What a row says about a finding, beyond its fields.
+extension Finding {
+    /// The most urgent flaw of this finding the core did not check against published ranges, when it is exploited in
+    /// the wild or critical: `notChecked`, or, for a finding that is itself likely or reported, its own flaws (a report
+    /// saved before `notChecked` keeps its mark). Nil for a malicious finding, which says only that.
+    public var notCheckedMark: NotChecked? {
+        guard !malicious else { return nil }
+        let own = group.isNotChecked && (exploited || severity == .critical)
+            ? NotChecked(id: nil, exploited: exploited, critical: severity == .critical) : nil
+        return .worse(notChecked, own)
+    }
+
+    /// Exploited in the wild, in a flaw the core checked: the red "Exploited" chip and "Exploited flaw" say so, never
+    /// of a likely or reported finding.
+    public var checkedExploited: Bool { exploited && !malicious && !group.isNotChecked }
+
+    /// The amber chip, when there is a mark. It names the flaw exploited, else critical, except that a likely or
+    /// reported row whose own severity is critical already says so beside it ("Not checked").
+    public var notCheckedChip: StatusChip.Kind? {
+        notCheckedMark.map { .notChecked($0, namesCritical: !(group.isNotChecked && severity == .critical)) }
+    }
+
+    /// The version line without a version to upgrade to: what the core could not check has no checked fix to name.
+    public var withoutVersion: String {
+        if !unresolved.isEmpty && unresolved.allSatisfy({ !$0.affectsThisMac }) { return "does not affect this Mac" }
+        return group.isNotChecked ? "no checked fixed version" : "no fixed release known"
     }
 }

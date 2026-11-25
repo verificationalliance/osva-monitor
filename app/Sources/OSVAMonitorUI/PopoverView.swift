@@ -317,13 +317,15 @@ struct HeroView: View {
     }
 
     /// A status shield is two solid colours: a white mark on the status colour, with the system gradient, so it reads
-    /// crisply on any glass. Neutral states (not scanned, first scan, scanning) stay a quiet hierarchical outline.
+    /// crisply on any glass. Neutral states (not scanned, first scan, scanning) stay a quiet hierarchical outline. Not
+    /// checked is an amber outline, its mark solid: hollow, since nothing checked needs action, and never a filled
+    /// shield, which says the core found something.
     @ViewBuilder private var shield: some View {
         let image = Image(systemName: content.hero.symbol).font(.system(size: 32))
         if let fill = statusFill, !content.isScanning {
             image.symbolRenderingMode(.palette).symbolColorRenderingMode(.gradient).foregroundStyle(.white, fill)
         } else {
-            image.symbolRenderingMode(.hierarchical).foregroundStyle(glyphStyle)
+            image.symbolRenderingMode(content.hero == .notChecked && !content.isScanning ? .monochrome : .hierarchical).foregroundStyle(glyphStyle)
         }
     }
 
@@ -333,7 +335,7 @@ struct HeroView: View {
         case .critical: return Tokens.critical.glyph.color
         case .high: return Tokens.high.glyph.color
         case .clean: return Tokens.clean.color
-        case .notScanned, .firstScan: return nil
+        case .notChecked, .notScanned, .firstScan: return nil
         }
     }
 
@@ -345,6 +347,7 @@ struct HeroView: View {
         case .malicious: return AnyShapeStyle(Tokens.Malicious.glyph.color)
         case .critical: return AnyShapeStyle(Tokens.critical.glyph.color)
         case .high: return AnyShapeStyle(Tokens.high.glyph.color)
+        case .notChecked: return AnyShapeStyle(Tokens.NotChecked.glyph.color)
         case .clean: return AnyShapeStyle(Tokens.clean.color)
         }
     }

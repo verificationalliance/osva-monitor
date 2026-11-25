@@ -32,6 +32,7 @@ import OSVAKit
         ("critical glyph", Tokens.critical.glyph), ("high glyph", Tokens.high.glyph), ("moderate glyph", Tokens.moderate.glyph),
         ("low glyph", Tokens.low.glyph), ("malicious glyph", Tokens.Malicious.glyph), ("exploited glyph", Tokens.Exploited.glyph),
         ("clean", Tokens.clean), ("verified disc", Tokens.Verification.wholeDisc), ("verified parts", Tokens.Verification.partsStroke),
+        ("not checked glyph", Tokens.NotChecked.glyph),
     ]
     static let texts: [(String, Tone)] = [
         ("critical text", Tokens.critical.text), ("high text", Tokens.high.text), ("moderate text", Tokens.moderate.text),
@@ -65,6 +66,36 @@ import OSVAKit
             let ring = Tone.darkOnly(t.darkRing, darkIC: t.darkICRing)
             for v in [Tone.Variant.dark, .darkIC] { #expect(Self.worst(ring, v) >= 3, "\(grade) ring \(v)") }
         }
+    }
+
+    /// One sRGB colour after laying `tone` (at its alpha in `v`) over `under`.
+    static func over(_ under: UInt32, _ tone: Tone, _ v: Tone.Variant) -> UInt32 {
+        let a = tone.alpha[v] ?? 1, top = tone.hex(v)
+        func channel(_ shift: UInt32) -> UInt32 {
+            let u = Double((under >> shift) & 0xFF), t = Double((top >> shift) & 0xFF)
+            return UInt32(max(0, min(255, (u * (1 - a) + t * a).rounded()))) << shift
+        }
+        return channel(16) | channel(8) | channel(0)
+    }
+
+    /// The amber chip of a flaw not checked against published ranges has the summary chips' form, on the site link's
+    /// surface: on a row's container over any glass the panel models, from white (black) to the owner's mid-grey (138),
+    /// its shield clears 3:1 and its label, the system's primary text (black or white at 85%), 4.5:1. Its amber is the
+    /// moderate severity's, with no hex of its own.
+    @Test func theNotCheckedChipReadsOnAnyGlass() {
+        for v in Tone.Variant.allCases {
+            let dark = v == .dark || v == .darkIC
+            for level in dark ? SurfaceTests.darkGlass : SurfaceTests.lightGlass {
+                let g = UInt32(level), glass = g << 16 | g << 8 | g
+                let chip = Self.over(Self.over(Self.over(glass, Surface.card, v), Surface.control, v), Tokens.NotChecked.tint, v)
+                let shield = Self.contrast(Tokens.NotChecked.mark.hex(v), chip)
+                #expect(shield >= 3, "not checked shield \(v) on \(level): \(shield)")
+                let label = Self.contrast(Self.over(chip, Tone(0x000000, dark: 0xFFFFFF, alpha: 0.85), v), chip)
+                #expect(label >= 4.5, "not checked label \(v) on \(level): \(label)")
+            }
+        }
+        #expect(Tokens.NotChecked.glyph == Tokens.moderate.glyph && Tokens.NotChecked.mark == Tokens.moderate.text)
+        #expect(Tokens.NotChecked.tint.hex(.light) == Tokens.moderate.fill.hex(.light) && Tokens.NotChecked.tint.alpha[.light] == 0.15)
     }
 
     @Test func theExploitedChipIsTheOnlySolidRedAndItsLabelReads() {
@@ -136,6 +167,31 @@ import OSVAKit
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
+    }
+
+    /// The amber mark of a flaw not checked against published ranges is one component, StatusChip's `.notChecked`, which
+    /// only rows show, from Finding.notCheckedChip. Its amber is reached only through Tokens.NotChecked, by that chip,
+    /// its section's heading and the hero; no view takes the moderate amber for itself, writes the chip's words, or
+    /// decides the red chip from `exploited` alone.
+    @Test func theNotCheckedMarkIsOneComponent() {
+        let allowed = ["Components.swift": 3, "PopoverView.swift": 1]
+        for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") where file != "Theme.swift" {
+            let code = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+            let amber = code.components(separatedBy: "Tokens.NotChecked").count - 1
+            #expect(amber == allowed[file, default: 0], "\(file) uses the not-checked amber \(amber) times")
+            #expect(!code.contains("Tokens.moderate"), "\(file) takes the moderate amber for itself")
+            #expect(!code.contains("StatusChip(.notChecked"), "\(file) builds its own not-checked chip")
+            let words = code.components(separatedBy: "\"Exploited, not checked\"").count - 1
+            #expect(words == (file == "Components.swift" ? 1 : 0), "\(file) writes the chip's words")
+            let red = code.components(separatedBy: "StatusChip(.exploited)").count - 1
+            #expect(red == (file == "FindingRow.swift" ? 1 : 0), "\(file) draws the exploited chip")
+        }
+        let row = Self.sources("OSVAMonitorUI").first { $0.0 == "FindingRow.swift" }!.1
+        #expect(row.contains("if finding.checkedExploited { StatusChip(.exploited) }") && !row.contains("finding.exploited"))
+        #expect(row.contains("finding.notCheckedChip.map(StatusChip.init)"))
+        // the chip lies on the site link's surface, which theNotCheckedChipReadsOnAnyGlass models under its tint
+        let components = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
+        #expect(components.contains("Capsule().fill(Surface.control.color)\n                Capsule().fill(Tokens.NotChecked.tint.color)"))
     }
 
     /// Run in Terminal is one button (TerminalButton) wherever it appears: a row whose cask needs a password, a run that

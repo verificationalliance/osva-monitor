@@ -849,8 +849,9 @@ public final class AppModel {
     /// Fix all's review, run or summary, while one is shown.
     public private(set) var fixAll: FixAllState?
 
-    /// What the panel shows of Fix all: the header's count (exactly the rows that offer a fix now), why it waits, the
-    /// breakdown of what needs action, and the review, the run or the summary.
+    /// What the panel shows of Fix all: the header's count (exactly the rows that offer a fix now, but for findings the
+    /// core did not check against published ranges), why it waits, the breakdown of what needs action, and the review,
+    /// the run or the summary.
     public var fixAllPanel: FixAllPanel {
         let findings = report?.findings ?? []
         let running = fixAll?.phase == .running
