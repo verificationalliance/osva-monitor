@@ -684,8 +684,7 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         }
     }
 
-    func setUp() -> (OSVAKit.Scanner, SwitchableRunner, RecordedTransport, Later) {
-        let dir = temporaryDirectory()
+    func setUp(_ dir: URL = temporaryDirectory()) -> (OSVAKit.Scanner, SwitchableRunner, RecordedTransport, Later) {
         let runner = SwitchableRunner([:])
         runner.set(Self.brewKey, Self.nginx("1.30.2"))
         runner.set(Self.npmKey, Self.lodash("4.17.20"))
@@ -737,6 +736,39 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         #expect(body == #"{"packages":[{"ecosystem":"npm","name":"lodash","platform":"macos","version":"4.17.21"}]}"#)
         #expect(updated.sent.distinctItems.contains("npm lodash 4.17.21 · macOS"))   // and it is in "What leaves your Mac"
         #expect(!updated.findings.contains { $0.title == "lodash" })
+    }
+
+    @Test func aRecheckThatFindsOnlyReportedFlawsSaysSo() async throws {
+        // the new version's flaw has no ranges and no fixed versions: reported, not checked; neither fixed nor a failure
+        let (scanner, runner, _, later) = setUp()
+        let report = await scanner.scan()
+        let lodash = try #require(report.findings.first { $0.title == "lodash" })
+        runner.set(Self.npmKey, Self.lodash("4.17.21"))
+        let answer = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.21","distinct_flaws":1,"flaws":[{"id":"CVE-R","severity":"HIGH"}]}]}"#
+        later.lock.withLock { later.batch = Data(answer.utf8) }
+        let (_, outcome) = await scanner.recheck(lodash, in: report)
+        guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
+        #expect(now.group == .reported && now.installedVersion == "4.17.21")
+        let made = FixOutcome.make(status: 0, before: lodash, recheck: outcome, homebrew: nil)
+        #expect(made == .notChecked("now 4.17.21") && made.text == "Still reported by the site; not checked: now 4.17.21")
+        #expect(!made.isResolved && !made.isProblem)
+        #expect(FixOutcome.make(ending: .exited(0), before: lodash, recheck: outcome, homebrew: nil) == .notChecked("now 4.17.21"))
+        #expect(FixOutcome.make(status: 1, before: lodash, recheck: outcome, homebrew: nil) == .failed(1))
+    }
+
+    @Test func aRecheckKeepsItsAnswerWhereScansReadThem() async throws {
+        let dir = temporaryDirectory()
+        let (scanner, runner, _, later) = setUp(dir)
+        let report = await scanner.scan()
+        let lodash = try #require(report.findings.first { $0.title == "lodash" })
+        runner.set(Self.npmKey, Self.lodash("4.17.21"))
+        later.lock.withLock { later.batch = Data(#"{"checked":1,"packages":[]}"#.utf8) }
+        _ = await scanner.recheck(lodash, in: report)
+        let asked = try #require(PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.21",
+                                                                                                origin: .npmGlobal(npm: Self.npm))]).approved.keys.first)
+        let cache = Storage(directory: dir).cache
+        #expect(cache.read("batch-v2", asked.cacheKey, maxAge: 3600) != nil)
+        #expect(!FileManager.default.fileExists(atPath: cache.directory.appendingPathComponent("batch").path))
     }
 
     @Test func aPackageThatIsGoneIsRemoved() async throws {

@@ -26,6 +26,11 @@ public enum UpgradeCommand {
         }
     }
 
+    /// A Homebrew upgrade ("brew upgrade nginx", "brew upgrade --cask slack"): Homebrew picks the version, one the
+    /// person already takes from it, so it may be offered without a version the core checked. Every other command that
+    /// names no version (npm's @latest, `cargo install x`, `gem update x`, `npm update x` …) lets a registry pick it.
+    public static func isHomebrewUpgrade(_ command: String) -> Bool { command == "brew upgrade" || command.hasPrefix("brew upgrade ") }
+
     public static func advice(_ i: Inputs, home: String = NSHomeDirectory()) -> Advice {
         advice(for: i.origin, name: i.name, ecosystem: i.ecosystem, target: i.target, malicious: i.malicious, home: home)
     }

@@ -183,8 +183,10 @@ public struct FixAllState: Equatable, Sendable {
 
     public struct Tally: Equatable, Sendable {
         public var fixed = 0, partly = 0, failed = 0, needYou = 0, notRun = 0
-        public init(fixed: Int = 0, partly: Int = 0, failed: Int = 0, needYou: Int = 0, notRun: Int = 0) {
-            self.fixed = fixed; self.partly = partly; self.failed = failed; self.needYou = needYou; self.notRun = notRun
+        /// Ran, and the version now is still reported by the site, but not checked against published ranges.
+        public var notChecked = 0
+        public init(fixed: Int = 0, partly: Int = 0, failed: Int = 0, needYou: Int = 0, notRun: Int = 0, notChecked: Int = 0) {
+            self.fixed = fixed; self.partly = partly; self.failed = failed; self.needYou = needYou; self.notRun = notRun; self.notChecked = notChecked
         }
     }
 
@@ -207,6 +209,7 @@ public struct FixAllState: Equatable, Sendable {
                 switch o {
                 case .fixed, .fixedCheck, .removed, .undone: t.fixed += 1
                 case .partlyFixed: t.partly += 1
+                case .notChecked: t.notChecked += 1
                 case .needsPassword, .blocked, .couldNotCheck: t.needYou += 1
                 case .stopped: t.notRun += 1
                 case .stillAffected, .failed, .couldNotOpen, .exitedWithError, .killed, .timedOut, .couldNotStart, .broke, .undoFailed, .putBack:
@@ -217,10 +220,11 @@ public struct FixAllState: Equatable, Sendable {
         return t
     }
 
-    /// "Fixed 6 · 1 partly fixed · 1 failed · 2 need you": what is not zero.
+    /// "Fixed 6 · 1 partly fixed · 1 still reported, not checked · 1 failed · 2 need you": what is not zero.
     public var summary: String {
         let t = tally
         let parts = [t.fixed > 0 ? "Fixed \(t.fixed)" : nil, t.partly > 0 ? "\(t.partly) partly fixed" : nil,
+                     t.notChecked > 0 ? "\(t.notChecked) still reported, not checked" : nil,
                      t.failed > 0 ? "\(t.failed) failed" : nil,
                      t.needYou > 0 ? "\(t.needYou) need\(t.needYou == 1 ? "s" : "") you" : nil,
                      t.notRun > 0 ? "\(t.notRun) not run" : nil].compactMap { $0 }

@@ -66,6 +66,11 @@ struct BatchCheck: Sendable {
     let reported: [Reported]
     /// Flaws the server counts (`distinct_flaws`) but does not list: reported, not checked.
     let unlisted: Int
+    /// The answer's exploited CVEs (`exploited`) that no listed flaw carries as its id or an alias: flaws past the list
+    /// that are exploited in the wild.
+    let unlistedExploited: [String]
+    /// The answer's worst severity, when flaws are past the list and no listed flaw is that severe: one of them is.
+    let unlistedWorst: Severity?
     /// The server's target, when the core confirms it leaves at least one affected or likely flaw.
     let upgrade: CheckedUpgrade?
     let target: Target
@@ -136,8 +141,16 @@ struct BatchCheck: Sendable {
             let fixedIn = r?.fixedIn.flatMap { Self.judge($0, from: installed, [advisories[k]])?.upgrade }
             notFixed.append(NotFixed(flaw: f, reason: r?.reason, detail: r?.detail, fixedIn: fixedIn))
         }
-        return BatchCheck(installed: installed, affected: affected, likely: likely, reported: reported,
-                          unlisted: max(verdict.distinctFlaws - flaws.count, 0), upgrade: upgrade, target: target, fixed: fixed, notFixed: notFixed,
+        let unlisted = max(verdict.distinctFlaws - flaws.count, 0)
+        let listedIDs = Set(flaws.flatMap { [$0.id] + $0.aliases })
+        // what the answer says of all its flaws, beyond what it lists: past the list, a flaw is exploited when the answer
+        // names it exploited and no listed flaw carries its id, and as severe as the answer's worst when none listed is
+        let listedWorst = flaws.compactMap { Severity(api: $0.severity) }.max()
+        let worst = Severity(api: verdict.worstSeverity).flatMap { w in (listedWorst.map { w > $0 } ?? true) ? w : nil }
+        return BatchCheck(installed: installed, affected: affected, likely: likely, reported: reported, unlisted: unlisted,
+                          unlistedExploited: unlisted > 0 ? verdict.exploited.filter { !listedIDs.contains($0) } : [],
+                          unlistedWorst: unlisted > 0 ? worst : nil,
+                          upgrade: upgrade, target: target, fixed: fixed, notFixed: notFixed,
                           flagged: flagged, advisories: advisories)
     }
 
@@ -187,27 +200,58 @@ extension BatchCheck {
         return "Reported by the site, not checked: \(why)" + (more > 0 ? " (and \(more) more)." : ".")
     }
 
-    /// For a finding shown as likely affected: what decided it, and the upgrade's version as shown.
+    /// For a finding shown as likely affected: what decided it. With the upgrade's version as shown; without one, why:
+    /// the server's plan names no fix (`.none`), or names one the core does not confirm or the app cannot read as a
+    /// version, which the note's next sentence says.
     func likelySentence(upgrade shown: String?) -> String {
-        shown.map { "Likely affected: the site publishes no affected ranges, and the issuer names \($0) as fixed." }
-            ?? "Likely affected: the site publishes no affected ranges; no fixed version clears it."
+        if let shown { return "Likely affected: the site publishes no affected ranges, and the issuer names \(shown) as fixed." }
+        return target == .none ? "Likely affected: the site publishes no affected ranges; no fixed version clears it."
+            : "Likely affected: the site publishes no affected ranges."
     }
 
-    /// Appended to an affected finding's note: the likely flaws it also has. Nil when there are none.
-    var moreLikely: String? {
-        switch likely.count {
+    /// The most urgent of these flaws (and, with `unlisted`, of those past the list), when it is exploited or critical.
+    func alert(_ flaws: [BatchResponse.Flaw], unlisted withUnlisted: Bool) -> Finding.NotChecked? {
+        var best: Finding.NotChecked?
+        for f in flaws {
+            let a = Finding.NotChecked(id: f.id, exploited: f.exploitedSince != nil, critical: Severity(api: f.severity) == .critical)
+            if a.exploited || a.critical { best = .worse(best, a) }
+        }
+        guard withUnlisted else { return best }
+        if let id = unlistedExploited.first { best = .worse(best, Finding.NotChecked(id: id, exploited: true, critical: false)) }
+        if unlistedWorst == .critical { best = .worse(best, Finding.NotChecked(id: nil, exploited: false, critical: true)) }
+        return best
+    }
+
+    /// Appended to an affected finding's note: the likely flaws it also has, naming the most urgent. Nil when none.
+    static func moreLikely(_ count: Int, naming alert: Finding.NotChecked?) -> String? {
+        switch count {
         case 0: return nil
-        case 1: return "1 more flaw without published ranges likely affects it too."
-        case let k: return "\(k) more flaws without published ranges likely affect it too."
+        case 1: return "1 more flaw without published ranges likely affects it too" + naming(alert, count: 1) + "."
+        case let k: return "\(k) more flaws without published ranges likely affect it too" + naming(alert, count: k) + "."
         }
     }
 
-    /// Appended to an affected or likely finding's note: the reported flaws it also has. Nil when there are none.
-    var moreReported: String? {
-        switch reportedCount {
+    /// Appended to an affected or likely finding's note: the reported flaws it also has, naming the most urgent. Nil
+    /// when none.
+    static func moreReported(_ count: Int, naming alert: Finding.NotChecked?) -> String? {
+        switch count {
         case 0: return nil
-        case 1: return "1 more flaw is reported, not checked."
-        case let n: return "\(n) more flaws are reported, not checked."
+        case 1: return "1 more flaw is reported, not checked" + naming(alert, count: 1) + "."
+        case let n: return "\(n) more flaws are reported, not checked" + naming(alert, count: n) + "."
         }
+    }
+
+    /// ": CVE-X, exploited in the wild", ", among them CVE-X, critical"; "" without an alert.
+    static func naming(_ alert: Finding.NotChecked?, count: Int) -> String {
+        guard let alert else { return "" }
+        guard let id = alert.id else { return count == 1 ? ": a critical one" : ", one of them critical" }
+        return (count == 1 ? ": " : ", among them ") + "\(id), \(alert.words)"
+    }
+
+    /// " (CVE-X, exploited in the wild)", " (one of them critical)": a program sentence's way of naming it.
+    static func parenthetical(_ alert: Finding.NotChecked?, count: Int) -> String {
+        guard let alert else { return "" }
+        guard let id = alert.id else { return count == 1 ? " (critical)" : " (one of them critical)" }
+        return " (\(id), \(alert.words))"
     }
 }

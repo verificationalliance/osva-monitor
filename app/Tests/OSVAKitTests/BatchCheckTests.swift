@@ -19,11 +19,13 @@ import Testing
         try result("PyPI", name, version, distinct: distinct, flaws: flaws, plan: plan)
     }
 
-    /// One package's answer. `distinct` defaults to the number of flaws listed.
+    /// One package's answer. `distinct` defaults to the number of flaws listed; `worst` and `exploited` are what the
+    /// answer says of all its flaws, listed or not.
     static func result(_ ecosystem: String, _ name: String, _ version: String, distinct: Int? = nil, flaws: [String],
-                       plan: String = "null") throws -> BatchResponse.Result {
+                       plan: String = "null", worst: String = "HIGH", exploited: [String] = []) throws -> BatchResponse.Result {
         let json = #"{"ecosystem":"\#(ecosystem)","name":"\#(name)","version":"\#(version)","distinct_flaws":\#(distinct ?? flaws.count),"#
-            + #""worst_severity":"HIGH","advisories":[],"flaws":[\#(flaws.joined(separator: ","))],"plan":\#(plan)}"#
+            + #""worst_severity":"\#(worst)","exploited":[\#(exploited.map { "\"\($0)\"" }.joined(separator: ","))],"advisories":[],"#
+            + #""flaws":[\#(flaws.joined(separator: ","))],"plan":\#(plan)}"#
         return try JSONDecoder().decode(BatchResponse.Result.self, from: Data(json.utf8))
     }
 
@@ -31,18 +33,21 @@ import Testing
         #"{"target":\#(target.map { "\"\($0)\"" } ?? "null"),"fixes":[],"remaining":\#(remaining)}"#
     }
 
-    /// The findings FindingBuilder makes of these answers, each package installed once with npm (global) or pip.
-    static func findings(_ results: [BatchResponse.Result], index: PublicIndex? = nil) -> [Finding] {
+    /// The findings FindingBuilder makes of these answers, each package installed once: with npm (global) or pip, or
+    /// where `origin` says.
+    static func findings(_ results: [BatchResponse.Result], index: PublicIndex? = nil, bigIssues: [StateResponse.BigIssue] = [],
+                         origin: ((BatchResponse.Result) -> Origin)? = nil) -> [Finding] {
         let index = index ?? PublicIndex(generatedAt: "T", packages: results.map { (Ecosystem($0.ecosystem), $0.name) }, projects: [])
         let installed = results.map { r in
             InstalledPackage(ecosystem: Ecosystem(r.ecosystem), name: r.name, version: r.version,
-                             origin: r.ecosystem == "PyPI" ? .pip(python: Fixture.applePython, user: false, formula: nil) : .npmGlobal(npm: "/opt/homebrew/bin/npm"))
+                             origin: origin?(r) ?? (r.ecosystem == "PyPI" ? .pip(python: Fixture.applePython, user: false, formula: nil)
+                                                                          : .npmGlobal(npm: "/opt/homebrew/bin/npm")))
         }
         let selection = PrivacyFilter(index: index).approve(installed)
         let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in
             results.first { $0.name == a.name && $0.version == a.version }.map { (a, $0) }
         })
-        return FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: [])
+        return FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: bigIssues)
     }
 
     static let oauthlib = flaw("CVE-2026-49264", ranges: #"[{"introduced":"0.6.1","fixed":"4.0.0"}]"#, fixedIn: #"["4.0.0"]"#)
@@ -201,7 +206,11 @@ import Testing
         try #require(folded.count == 1)
         #expect(alone.group == .criticalHigh && folded[0].group == .criticalHigh)
         #expect(folded[0].flawCount == alone.flawCount && folded[0].exploited == alone.exploited && folded[0].severity == alone.severity)
-        #expect(folded[0].note == (alone.note ?? "") + " pg-exporter 16.14 was built with Go 1.22.3, whose stdlib has 1 known flaw — reported, not checked.")
+        // not counted, never hidden: said, and its exploited flaw marks the finding and notifies
+        #expect(folded[0].note == (alone.note ?? "") + " pg-exporter 16.14 was built with Go 1.22.3, whose stdlib has 1 known flaw"
+                + " — reported, not checked (GO-R, critical, exploited in the wild).")
+        #expect(alone.notChecked == nil && folded[0].notChecked == Finding.NotChecked(id: "GO-R", exploited: true, critical: true))
+        #expect(folded[0].deservesNotification)
 
         // the same for a program folded into its app's own finding
         let docker = BuiltProgram(language: .go, path: "/usr/local/bin/docker", name: "docker", version: nil, place: .app, formula: nil, package: nil,
@@ -218,7 +227,9 @@ import Testing
                           upgradeCommand: nil, verification: .none, grade: nil)
         let d = try #require(FindingBuilder.foldingProgramsIntoApps([program, app]).first)
         #expect(d.id == app.id && d.group == .criticalHigh && d.flawCount == 6 && !d.exploited && d.severity == .high)
-        #expect(d.note == "The issuer lists 4.41.2 as affected and 4.86.0 as fixed. docker was built with Go 1.22.3, whose stdlib has 1 known flaw — reported, not checked.")
+        #expect(d.notChecked == Finding.NotChecked(id: "GO-R", exploited: true, critical: true))
+        #expect(d.note == "The issuer lists 4.41.2 as affected and 4.86.0 as fixed. docker was built with Go 1.22.3, whose stdlib has 1 known flaw"
+                + " — reported, not checked (GO-R, critical, exploited in the wild).")
     }
 
     @Test func mavenAndPackagistVersionsTheCoreMayMisorderAreReported() throws {
@@ -233,6 +244,15 @@ import Testing
         #expect(BatchCheck.read(bound, installed: "33.0.0").reported.map(\.reason) == [.uncertainOrder])
         let composer = try Self.result("Packagist", "acme/lib", "2.4.6-p3", flaws: [Self.flaw("CVE-P", ranges: #"[{"fixed":"2.4.7"}]"#)])
         #expect(BatchCheck.read(composer, installed: "2.4.6-p3").check == .affected)
+        // each place a version can carry an uncertain word: the first fixed versions, an introduced bound, a last affected
+        // one; and Packagist as much as Maven
+        let firstFixed = try Self.result("Maven", "x:y", "33.0", flaws: [Self.flaw("CVE-FF", fixedIn: #"["34.0-jre"]"#)])
+        let introduced = try Self.result("Maven", "x:y", "33.0", flaws: [Self.flaw("CVE-I", ranges: #"[{"introduced":"30.0-jre","fixed":"34.0"}]"#)])
+        let last = try Self.result("Maven", "x:y", "33.0", flaws: [Self.flaw("CVE-L", ranges: #"[{"introduced":"30.0","last_affected":"33.1-jre"}]"#)])
+        let packagist = try Self.result("Packagist", "acme/lib", "3.0.0-RC1", flaws: [Self.flaw("CVE-RC", ranges: #"[{"fixed":"3.0.1"}]"#)])
+        for r in [firstFixed, introduced, last, packagist] {
+            #expect(BatchCheck.read(r, installed: r.version).reported.map(\.reason) == [.uncertainOrder], "\(r.flaws[0].id)")
+        }
         // npm reads "-rc.1" as semver does: decided
         let npm = try Self.result("npm", "n", "1.0.0-rc.1", flaws: [Self.flaw("CVE-N", ranges: #"[{"fixed":"1.0.0"}]"#)])
         #expect(BatchCheck.read(npm, installed: "1.0.0-rc.1").check == .affected)
@@ -308,5 +328,177 @@ import Testing
         let m = try #require(Self.findings([many]).first)
         #expect(m.note == "Reported by the site, not checked: the affected ranges it publishes for EXPL do not include 3.0 (and 3 more).")
         #expect(m.flawCount == 4 && m.severity == .critical && m.exploited)
+    }
+}
+
+/// The review of #16: what a finding is shown for never hides an exploited or critical flaw it is not shown for, no
+/// command installs a version the core did not check, and no unchecked version reaches a finding by another path.
+extension BatchCheckTests {
+    typealias Alert = Finding.NotChecked
+
+    @Test func anAffectedFlawNeverHidesAnExploitedReportedOne() throws {
+        // an affected low flaw, and a reported flaw that is critical and exploited
+        let r = try Self.result("npm", "both", "1.0", flaws: [Self.flaw("LOW-A", ranges: #"[{"fixed":"2.0"}]"#, severity: "LOW"),
+                                                             Self.flaw("RX", severity: "CRITICAL", exploited: true)], plan: Self.plan("2.0"))
+        let f = try #require(Self.findings([r]).first)
+        #expect(f.group == .other && f.severity == .low && !f.exploited && f.flawCount == 1)       // decided by the affected flaw
+        #expect(f.notChecked == Alert(id: "RX", exploited: true, critical: true))                  // and never silent about the other
+        #expect(f.deservesNotification && Finding.toNotify([f], after: nil).map(\.id) == [f.id])
+        #expect(f.note == "1 more flaw is reported, not checked: RX, critical, exploited in the wild.")
+        // a likely one is named the same way
+        let l = try Self.result("npm", "both", "1.0", flaws: [Self.flaw("LOW-A", ranges: #"[{"fixed":"2.0"}]"#, severity: "LOW"),
+                                                             Self.flaw("LC", fixedIn: #"["2.0"]"#, severity: "CRITICAL")], plan: Self.plan("2.0"))
+        let g = try #require(Self.findings([l]).first)
+        #expect(g.notChecked == Alert(id: "LC", exploited: false, critical: true) && !g.deservesNotification)
+        #expect(g.note == "1 more flaw without published ranges likely affects it too: LC, critical.")
+        #expect(g.fixesCount == 1)                          // 2.0 fixes both, but "fixes N here" counts the affected one only
+    }
+
+    @Test func flawsOnThisMacDecideBeforeAffectedOnesElsewhere() throws {
+        // a Windows-only affected flaw, and a likely flaw on macOS that is critical and exploited: likely, and it notifies
+        let win = Self.flaw("WIN", ranges: #"[{"fixed":"2.0"}]"#, platform: "windows")
+        let likely = try Self.result("npm", "p", "1.0", flaws: [win, Self.flaw("LX", fixedIn: #"["2.0"]"#, severity: "CRITICAL", exploited: true)])
+        let f = try #require(Self.findings([likely]).first)
+        #expect(f.group == .likely && f.exploited && f.severity == .critical && f.flawCount == 1 && f.deservesNotification)
+        #expect(f.notChecked == Alert(id: "LX", exploited: true, critical: true))
+        // with a reported flaw on macOS instead: reported, not "nothing to do on this Mac"
+        let reported = try Self.result("npm", "p", "1.0", flaws: [win, Self.flaw("RP", severity: "HIGH")])
+        #expect(Self.findings([reported]).first?.group == .reported)
+        // a likely flaw only on Windows is listed as another platform's, with nothing to do
+        let elsewhere = try Self.result("npm", "p", "1.0", flaws: [Self.flaw("LW", fixedIn: #"["2.0"]"#, platform: "windows")], plan: Self.plan("2.0"))
+        let e = try #require(Self.findings([elsewhere]).first)
+        #expect(e.group == .other && e.upgradeCommand == nil && e.note == nil && e.notChecked == nil && e.flawCount == 1)
+        // in a project folder, which may be deployed anywhere, the same flaw is likely
+        let folder = Self.findings([elsewhere]) { _ in .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true) }
+        #expect(folder.first?.group == .likely)
+    }
+
+    @Test func anExploitedOrCriticalFlawPastTheListLeavesAMark() throws {
+        let listed = Self.flaw("A", ranges: #"[{"fixed":"2.0"}]"#)
+        // the answer names an exploited CVE that no listed flaw carries
+        let exploited = try Self.result("npm", "big", "1.0", distinct: 3, flaws: [listed], plan: Self.plan("2.0"), exploited: ["CVE-UNL"])
+        let f = try #require(Self.findings([exploited]).first)
+        #expect(f.group == .criticalHigh && f.notChecked == Alert(id: "CVE-UNL", exploited: true, critical: false) && f.deservesNotification)
+        #expect(f.note?.hasSuffix("2 more flaws are reported, not checked, among them CVE-UNL, exploited in the wild.") == true)
+        // the answer's worst is critical, and no listed flaw is
+        let critical = try Self.result("npm", "big", "1.0", distinct: 2, flaws: [listed], plan: Self.plan("2.0"), worst: "CRITICAL")
+        let g = try #require(Self.findings([critical]).first)
+        #expect(g.notChecked == Alert(id: nil, exploited: false, critical: true) && !g.deservesNotification)
+        #expect(g.note?.hasSuffix("1 more flaw is reported, not checked: a critical one.") == true)
+        // a listed flaw carrying the CVE as an alias, or the worst severity, says nothing more
+        let carried = try Self.result("npm", "big", "1.0", distinct: 2, flaws: [listed], plan: Self.plan("2.0"), worst: "HIGH", exploited: ["A"])
+        #expect(Self.findings([carried]).first?.notChecked == nil)
+        // nothing listed at all: the answer's own severity and exploited CVEs
+        let none = try Self.result("npm", "big", "1.0", distinct: 4, flaws: [], worst: "CRITICAL", exploited: ["CVE-K"])
+        let h = try #require(Self.findings([none]).first)
+        #expect(h.group == .reported && h.severity == .critical && h.exploited && h.notChecked == Alert(id: "CVE-K", exploited: true, critical: false))
+    }
+
+    @Test func aLikelyFindingSaysItsReportedFlawsToo() throws {
+        let r = try Self.result("npm", "n", "1.31.5", flaws: [Self.flaw("CVE-N", fixedIn: #"["1.30.7","1.31.9"]"#), Self.flaw("CVE-R")],
+                                plan: Self.plan("1.31.9"))
+        let f = try #require(Self.findings([r]).first)
+        #expect(f.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.31.9 as fixed. 1 more flaw is reported, not checked.")
+    }
+
+    @Test func theReportedNoteNamesTheMostUrgentFlaw() throws {
+        func named(_ flaws: [String]) throws -> String? {
+            try Self.findings([try Self.result("npm", "n", "3.0", flaws: flaws)]).first?.note
+        }
+        let outside = #"[{"fixed":"2.0"}]"#
+        // exploited before severity, severity before order, the first listed on a tie
+        #expect(try named([Self.flaw("CRIT", ranges: outside, severity: "CRITICAL"), Self.flaw("EXPL", ranges: outside, severity: "MODERATE", exploited: true)])?
+                    .contains("for EXPL do not include") == true)
+        #expect(try named([Self.flaw("HIGH", ranges: outside, severity: "HIGH"), Self.flaw("CRIT", ranges: outside, severity: "CRITICAL")])?
+                    .contains("for CRIT do not include") == true)
+        #expect(try named([Self.flaw("FIRST", ranges: outside), Self.flaw("SECOND", ranges: outside)])?.contains("for FIRST do not include") == true)
+    }
+
+    @Test func noCommandWithoutACheckedVersionButHomebrews() throws {
+        // affected, and the server's plan names no fix: only Homebrew, which picks its own versions, keeps a command
+        let flaw = Self.flaw("A", ranges: "[{}]")
+        func command(_ eco: String, _ name: String, _ origin: Origin, plan: String = BatchCheckTests.plan(nil)) throws -> String? {
+            try Self.findings([try Self.result(eco, name, "1.0", flaws: [flaw], plan: plan)]) { _ in origin }.first?.upgradeCommand
+        }
+        let env = CondaEnvironment(prefix: "/m", name: "base", named: true, tool: .conda, python: "3.11.5")
+        #expect(try command("npm", "n", .npmGlobal(npm: "/opt/homebrew/bin/npm")) == nil)                      // was npm install -g n@latest
+        #expect(try command("crates.io", "c", .cargoInstall) == nil)                                           // was cargo install c
+        #expect(try command("RubyGems", "g", .gem(gem: "/usr/bin/gem")) == nil)                                // was gem update --user-install g
+        #expect(try command("npm", "n", .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true)) == nil)    // npm install n
+        #expect(try command("npm", "n", .folder(root: "/w", lockfile: "/w/package-lock.json", direct: false)) == nil)   // npm update n
+        #expect(try command("PyPI", "p", .conda(env: env)) == nil)                                             // conda update -n base p
+        #expect(try command("npm", "electron", .electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack"))
+                == "brew upgrade --cask slack")
+        #expect(try command("PyPI", "six", .pip(python: Fixture.homebrewPython, user: false, formula: "python-six")) == "brew upgrade python-six")
+        // but a version the server names that the core rejects leaves no command, Homebrew's included
+        #expect(try command("npm", "electron", .electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack"),
+                            plan: BatchCheckTests.plan("2.0")) == nil)
+        // and the note says why there is none
+        let npm = try Self.result("npm", "n", "1.0", flaws: [flaw], plan: Self.plan(nil))
+        #expect(Self.findings([npm]).first?.note == "No fixed release yet.")
+        let noPlan = try Self.result("npm", "n", "1.0", flaws: [flaw])
+        #expect(Self.findings([noPlan]).first?.note == "No checked fixed version yet; see the site.")
+        // a likely one the same
+        let likely = try Self.result("npm", "n", "1.0", flaws: [Self.flaw("L", fixedIn: #"["2.0"]"#)], plan: Self.plan(nil))
+        let l = try #require(Self.findings([likely]).first)
+        #expect(l.upgradeCommand == nil && l.commandInputs == nil && l.note == "Likely affected: the site publishes no affected ranges; no fixed version clears it.")
+        // an extension's note does not depend on a command, and stays
+        let ext = Origin.addOn(host: .vscode, id: "eamodio.gitlens", name: "GitLens", profile: nil, path: "/p")
+        #expect(Self.findings([noPlan]) { _ in ext }.first?.note == "Update GitLens in VS Code: it ships its own n.")
+    }
+
+    @Test func aLikelyFindingNeverContradictsItsTarget() throws {
+        let l = Self.flaw("L", fixedIn: #"["2.0"]"#)
+        let inside = try #require(Self.findings([try Self.result("npm", "n", "1.0", flaws: [l], plan: Self.plan("1.5"))]).first)
+        #expect(inside.note == "Likely affected: the site publishes no affected ranges. No checked fixed version yet; see the site.")
+        #expect(inside.fixedVersion == nil && inside.upgradeCommand == nil)
+        let odd = try #require(Self.findings([try Self.result("npm", "n", "1.0", flaws: [l], plan: Self.plan("2.0; rm -rf ~"))]).first)
+        #expect(odd.note == "Likely affected: the site publishes no affected ranges. "
+                + "The server named a fixed version the app does not accept as a version; see the site.")
+    }
+
+    @Test func noUpgradeNoNotByThisUpgradeLine() throws {
+        // the core does not confirm the server's target: no version on the row, so no "not by this upgrade" lines
+        let r = try Self.result("npm", "n", "1.0", flaws: [Self.flaw("A", ranges: #"[{"fixed":"3.0"}]"#), Self.flaw("B", ranges: #"[{"fixed":"3.0"}]"#),
+                                                         Self.flaw("C", ranges: "[{}]")],
+                                plan: Self.plan("2.0", remaining: #"[{"id":"B","fixed_in":"3.0","reason":"blocked-by-constraint"},{"id":"C","reason":"no-fix"}]"#))
+        let f = try #require(Self.findings([r]).first)
+        #expect(f.fixedVersion == nil && f.unresolved.map(\.explanation) == ["No fixed release yet"])
+    }
+
+    @Test func aPatchTheseFirstItemNeverPromotesOrVersionsAnUncheckedFinding() throws {
+        let issue = try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data(#"""
+            {"name":"Electron","slug":"electron","severity":"CRITICAL","exploited":true,"date":"2026-11-01","ids":["CVE-EL"],
+             "fixed_in":["28.3.2"],"title":"Electron's renderer escapes"}
+            """#.utf8))
+        let app = Origin.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: nil)
+        // the batch answer reports a flaw it cannot check: the item marks the finding, and signals, never more
+        let reported = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-EL", severity: "HIGH")], plan: Self.plan("28.3.2"))
+        let f = try #require(Self.findings([reported], index: Fixture.index, bigIssues: [issue]) { _ in app }.first)
+        #expect(f.group == .reported && f.fixedVersion == nil && f.upgradeCommand == nil && f.bigIssue != nil)
+        #expect(f.notChecked == Alert(id: "CVE-EL", exploited: true, critical: true) && f.deservesNotification)
+        // without a batch finding, the item's own version is the core's, from its first fixed versions
+        let made = FindingBuilder(index: Fixture.index).findings(
+            approved: PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "electron", version: "28.1.0", origin: app)]).approved,
+            verdicts: [:], brew: [], projects: [:], bigIssues: [issue])
+        #expect(made.map(\.fixedVersion) == ["28.3.2"] && made.first?.note == "Likely affected: the issuer names 28.3.2 as fixed.")
+    }
+
+    @Test func notifiedAgainOnlyWhenMoreSerious() throws {
+        func f(_ group: Finding.Group, exploited: Bool = false, notChecked: Alert? = nil, big: String? = nil) -> Finding {
+            Finding(id: "x", group: group, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", fixedVersion: nil,
+                    severity: .high, advisoryIDs: [], flawCount: 1, exploited: exploited, malicious: false, note: nil, bigIssue: big,
+                    origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil, notChecked: notChecked)
+        }
+        let kev = Alert(id: "CVE-1", exploited: true, critical: false)
+        // 0.5.1 said exploited; the server's ranges cannot check it now: no second notification
+        #expect(Finding.toNotify([f(.reported, exploited: true)], after: [f(.exploited, exploited: true)]).isEmpty)
+        #expect(Finding.toNotify([f(.other, notChecked: kev)], after: [f(.exploited, exploited: true)]).isEmpty)
+        // more serious: a more urgent group, newly exploited, a new item on the list
+        #expect(Finding.toNotify([f(.exploited, exploited: true)], after: [f(.reported, exploited: true)]).count == 1)
+        #expect(Finding.toNotify([f(.other, notChecked: kev)], after: [f(.other, big: "list")]).count == 1)
+        #expect(Finding.toNotify([f(.other, big: "list 2")], after: [f(.other, big: "list")]).count == 1)
+        #expect(Finding.toNotify([f(.other, big: "list")], after: [f(.other, big: "list")]).isEmpty)
+        #expect(Finding.toNotify([f(.other, notChecked: kev)], after: nil).count == 1 && Finding.toNotify([f(.other)], after: nil).isEmpty)
     }
 }

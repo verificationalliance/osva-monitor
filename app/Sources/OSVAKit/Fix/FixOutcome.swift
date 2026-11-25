@@ -11,6 +11,9 @@ public enum FixOutcome: Equatable, Sendable {
     case removed
     /// Checked again and still found; the reason the app knows.
     case stillAffected(String)
+    /// Checked again and still found, but only as reported by the site or likely affected: not checked against
+    /// published ranges, so neither fixed nor a failure ("now 4.17.21").
+    case notChecked(String)
     /// In Terminal: the command ended with an error (its exit status), and the package is still found.
     case failed(Int32)
     /// The command ended without error, but the app could not check again.
@@ -51,6 +54,7 @@ public enum FixOutcome: Equatable, Sendable {
         case let .fixedCheck(now, users): return "Fixed — now \(now) · check \(users) still " + (users.contains(" and ") ? "work" : "works")
         case .removed: return "Removed"
         case let .stillAffected(why): return "Still affected: \(why)"
+        case let .notChecked(what): return "Still reported by the site; not checked: \(what)"
         case .failed(129): return "The Terminal window was closed before the command finished"
         case .failed: return "The command failed — see the Terminal window"
         case let .couldNotCheck(why): return "The command ran, but the app could not check again: \(why)"
@@ -78,7 +82,7 @@ public enum FixOutcome: Equatable, Sendable {
     /// Whether this is a problem to show with the log and a way on (Retry, Undo, Terminal).
     public var isProblem: Bool {
         switch self {
-        case .fixed, .fixedCheck, .removed, .undone, .partlyFixed: return false
+        case .fixed, .fixedCheck, .removed, .undone, .partlyFixed, .notChecked: return false
         default: return true
         }
     }
@@ -93,6 +97,8 @@ public enum FixOutcome: Equatable, Sendable {
         case let .couldNotCheck(why): return status == 0 ? .couldNotCheck(why) : .failed(status)
         case let .stillAffected(after):
             return status == 0 ? .stillAffected(reason(before: before, after: after, homebrew: homebrew)) : .failed(status)
+        case let .notChecked(after):
+            return status == 0 ? .notChecked(found(before: before, after: after)) : .failed(status)
         }
     }
 
@@ -108,7 +114,9 @@ public enum FixOutcome: Equatable, Sendable {
         case let .couldNotCheck(why): return ending.succeeded ? .couldNotCheck(why) : unfinished(ending, found: nil)
         case let .stillAffected(after):
             if ending.succeeded { return .stillAffected(reason(before: before, after: after, homebrew: homebrew)) }
-            return unfinished(ending, found: after.installedVersion == before.installedVersion ? "still \(before.installedLabel)" : "now \(after.installedLabel)")
+            return unfinished(ending, found: found(before: before, after: after))
+        case let .notChecked(after):
+            return ending.succeeded ? .notChecked(found(before: before, after: after)) : unfinished(ending, found: found(before: before, after: after))
         }
     }
 
@@ -121,6 +129,11 @@ public enum FixOutcome: Equatable, Sendable {
         case let .signalled(signal): return .killed(signal)
         case let .couldNotStart(why): return .couldNotStart(why)
         }
+    }
+
+    /// What is installed now: "still 1.30.2", "now Electron 42.11.16".
+    public static func found(before: Finding, after: Finding) -> String {
+        after.installedVersion == before.installedVersion ? "still \(before.installedLabel)" : "now \(after.installedLabel)"
     }
 
     /// Why it is still found: Homebrew did not have the fix; the version did not change; or it changed, not far enough.
