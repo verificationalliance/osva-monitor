@@ -40,11 +40,11 @@ import Testing
             "Figma · Sparkle 1.24.0 → 2.7.3", "zoom.us · Sparkle 1.24.0 → 2.7.3", "zoom.us · 6.6.10 → 6.6.12",   // Zoom's two together
             "Sink · OpenSSL 3.0.13 → 3.0.18", "SpotifyNowPlaying · Python 3.11.15 → 3.14.11",
         ])
-        #expect(f.allSatisfy { $0.group == .criticalHigh })
+        #expect(f.allSatisfy { $0.group == .likely })                              // the records publish no ranges
 
         let zoomOwn = try #require(f.first { $0.title == "zoom.us" && $0.component == nil })
         #expect(zoomOwn.severity == .high && zoomOwn.flawCount == 1 && zoomOwn.advisoryIDs == ["ZSB-26031"])
-        #expect(zoomOwn.upgradeCommand == "brew upgrade --cask zoom" && zoomOwn.note == "Likely affected: the issuer names 6.6.12 as fixed.")
+        #expect(zoomOwn.upgradeCommand == "brew upgrade --cask zoom" && zoomOwn.note == "Likely affected: the site publishes no affected ranges, and the issuer names 6.6.12 as fixed.")
         let folder = (try #require(inventory.apps.first { $0.name == "zoom.us" }).path as NSString).deletingLastPathComponent
         #expect(zoomOwn.originSummary == "App in \(Paths.abbreviatingHome(folder)) · Homebrew cask")
         #expect(zoomOwn.pageURL.host == "www.zoom.com" && zoomOwn.pageLabel == "Open the report on www.zoom.com")
@@ -52,10 +52,10 @@ import Testing
 
         let zoomSparkle = try #require(f.first { $0.title == "zoom.us" && $0.component == "Sparkle" })
         #expect(zoomSparkle.severity == .critical && zoomSparkle.flawCount == 2)
-        #expect(zoomSparkle.note == "Likely affected: the issuer names 2.7.3 as fixed. zoom.us ships its own Sparkle: upgrading the app updates it.")
+        #expect(zoomSparkle.note == "Likely affected: the site publishes no affected ranges, and the issuer names 2.7.3 as fixed. zoom.us ships its own Sparkle: upgrading the app updates it.")
         let figma = try #require(f.first { $0.title == "Figma" })
         #expect(figma.upgradeCommand == nil)
-        #expect(figma.note == "Likely affected: the issuer names 2.7.3 as fixed. Update Figma from its own menu or its website: it ships its own Sparkle.")
+        #expect(figma.note == "Likely affected: the site publishes no affected ranges, and the issuer names 2.7.3 as fixed. Update Figma from its own menu or its website: it ships its own Sparkle.")
 
         let python = try #require(f.first { $0.component == "Python" })
         #expect(python.subject == .project(slug: "cpython", name: "CPython", installedAs: "Python.framework"))
@@ -96,15 +96,30 @@ import Testing
         #expect(check.notChecked(products: own, projects: [:]).isEmpty)
     }
 
-    @Test func anExploitedFlawPutsTheAppInItsGroup() throws {
+    @Test func anExploitedFlawWithoutRangesMarksTheApp() throws {
         let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.5.1", bundleVersion: nil, caskToken: nil)
         let check = BundleCheck.match(Inventory(apps: [app]), index: Make.index)
         let f = try #require(check.findings(products: Self.products, projects: [:]).first)
-        #expect(f.group == .exploited && f.exploited && f.severity == .critical && f.fixedVersion == "6.6.12" && f.flawCount == 2)
-        #expect(f.note == "Likely affected: the issuer names 6.6.12 as fixed. Update zoom.us from its own menu or its website.")
+        // the record publishes no ranges: likely, and never counted; how serious it would be, and its mark, stay
+        #expect(f.group == .likely && f.exploited && f.severity == .critical && f.fixedVersion == "6.6.12" && f.flawCount == 2)
+        #expect(f.notChecked?.exploited == true && f.deservesNotification)
+        #expect(f.note == "Likely affected: the site publishes no affected ranges, and the issuer names 6.6.12 as fixed. Update zoom.us from its own menu or its website.")
         // at the fix, nothing
         var fixed = app; fixed.shortVersion = "6.6.12"
         #expect(BundleCheck.match(Inventory(apps: [fixed]), index: Make.index).findings(products: Self.products, projects: [:]).isEmpty)
+    }
+
+    /// A product advisory without published ranges is likely affected: never counted, but its critical flaw is marked.
+    @Test func aProductAdvisoryWithoutRangesIsLikely() throws {
+        let zoom = try JSONDecoder().decode(ProductResponse.self, from: Data(#"""
+            {"key":"zoom","name":"Zoom Workplace","recent":[{"id":"ZSB-1","sev":"CRITICAL","fixed_hint":["6.6.12"],"ranges":null}]}
+            """#.utf8))
+        let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.6.10", bundleVersion: nil, caskToken: nil)
+        let f = try #require(BundleCheck.match(Inventory(apps: [app]), index: Make.index).findings(products: ["zoom": zoom], projects: [:]).first)
+        #expect(f.group == .likely && !f.group.needsAction && f.fixedVersion == "6.6.12" && f.severity == .critical)
+        #expect(f.notChecked == Finding.NotChecked(id: "ZSB-1", exploited: false, critical: true))
+        #expect(f.note == "Likely affected: the site publishes no affected ranges, and the issuer names 6.6.12 as fixed. "
+                + "Update zoom.us from its own menu or its website.")
     }
 
     @Test func maliciousExtensionsComeFirstWithTheirRemoval() throws {
@@ -227,9 +242,9 @@ import Testing
             "malicious · Ad Blocker · 1.0",
             "malicious · GitLens · axios 1.14.1",
             "malicious · Prettier · 11.0.3",
-            "criticalHigh · zoom.us · Sparkle 1.24.0 → 2.7.3",
-            "criticalHigh · zoom.us · Python 3.11.15 → 3.14.11",
-            "criticalHigh · zoom.us · 6.6.10 → 6.6.12",
+            "likely · zoom.us · Sparkle 1.24.0 → 2.7.3",                          // the records publish no ranges
+            "likely · zoom.us · Python 3.11.15 → 3.14.11",
+            "likely · zoom.us · 6.6.10 → 6.6.12",
             "reported · Prettier · lodash 4.17.20",                                // 0.5.1's answer lists no flaws: not checked
         ])
         #expect(report.inventory.reports.map(\.detail).contains("2 apps"))

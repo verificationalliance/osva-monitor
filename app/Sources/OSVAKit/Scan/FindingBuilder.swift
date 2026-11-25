@@ -1,10 +1,11 @@
 import Foundation
 
 /// Turns the API's answers into findings. Pure: everything it needs is passed in, so the tests drive it directly.
-/// For a project's or product's advisories, affectedness and the upgrade are the verified core's (AdvisoryCheck); for
-/// packages checked by exact version, each flaw is decided by the core from the ranges the site publishes, and the
-/// server's target is the upgrade only when the core confirms it (BatchCheck, `packageFindings`). Call it off the main
-/// thread: the core's judgements must not block it.
+/// Every flaw and advisory is decided by the verified core from the ranges the site publishes: affected only inside
+/// them, likely affected by first fixed versions without them, and otherwise reported, not checked. For a project's or
+/// product's advisories the upgrade is the core's (AdvisoryCheck, IssueCheck); for packages checked by exact version,
+/// the server's target is the upgrade only when the core confirms it (BatchCheck, `packageFindings`). Call it off the
+/// main thread: the core's upgrades and judgements must not block it.
 public struct FindingBuilder: Sendable {
     public let index: PublicIndex
     private let core = Core.shared
@@ -145,11 +146,13 @@ public struct FindingBuilder: Sendable {
             let check = BatchCheck.read(verdict, installed: package.version)
             let state = Self.state(verdict, check, onThisMac: onThisMac)
             let malicious = state.malicious, onlyElsewhere = state.onlyElsewhere
-            // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck). One the
-            // core does not confirm leaves no version, and no command that would install it.
-            let upgrade = malicious || state.check == .reported ? nil : check.upgrade
-            let rejected = !malicious && check.target == .notAVersion
-            let unconfirmed = !malicious && state.check != .reported && check.target == .unconfirmed
+            // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck), and
+            // leaves a flaw the finding is shown for (`here`). One the core does not confirm leaves no version, and no
+            // command that would install it.
+            let target = onlyElsewhere ? check.target : check.target(for: state.here)
+            let upgrade = malicious || state.check == .reported ? nil : onlyElsewhere ? check.upgrade : check.upgrade(for: state.here)
+            let rejected = !malicious && target == .notAVersion
+            let unconfirmed = !malicious && state.check != .reported && target == .unconfirmed
             let unresolved = malicious
                 ? (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
                     let flaw = verdict.flaws.first { $0.id == r.id }
@@ -188,7 +191,7 @@ public struct FindingBuilder: Sendable {
                     let why: String?
                     if rejected { why = rejectedNote }
                     else if unconfirmed { why = noChecked }
-                    else if verdict.plan != nil && check.target == .none && unresolved.isEmpty { why = "No fixed release yet." }
+                    else if verdict.plan != nil && target == .none && unresolved.isEmpty { why = "No fixed release yet." }
                     else if unchecked { why = noChecked }
                     else { why = advice.note }
                     note = Self.sentences(why, more)
@@ -196,7 +199,7 @@ public struct FindingBuilder: Sendable {
                     let how = rejected ? rejectedNote : unconfirmed ? noChecked : advice.note
                     note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, more)
                 case .reported?:
-                    note = check.reportedNote(ecosystem: verdict.ecosystem)
+                    note = check.reportedNote(ecosystem: verdict.ecosystem, onThisMac: onThisMac)
                 }
                 return Finding(id: id, group: state.group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
                                component: component, installedVersion: package.version, upgrade: upgrade,
@@ -256,27 +259,26 @@ public struct FindingBuilder: Sendable {
         for match in brew {
             guard let project = projects[match.project.slug] else { continue }
             let (compared, installed) = Self.versions(match.item, slug: project.slug)
-            let shown = Self.shownVersion(slug: project.slug)
-            // Each advisory by the issuer's ranges when it has them, else by its first fixed versions (AdvisoryCheck).
+            // Each weighed advisory decided by the core: affected inside its published ranges, likely by its first fixed
+            // versions without them, reported when they cannot be read; the upgrade is the core's (AdvisoryCheck).
             guard let d = AdvisoryCheck.decide(compared, project.recent) else { continue }
-            var target = d.target.map(shown), note = d.note(showing: shown)
             // A versioned formula never leaves its line: `brew upgrade python@3.11` cannot install 3.12.9, so a fix only on
             // another line is said, not offered as a command that would do nothing.
-            let offLine = target.map { t in Self.formulaLine(match.item).map { !Self.isOnLine(t, $0) } ?? false } ?? false
-            if offLine, let t = target {
-                note = "The issuer lists \(installed) as affected; its fix, \(t), is not a \(match.item.name) release."
-                target = nil
-            }
+            let offLine = d.target.map { t in Self.formulaLine(match.item).map { !Self.isOnLine(t.version, $0) } ?? false } ?? false
+            let upgrade = offLine ? nil : d.target?.displayed(Self.display(slug: project.slug))
+            let note = d.note(showing: Self.shownVersion(slug: project.slug), offLine: offLine ? match.item.name : nil)
+            // Homebrew picks its own version; still no command for a finding only reported, or whose upgrade the core withheld
+            let inputs = Self.inputs(match.item.origin, match.item.name, nil, upgrade?.display)
+            let command = offLine ? nil : d.advice(UpgradeCommand.advice(inputs)).command
             out.append(Finding(
-                id: "brew|\(match.item.name)|\(match.item.version)", group: d.exploited ? .exploited : .criticalHigh,
+                id: "brew|\(match.item.name)|\(match.item.version)", group: d.group,
                 subject: .project(slug: project.slug, name: project.name, installedAs: match.item.name), title: project.name,
-                installedVersion: installed, fixedVersion: target, severity: d.severity,
-                advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
+                installedVersion: installed, upgrade: upgrade, severity: d.severity,
+                advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
                 note: note, bigIssue: nil, origins: [match.item.origin],
-                pageURL: SiteURL.projectPage(slug: project.slug),
-                upgradeCommand: offLine ? nil : UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
+                pageURL: SiteURL.projectPage(slug: project.slug), upgradeCommand: command,
                 verification: project.verificationMark, grade: project.grade,
-                commandInputs: offLine ? nil : Self.inputs(match.item.origin, match.item.name, nil, target)))
+                commandInputs: command == nil ? nil : inputs, notChecked: d.notChecked))
         }
         return out
     }
@@ -294,6 +296,9 @@ public struct FindingBuilder: Sendable {
         if slug == JavaCheck.openJDK { return { JavaVersion.shown($0) } }
         return { $0 }
     }
+
+    /// How the project's upgrade is shown, the same way.
+    static func display(slug: String) -> CheckedUpgrade.Display { slug == JavaCheck.openJDK ? .java : .asChecked }
 
     /// The release line a versioned formula stays on: "python@3.11" → 3.11, "postgresql@16" → 16, "openssl@3" → 3. Nil for
     /// an unversioned formula or a cask, which may move to any release.
@@ -318,87 +323,96 @@ public struct FindingBuilder: Sendable {
 
     // MARK: "Patch these first" (api/v1/state big_issues)
 
+    /// The label of a finding on the site's "patch these first" list.
+    static func label(_ issue: StateResponse.BigIssue) -> String {
+        "On the site's “patch these first” list: \(issue.title.isEmpty ? issue.name : issue.title)"
+    }
+
+    /// Today's group, for a finding the item's published ranges hold.
+    static func group(_ issue: StateResponse.BigIssue) -> Finding.Group {
+        issue.exploited ? .exploited : (Severity(api: issue.severity) ?? .low) >= .high ? .criticalHigh : .other
+    }
+
+    /// The mark an item leaves where the core did not find it affected, when it is exploited in the wild or critical.
+    static func signal(_ issue: StateResponse.BigIssue) -> Finding.NotChecked? {
+        let critical = Severity(api: issue.severity) == .critical
+        return issue.exploited || critical ? Finding.NotChecked(id: issue.ids.first, exploited: issue.exploited, critical: critical) : nil
+    }
+
+    /// An item on a finding another path made: it labels it, and promotes it only when the core found the item's
+    /// published ranges hold the version (`.affected`). A likely item marks it instead, when exploited or critical. It
+    /// never names a version for it.
+    static func mark(_ finding: inout Finding, with issue: StateResponse.BigIssue, verdict: Finding.Check) {
+        finding.bigIssue = label(issue)
+        guard verdict == .affected else {
+            finding.notChecked = .worse(finding.notChecked, signal(issue))
+            return
+        }
+        let severity = Severity(api: issue.severity)
+        if issue.exploited { finding.exploited = true }
+        if group(issue) < finding.group { finding.group = group(issue) }
+        if finding.severity == nil || (severity.map { $0 > finding.severity! } ?? false) { finding.severity = severity }
+    }
+
+    /// Items decided like the project's own advisories (IssueCheck): affected only inside published ranges, likely by
+    /// the list's first fixed versions otherwise. A finding an item makes is in today's groups only when affected, and
+    /// in Likely otherwise; its version is the core's, shown only when it reads as one.
     func applyBigIssues(_ issues: [StateResponse.BigIssue], to findings: inout [Finding], approved: [ApprovedPackage: [InstalledPackage]],
                         brew: [BrewMatch], projects: [String: ProjectResponse]) {
         for issue in issues where !issue.fixedIn.isEmpty {
-            let label = "On the site's “patch these first” list: \(issue.title.isEmpty ? issue.name : issue.title)"
-            // The project's ranges decide when its record has them for every advisory on the item (IssueCheck).
             let check = IssueCheck(issue, project: projects[issue.slug])
-            let fix = { (v: String) in check.fix(v) }
             let severity = Severity(api: issue.severity)
-            let group: Finding.Group = issue.exploited ? .exploited : (severity ?? .low) >= .high ? .criticalHigh : .other
-            func mark(id: String, fix: (String) -> String?, make: () -> Finding) {
-                if let i = findings.firstIndex(where: { $0.id == id }) {
-                    findings[i].bigIssue = label
-                    if issue.exploited { findings[i].exploited = true }
-                    if group < findings[i].group { findings[i].group = group }
-                    if findings[i].severity == nil || (severity.map { $0 > findings[i].severity! } ?? false) { findings[i].severity = severity }
-                    if findings[i].fixedVersion == nil { findings[i].fixedVersion = fix(findings[i].installedVersion) }
-                } else {
-                    findings.append(make())
-                }
-            }
+            func group(_ verdict: Finding.Check) -> Finding.Group { verdict == .affected ? Self.group(issue) : .likely }
+            func signal(_ verdict: Finding.Check) -> Finding.NotChecked? { verdict == .affected ? nil : Self.signal(issue) }
             // Homebrew formulae and casks of the project
             for match in brew where match.project.slug == issue.slug {
                 let (v, installed) = Self.versions(match.item, slug: issue.slug)
-                guard check.affects(v) else { continue }
+                guard let verdict = check.verdict(v) else { continue }
+                let id = "brew|\(match.item.name)|\(match.item.version)"
+                if let i = findings.firstIndex(where: { $0.id == id }) { Self.mark(&findings[i], with: issue, verdict: verdict); continue }
                 let project = projects[issue.slug]
-                let shown = Self.shownVersion(slug: issue.slug)
-                let target = fix(v).map(shown)
-                mark(id: "brew|\(match.item.name)|\(match.item.version)", fix: { _ in target }) {
-                    Finding(id: "brew|\(match.item.name)|\(match.item.version)", group: group,
-                            subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.item.name),
-                            title: project?.name ?? match.project.name, installedVersion: installed, fixedVersion: target, severity: severity,
-                            advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                            note: check.note(installed, target), bigIssue: label,
-                            origins: [match.item.origin], pageURL: SiteURL.projectPage(slug: issue.slug),
-                            upgradeCommand: UpgradeCommand.advice(Self.inputs(match.item.origin, match.item.name, nil, target)).command,
-                            verification: project?.verificationMark ?? .none, grade: project?.grade,
-                            commandInputs: Self.inputs(match.item.origin, match.item.name, nil, target))
-                }
+                let fix = check.fix(v)
+                let upgrade = fix.upgrade?.displayed(Self.display(slug: issue.slug))
+                let inputs = Self.inputs(match.item.origin, match.item.name, nil, upgrade?.display)
+                // Homebrew picks its own version; none for one the core withheld
+                let command = fix.withheld == nil ? UpgradeCommand.advice(inputs).command : nil
+                findings.append(Finding(id: id, group: group(verdict),
+                                        subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.item.name),
+                                        title: project?.name ?? match.project.name, installedVersion: installed, upgrade: upgrade, severity: severity,
+                                        advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
+                                        note: check.note(verdict, installed: v, fix: fix, showing: Self.shownVersion(slug: issue.slug)), bigIssue: Self.label(issue),
+                                        origins: [match.item.origin], pageURL: SiteURL.projectPage(slug: issue.slug), upgradeCommand: command,
+                                        verification: project?.verificationMark ?? .none, grade: project?.grade,
+                                        commandInputs: command == nil ? nil : inputs, notChecked: signal(verdict)))
             }
             // Registry packages that belong to the project (the index's project column), Electron apps for "electron".
-            // The item is decided by its first fixed versions alone: on a finding the batch check made, it is a mark and,
-            // when exploited or critical, a not-checked signal. It never promotes that finding or names a version for it.
-            let signal = issue.exploited || severity == .critical
-                ? Finding.NotChecked(id: issue.ids.first, exploited: issue.exploited, critical: severity == .critical) : nil
             for (package, installs) in approved {
                 let belongs = issue.slug == "electron" && package.ecosystem == .npm && package.name == "electron"
-                guard belongs, core.affectedness(installed: package.version, fixedVersions: issue.fixedIn) == .affected else { continue }
-                let target = Self.firstFixed(package.version, issue.fixedIn)
+                guard belongs, let verdict = check.verdict(package.version) else { continue }
+                var asked: (upgrade: CheckedUpgrade?, withheld: AdvisoryCheck.Withheld?)?
                 for install in installs {
                     let isApp = install.origin.kind == .electron
                     let id: String
                     if case let .electronApp(_, path, _) = install.origin { id = "app|\(path)|\(package.version)" }
                     else { id = "pkg|\(package.ecosystem)|\(package.name)|\(package.version)" + (package.python.map { "|py\($0)" } ?? "") }
-                    if let i = findings.firstIndex(where: { $0.id == id }) {
-                        findings[i].bigIssue = label
-                        findings[i].notChecked = .worse(findings[i].notChecked, signal)
-                        continue
-                    }
-                    let inputs = Self.inputs(install.origin, install.name, package.ecosystem, target?.version)
-                    // no version the core checked: only Homebrew's own upgrade
-                    let command = UpgradeCommand.advice(inputs).command.flatMap { target != nil || UpgradeCommand.isHomebrewUpgrade($0) ? $0 : nil }
-                    findings.append(Finding(id: id, group: group, subject: .package(ecosystem: package.ecosystem, name: package.name),
+                    if let i = findings.firstIndex(where: { $0.id == id }) { Self.mark(&findings[i], with: issue, verdict: verdict); continue }
+                    let fix = asked ?? check.fix(package.version)
+                    asked = fix
+                    let inputs = Self.inputs(install.origin, install.name, package.ecosystem, fix.upgrade?.version)
+                    // no version the core checked: only Homebrew's own upgrade; none at all for one the core withheld
+                    let command = fix.withheld != nil ? nil
+                        : UpgradeCommand.advice(inputs).command.flatMap { fix.upgrade != nil || UpgradeCommand.isHomebrewUpgrade($0) ? $0 : nil }
+                    findings.append(Finding(id: id, group: group(verdict), subject: .package(ecosystem: package.ecosystem, name: package.name),
                                             title: isApp ? install.origin.label : install.name, component: isApp ? "Electron" : nil,
-                                            installedVersion: package.version, upgrade: target, severity: severity, advisoryIDs: issue.ids,
+                                            installedVersion: package.version, upgrade: fix.upgrade, severity: severity, advisoryIDs: issue.ids,
                                             flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                                            note: target.map { "Likely affected: the issuer names \($0.display) as fixed." }, bigIssue: label,
+                                            note: check.note(verdict, installed: package.version, fix: fix), bigIssue: Self.label(issue),
                                             origins: [install.origin], pageURL: SiteURL.packagePage(package.ecosystem, package.name, version: package.version),
                                             upgradeCommand: command,
                                             verification: projects[issue.slug]?.verificationMark ?? .none, grade: projects[issue.slug]?.grade,
-                                            commandInputs: command == nil ? nil : inputs))
+                                            commandInputs: command == nil ? nil : inputs, notChecked: signal(verdict)))
                 }
             }
-        }
-    }
-
-    /// The upgrade an item's first fixed versions name, as the core checks it (Decide.lean `upgradeFor`): the lowest
-    /// of them above `installed` that they say is clear of the item.
-    static func firstFixed(_ installed: String, _ fixedIn: [String]) -> CheckedUpgrade? {
-        switch Core.shared.upgrade(from: installed, advisories: [CoreAdvisory(ranges: nil, fixed: fixedIn)]) {
-        case let .upgrade(u): return u
-        case .noUpgrade, .refused: return nil
         }
     }
 }

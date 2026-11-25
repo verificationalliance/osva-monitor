@@ -9,11 +9,7 @@ import OSVACore
 /// packages may be named to the server, and how a name is written into a URL. The core makes them where this file's
 /// callers ask it to:
 ///   - version order (`compareVersions` and the helpers built on it);
-///   - whether a version is affected by an advisory in a project's or product's record, by the issuer's ranges
-///     (`affectedness(installed:ranges:)`) or, for an advisory without ranges, by its first fixed versions
-///     (`affectedness(installed:fixedVersions:)`), and the upgrade that lies in none of the ranges
-///     (`upgrade(from:ranges:)`): AdvisoryCheck, for Homebrew, MacPorts, Nix and conda packages, apps and the
-///     libraries they bundle, and Java runtimes, and IssueCheck, for the site's "patch these first" list;
+///   - whether a version is affected by an advisory, and which upgrade leaves it (below);
 ///   - which installed packages, projects and products may be named to the server (`select`: PrivacyFilter), and
 ///     which extensions are on the malicious list (BundleCheck);
 ///   - every path component and query value of the URLs SiteURL builds (`percentEncode`).
@@ -26,17 +22,16 @@ import OSVACore
 /// `versionUncertain` names the versions whose order Maven or Composer may not share. Packages checked by exact version
 /// (`api/v1/check/batch`: registry packages, project folders' lockfiles, the Electron inside apps, the packages inside
 /// Go and Rust programs and pipx and uv tools) ask them (BatchCheck): a flaw is affected only inside its published
-/// ranges, and the server's `plan.target` is shown only when `judge` confirms it. The project, product and fix paths do
-/// not ask them yet: until they do, the paths below decide as they say.
+/// ranges, and the server's `plan.target` is shown only when `judge` confirms it. So do the advisories of a project's or
+/// product's record (AdvisoryCheck: Homebrew, MacPorts, Nix and conda packages, apps and the libraries they bundle, Java
+/// runtimes) and the site's "patch these first" list (IssueCheck): an advisory is affected only inside its published
+/// ranges, likely affected by its first fixed versions without them, reported when they cannot be read, and the
+/// upgrade is `upgrade(from:advisories:)`'s; a Java vendor's own build is named only when `judge` confirms it. The fix
+/// paths do not ask them yet: until they do, they decide as said below.
 ///
 /// The rest is not the core's:
 ///   - FixAdvisor's partial fixes and pip's resolved versions are the server's plans, which the app checks only for
 ///     reading as versions (FixSafety).
-///   - Only `upgrade(from:ranges:)` is proved to leave every range it is given behind. Without ranges the upgrade is
-///     the nearest first fixed version above the installed one (`nearestVersion`); AdvisoryCheck proposes the newest
-///     of the two paths' upgrades (`newestVersion`), and JavaCheck, when there is none, the vendor's own fixed build.
-///   - An advisory whose ranges cannot be read is taken as having none (`ProjectResponse.Advisory`, which marks it
-///     `rangesUnreadable`), so its first fixed versions decide.
 ///   - The names in the body of `api/v1/check/batch` are written by JSONEncoder; the core encodes only URLs.
 ///   - Which Python or Homebrew folder is newest is read by `localizedStandardCompare` (PythonSource,
 ///     HomebrewReceipts), and the release tool orders its own versions (OSVARelease's Appcast).

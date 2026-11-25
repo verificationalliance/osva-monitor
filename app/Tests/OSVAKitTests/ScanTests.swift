@@ -15,10 +15,10 @@ import Testing
         let f = FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [brew("nginx", "1.30.2", "nginx")],
                                                       projects: ["nginx": nginx], bigIssues: [])
         let finding = try #require(f.first)
-        #expect(finding.group == .criticalHigh)
+        #expect(finding.group == .likely)                             // the record publishes no ranges: never counted
         #expect(finding.severity == .critical)
         #expect(finding.fixedVersion == "1.30.7")                    // the fix on its own branch, not the newest branch's
-        #expect(finding.note == "Likely affected: the issuer names 1.30.7 as fixed.")
+        #expect(finding.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed.")
         #expect(finding.upgradeCommand == "brew upgrade nginx")
         #expect(finding.pageURL.absoluteString == "https://verificationalliance.org/#/project/nginx")
         #expect(finding.originSummary == "Homebrew nginx")
@@ -30,15 +30,16 @@ import Testing
         #expect(f.isEmpty)
     }
 
-    @Test func patchTheseFirstMarksAndPromotes() throws {
+    @Test func patchTheseFirstMarksWhatItCannotCheck() throws {
         let f = FindingBuilder(index: index).findings(approved: [:], verdicts: [:],
                                                       brew: [brew("nginx", "1.30.2", "nginx"), brew("openssh", "10.6p1", "openssh")],
                                                       projects: ["nginx": nginx], bigIssues: state.bigIssues)
         let n = try #require(f.first { $0.title == "nginx" })
         #expect(n.bigIssue?.hasPrefix("On the site's “patch these first” list") == true)
-        let ssh = try #require(f.first { $0.id == "brew|openssh|10.6p1" })   // only in the big-issues list (no project answer)
-        #expect(ssh.group == .exploited && ssh.exploited && ssh.fixedVersion == "10.6p2")
-        #expect(f.first?.id == ssh.id)                                        // exploited sorts first
+        // only in the big-issues list (no project answer): decided by its first fixed versions, so likely, never in the
+        // exploited group, and marked (RangesTests has an item whose ranges promote)
+        let ssh = try #require(f.first { $0.id == "brew|openssh|10.6p1" })
+        #expect(ssh.group == .likely && ssh.exploited && ssh.fixedVersion == "10.6p2" && ssh.notChecked?.exploited == true)
         #expect(ssh.deservesNotification && n.deservesNotification)
     }
 

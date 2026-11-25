@@ -6,6 +6,17 @@ import OSVAKit
 public enum PreviewData {
     public static let now = Date(timeIntervalSince1970: 1_795_575_000)      // 19 Nov 2026, 02:10 UTC
 
+    /// `make`'s result, made off the main thread and waited for. Fixtures built as a scan builds its findings ask the core
+    /// for upgrades and judgements, which must not run on the main thread (Core.swift), and osva-render and the previews
+    /// first read them there.
+    static func offMain<T: Sendable>(_ make: @escaping @Sendable () -> T) -> T {
+        guard Thread.isMainThread else { return make() }
+        let box = MadeOffMain<T>(), done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async { box.value = make(); done.signal() }
+        done.wait()
+        return box.value!
+    }
+
     static func finding(_ id: String, _ group: Finding.Group, _ subject: Finding.Subject, _ title: String, component: String? = nil,
                         _ installed: String, _ fixed: String?, _ severity: Severity?, flaws: Int, exploited: Bool = false,
                         malicious: Bool = false, note: String? = nil, bigIssue: String? = nil, origins: [Origin], page: URL,
@@ -37,14 +48,14 @@ public enum PreviewData {
 
     public static let findings: [Finding] = {
         let home = NSHomeDirectory()
-        let likely = { (v: String) in "Likely affected: the issuer names \(v) as fixed." }
+        let affected = { (installed: String, fixed: String) in "The issuer lists \(installed) as affected and \(fixed) as fixed." }
         return [
             finding("pkg|npm|axios|1.14.1", .malicious, .package(ecosystem: .npm, name: "axios"), "axios", "1.14.1", nil, nil, flaws: 34,
                     malicious: true, note: "Remove it, then rotate every secret it could read.",
                     origins: [.folder(root: home + "/code/storefront", lockfile: home + "/code/storefront/package-lock.json", direct: true)],
                     page: SiteURL.packagePage(.npm, "axios", version: "1.14.1"), ecosystem: .npm),
             finding("brew|openssh|10.6p1", .exploited, .project(slug: "openssh", name: "OpenSSH", installedAs: "openssh"), "OpenSSH",
-                    "10.6p1", "10.6p2", .high, flaws: 1, exploited: true, note: likely("10.6p2"),
+                    "10.6p1", "10.6p2", .high, flaws: 1, exploited: true, note: affected("10.6p1", "10.6p2"),
                     bigIssue: "On the site's “patch these first” list", origins: [.homebrewFormula(name: "openssh")],
                     page: SiteURL.projectPage(slug: "openssh"), name: "openssh", mark: .parts, grade: "U"),
             finding("app|/Applications/OpenMTP.app|18.3.15", .exploited, .package(ecosystem: .npm, name: "electron"), "OpenMTP", component: "Electron",
@@ -52,13 +63,13 @@ public enum PreviewData {
                     origins: [.electronApp(name: "OpenMTP", bundlePath: "/Applications/OpenMTP.app", caskToken: "openmtp")],
                     page: SiteURL.packagePage(.npm, "electron", version: "18.3.15"), name: "electron", ecosystem: .npm),
             finding("brew|nginx|1.30.2", .criticalHigh, .project(slug: "nginx", name: "nginx", installedAs: "nginx"), "nginx",
-                    "1.30.2", "1.30.7", .critical, flaws: 6, note: likely("1.30.7"), bigIssue: "On the site's “patch these first” list",
+                    "1.30.2", "1.30.7", .critical, flaws: 6, note: affected("1.30.2", "1.30.7"), bigIssue: "On the site's “patch these first” list",
                     origins: [.homebrewFormula(name: "nginx")], page: SiteURL.projectPage(slug: "nginx"), grade: "C"),
             finding("pkg|RubyGems|nokogiri|1.13.8", .criticalHigh, .package(ecosystem: .rubygems, name: "nokogiri"), "nokogiri",
                     "1.13.8", "1.19.5", .critical, flaws: 23, origins: [.gem(gem: "/usr/bin/gem")],
                     page: SiteURL.packagePage(.rubygems, "nokogiri", version: "1.13.8"), ecosystem: .rubygems, grade: "C"),
             finding("brew|python@3.12|3.12.16", .criticalHigh, .project(slug: "cpython", name: "CPython", installedAs: "python@3.12"), "CPython",
-                    "3.12.16", "3.14.11", .high, flaws: 1, note: likely("3.14.11"), origins: [.homebrewFormula(name: "python@3.12")],
+                    "3.12.16", "3.14.11", .high, flaws: 1, note: affected("3.12.16", "3.14.11"), origins: [.homebrewFormula(name: "python@3.12")],
                     page: SiteURL.projectPage(slug: "cpython"), name: "python@3.12", mark: .parts, grade: "C"),
             finding("pkg|PyPI|urllib3|1.26.5", .criticalHigh, .package(ecosystem: .pypi, name: "urllib3"), "urllib3", "1.26.5", "2.8.0", .high,
                     flaws: 10, note: managedNote, origins: [.pip(python: homebrewPython, user: false, formula: nil)],
@@ -344,3 +355,6 @@ public enum PreviewData {
     public static let updates = UpdateState(isAvailable: true, canCheck: true, checksAutomatically: true, version: "0.1.1",
                                             lastChecked: now.addingTimeInterval(-3 * 3600))
 }
+
+/// What `PreviewData.offMain` made: written once by the worker, read only after it signals.
+private final class MadeOffMain<T>: @unchecked Sendable { var value: T? }

@@ -710,14 +710,15 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         #expect(transport.requests.count == asked)                                  // the project's advisories came from the cache
     }
 
-    @Test func notFarEnoughIsStillAffectedUnderItsNewVersion() async throws {
+    @Test func notFarEnoughIsStillFoundUnderItsNewVersion() async throws {
         let (scanner, runner, _, _) = setUp()
         let report = await scanner.scan()
         let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
         runner.set(Self.brewKey, Self.nginx("1.30.5"))
         let (updated, outcome) = await scanner.recheck(nginx, in: report)
-        guard case let .stillAffected(now) = outcome else { Issue.record("\(outcome)"); return }
-        #expect(now.id == "brew|nginx|1.30.5" && now.fixedVersion == "1.30.7")
+        // nginx's record publishes no ranges: still likely affected, which is not checked (JavaTests has one still affected)
+        guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
+        #expect(now.id == "brew|nginx|1.30.5" && now.fixedVersion == "1.30.7" && now.group == .likely)
         #expect(updated.findings.filter { $0.title == "nginx" }.map(\.id) == ["brew|nginx|1.30.5"])
     }
 

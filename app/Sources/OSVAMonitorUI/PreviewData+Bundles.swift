@@ -7,7 +7,7 @@ import OSVAKit
 extension PreviewData {
     public static let bundleFindings: [Finding] = {
         let home = NSHomeDirectory()
-        let likely = { (v: String) in "Likely affected: the issuer names \(v) as fixed." }
+        let affected = { (installed: String, fixed: String) in "The issuer lists \(installed) as affected and \(fixed) as fixed." }
         let prettier = Origin.addOn(host: .vscode, id: "esbenp-dev.prettier-vscode", name: "Prettier – Code formatter", profile: nil,
                                     path: home + "/.vscode/extensions/esbenp-dev.prettier-vscode-11.0.3")
         let booster = { (profile: String) in
@@ -31,23 +31,23 @@ extension PreviewData {
                         + "Then rotate every secret it could read.",
                     origins: [booster("Work"), booster("Personal")], page: SiteURL.home),
             finding("prod|/Applications/zoom.us.app|zoom|6.5.1", .exploited, .product(key: "zoom", name: "Zoom Workplace"), "zoom.us",
-                    "6.5.1", "6.6.12", .critical, flaws: 2, exploited: true, note: likely("6.6.12"), origins: [zoom],
+                    "6.5.1", "6.6.12", .critical, flaws: 2, exploited: true, note: affected("6.5.1", "6.6.12"), origins: [zoom],
                     page: URL(string: "https://www.zoom.com/en/trust/security-bulletin/")!),
             finding("comp|/Applications/VLC.app|sparkle|1.16.0", .criticalHigh, .product(key: "sparkle", name: "Sparkle"), "VLC", component: "Sparkle",
                     "1.16.0", "2.7.3", .critical, flaws: 2,
-                    note: likely("2.7.3") + " Update VLC from its own menu or its website: it ships its own Sparkle.", origins: [vlc],
+                    note: affected("1.16.0", "2.7.3") + " Update VLC from its own menu or its website: it ships its own Sparkle.", origins: [vlc],
                     page: URL(string: "https://github.com/sparkle-project/Sparkle/security/advisories")!),
             finding("prod|/Applications/VLC.app|vlc|3.0.20", .criticalHigh, .product(key: "vlc", name: "VLC media player"), "VLC",
-                    "3.0.20", "3.0.21", .high, flaws: 1, note: likely("3.0.21") + " Update VLC from its own menu or its website.", origins: [vlc],
+                    "3.0.20", "3.0.21", .high, flaws: 1, note: affected("3.0.20", "3.0.21") + " Update VLC from its own menu or its website.", origins: [vlc],
                     page: URL(string: "https://www.videolan.org/security/")!),
             finding("comp|/Applications/GoPro Quik.app|openssl|1.0.1q", .criticalHigh, .product(key: "openssl", name: "OpenSSL"), "GoPro Quik",
                     component: "OpenSSL", "1.0.1q", "3.0.18", .high, flaws: 3,
-                    note: likely("3.0.18") + " Update GoPro Quik from its own menu or its website: it ships its own OpenSSL.", origins: [gopro],
+                    note: affected("1.0.1q", "3.0.18") + " Update GoPro Quik from its own menu or its website: it ships its own OpenSSL.", origins: [gopro],
                     page: URL(string: "https://openssl-library.org/news/vulnerabilities/")!),
             finding("comp|/Applications/SpotifyNowPlaying.app|cpython|3.11.15", .criticalHigh,
                     .project(slug: "cpython", name: "CPython", installedAs: "Python.framework"), "SpotifyNowPlaying", component: "Python",
                     "3.11.15", "3.14.11", .high, flaws: 1,
-                    note: likely("3.14.11") + " Update SpotifyNowPlaying from its own menu or its website: it ships its own Python.",
+                    note: affected("3.11.15", "3.14.11") + " Update SpotifyNowPlaying from its own menu or its website: it ships its own Python.",
                     origins: [nowPlaying], page: SiteURL.projectPage(slug: "cpython")),
             finding("ext|\(home)/.vscode/extensions/eamodio.gitlens-17.2.1|lodash|4.17.20", .criticalHigh, .package(ecosystem: .npm, name: "lodash"),
                     "GitLens", component: "lodash", "4.17.20", "4.17.21", .high, flaws: 4, note: "Update GitLens in VS Code: it ships its own lodash.",

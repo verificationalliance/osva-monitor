@@ -58,7 +58,7 @@ extension PreviewData {
                     origins: [.program(docker)], page: SiteURL.packagePage(.go, "stdlib", version: "1.21.9"),
                     command: "brew upgrade --cask docker-desktop"),
             programFinding("brew|nginx|1.30.2", .criticalHigh, .project(slug: "nginx", name: "nginx", installedAs: "nginx"), "nginx", "1.30.2", "1.30.7",
-                    .critical, flaws: 6, note: "Likely affected: the issuer names 1.30.7 as fixed. Run sudo port selfupdate first, so MacPorts knows the newest version.",
+                    .critical, flaws: 6, note: "The issuer lists 1.30.2 as affected and 1.30.7 as fixed. Run sudo port selfupdate first, so MacPorts knows the newest version.",
                     bigIssue: "On the site's “patch these first” list", origins: [.macports(port: "nginx")],
                     page: SiteURL.projectPage(slug: "nginx"), command: "sudo port upgrade nginx", grade: "C"),
             programFinding("tool|pipx|black", .criticalHigh, .package(ecosystem: .pypi, name: "black"), "black", "24.1.0", "26.10.1", .critical, flaws: 8,
@@ -79,7 +79,7 @@ extension PreviewData {
                     flaws: 1, note: "rg 13.0.0 was built with regex 1.5.4 — fixed in 1.5.5. Builds rg again from its newest release, with the newest compatible crates.",
                     origins: [.program(rg)], page: SiteURL.packagePage(.crates, "regex", version: "1.5.4"), command: "cargo install --force ripgrep"),
             programFinding("nix|openssl|3.0.12|" + profile.path, .other, .project(slug: "openssl", name: "OpenSSL", installedAs: "openssl"), "OpenSSL",
-                    "3.0.12", "3.0.15", .moderate, flaws: 1, note: "Likely affected: the issuer names 3.0.15 as fixed.",
+                    "3.0.12", "3.0.15", .moderate, flaws: 1, note: "The issuer lists 3.0.12 as affected and 3.0.15 as fixed.",
                     origins: [.nix(profile: profile, element: "openssl")], page: SiteURL.projectPage(slug: "openssl"),
                     command: "nix profile upgrade openssl", grade: "B"),
         ]

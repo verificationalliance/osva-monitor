@@ -154,6 +154,13 @@ struct BatchCheck: Sendable {
                           flagged: flagged, advisories: advisories)
     }
 
+    /// The upgrade a finding shown for the flaws `here` names: the confirmed target, only when it leaves at least one of
+    /// them. A target that leaves only flaws the finding is not shown for (another platform's) is not that finding's fix.
+    func upgrade(for here: Set<String>) -> CheckedUpgrade? { fixed.contains(where: here.contains) ? upgrade : nil }
+
+    /// What became of the target for a finding shown for the flaws `here`: confirmed only as `upgrade(for:)` is.
+    func target(for here: Set<String>) -> Target { target == .confirmed && upgrade(for: here) == nil ? .unconfirmed : target }
+
     /// The core's answer about a version the app did not pick (Task 7's partial fixes and pip's choice), over the
     /// affected and likely flaws, all flagged. Nil when it is not above the installed version, or does not read as a
     /// version and nothing else.
@@ -168,11 +175,12 @@ struct BatchCheck: Sendable {
 // MARK: What a finding says about its flaws
 
 extension BatchCheck {
-    /// How many flaws are reported, not checked: the listed ones and the ones past the list.
-    var reportedCount: Int { reported.count + unlisted }
+    /// The reported flaws a finding is shown for: for software on this Mac (`onThisMac`), those that can affect it; for a
+    /// project folder's dependencies, which run wherever the project is deployed, all of them (FindingBuilder.state).
+    func reported(onThisMac: Bool) -> [Reported] { onThisMac ? reported.filter(\.flaw.affectsThisMac) : reported }
 
-    /// The reported flaw to name: exploited first, then the most severe, then the first listed.
-    var worstReported: Reported? {
+    /// The reported flaw to name among these: exploited first, then the most severe, then the first listed.
+    static func worst(_ reported: [Reported]) -> Reported? {
         func rank(_ r: Reported) -> (Int, Int) {
             (r.flaw.exploitedSince == nil ? 1 : 0, -(Severity(api: r.flaw.severity).map { Severity.allCases.firstIndex(of: $0)! } ?? -1))
         }
@@ -182,10 +190,12 @@ extension BatchCheck {
         }?.element
     }
 
-    /// The note of a finding whose every flaw is reported: why the worst one is not checked, and how many more there are.
+    /// The note of a finding whose every flaw is reported: why the worst of the flaws it is shown for is not checked,
+    /// and how many more it counts (those and the ones past the list, as its flaw count does).
     /// "Reported by the site, not checked: it publishes no affected ranges for CVE-X (and 2 more)."
-    func reportedNote(ecosystem: String) -> String {
-        guard let worst = worstReported else {
+    func reportedNote(ecosystem: String, onThisMac: Bool) -> String {
+        let here = reported(onThisMac: onThisMac)
+        guard let worst = Self.worst(here) else {
             return "Reported by the site, not checked: " + (unlisted == 1 ? "1 flaw is not listed." : "\(unlisted) flaws are not listed.")
         }
         let id = worst.flaw.id
@@ -196,7 +206,7 @@ extension BatchCheck {
         case .unreadable: why = "the app could not read its affected ranges for \(id)"
         case .uncertainOrder: why = "\(ecosystem) may order \(installed) and the versions it names for \(id) otherwise than the app does"
         }
-        let more = reportedCount - 1
+        let more = here.count + unlisted - 1
         return "Reported by the site, not checked: \(why)" + (more > 0 ? " (and \(more) more)." : ".")
     }
 

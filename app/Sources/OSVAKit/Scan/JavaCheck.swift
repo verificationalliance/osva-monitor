@@ -87,18 +87,32 @@ public struct JavaCheck: Sendable {
         let vendor = Self.vendorFixes(r, recent)
         guard let d = AdvisoryCheck.decide(r.canonical, vendor.recent) else { return nil }
         let origin = Origin.javaRuntime(r)
-        // the issuer names no fix, the vendor's own record does: its build is the fix this row names
-        let target = d.target.map(JavaVersion.shown) ?? vendor.fix
-        let vendorNote = d.target == nil ? vendor.fix.flatMap { fix in r.vendor.buildScheme.map { "\($0.dist)'s changelog lists the fix in \(r.vendor.title) \(fix)." } } : nil
+        // the issuer names no fix, the vendor's own record does: its build is the fix this row names, as the vendor writes
+        // it, only when the core finds it clear of an advisory the row is shown for
+        var upgrade = d.target?.displayed(.java), vendorNote: String?
+        if d.check != .reported, d.target == nil, d.withheld == nil, let build = vendor.fix,
+           let u = Self.vendorUpgrade(build, from: r.canonical, vendor.recent, shownFor: d) {
+            upgrade = u
+            vendorNote = r.vendor.buildScheme.map { "\($0.dist)'s changelog lists the fix in \(r.vendor.title) \(build)." }
+        }
         let inputs = UpgradeCommand.Inputs(origin: origin, name: r.cask ?? r.formula ?? r.vendor.rawValue, ecosystem: nil, target: nil, malicious: false)
-        let advice = UpgradeCommand.advice(inputs)
+        let advice = d.advice(UpgradeCommand.advice(inputs))
         return Finding(
-            id: "java|\(r.realPath)|\(r.canonical)", group: d.exploited ? .exploited : .criticalHigh, subject: subject, title: r.title,
-            installedVersion: r.shownVersion, fixedVersion: target, severity: d.severity,
-            advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
+            id: "java|\(r.realPath)|\(r.canonical)", group: d.group, subject: subject, title: r.title,
+            installedVersion: r.shownVersion, upgrade: upgrade, severity: d.severity,
+            advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
             note: [d.note(showing: JavaVersion.shown), vendorNote, vendor.cleared, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil,
             origins: [origin], pageURL: page, upgradeCommand: advice.command, verification: mark, grade: grade,
-            commandInputs: advice.command == nil ? nil : inputs)
+            commandInputs: advice.command == nil ? nil : inputs, notChecked: d.notChecked)
+    }
+
+    /// A vendor's build as the fix, as the core judges it from the runtime's version (Decide.lean `judge_spec`) against
+    /// the weighed advisories the vendor's build does not already fix: above the version and clear of at least one
+    /// advisory the row is shown for. Nil otherwise. Call it off the main thread.
+    static func vendorUpgrade(_ build: String, from installed: String, _ kept: [ProjectResponse.Advisory], shownFor d: AdvisoryCheck) -> CheckedUpgrade? {
+        guard FixSafety.isSafeVersion(build) else { return nil }
+        let weighed = kept.filter(FindingBuilder.weighed), shown = Set(d.shown.map(\.advisory))
+        return Core.shared.judge(build, from: installed, advisories: weighed.map(AdvisoryCheck.weighedAs), flagged: weighed.map(shown.contains))?.upgrade
     }
 
     /// The advisories a vendor's own build already fixes, set aside: an advisory whose `fixed_builds` names a build of
