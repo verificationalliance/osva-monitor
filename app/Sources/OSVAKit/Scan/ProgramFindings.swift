@@ -525,7 +525,7 @@ extension FindingBuilder {
 }
 
 extension Scanner {
-    /// "Not checked" for the program sources: managed packages no R line names, and what the sources could not read.
+    /// "No record" for the program sources: managed packages no R line names, and what the sources could not read.
     static func programCoverage(unmatchedManaged: [ManagedPackage], unchecked: [UncheckedItem]) -> [Coverage.Bucket] {
         var out: [Coverage.Bucket] = []
         let titles: [ManagedPackage.Manager: String] = [.macports: "MacPorts ports with no graded project",

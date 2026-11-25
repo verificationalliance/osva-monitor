@@ -46,7 +46,7 @@ public struct ChangelogLines: View {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("•").foregroundStyle(.secondary).accessibilityHidden(true)
-                    Text(line).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                    Text(Changelog.quotesWhole(line)).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

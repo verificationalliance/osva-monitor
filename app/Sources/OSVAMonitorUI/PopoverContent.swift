@@ -123,8 +123,8 @@ public struct PopoverContent: Sendable {
             sentence = alerting ? "Nothing checked needs action" : "Nothing needs action"
             let notAgainstRanges = notChecked == 0 ? nil : Self.unbroken("\(notChecked) not checked against published ranges")
             let others = lower == 0 ? nil : Self.unbroken(lower == 1 ? "1 lower-severity finding" : "\(lower) lower-severity findings")
-            let unchecked = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) not checked")
-            subline = [notAgainstRanges, others, unchecked, when].compactMap { $0 }.joined(separator: " · ")
+            let noRecord = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) with no record")
+            subline = [notAgainstRanges, others, noRecord, when].compactMap { $0 }.joined(separator: " · ")
         case let (_, n):
             hero = malicious > 0 ? .malicious : (exploited + critical > 0 ? .critical : .high)
             heroCount = n
