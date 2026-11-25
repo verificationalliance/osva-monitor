@@ -31,11 +31,11 @@ public enum PreviewData {
                         malicious: Bool = false, note: String? = nil, bigIssue: String? = nil, origins: [Origin], page: URL,
                         name: String? = nil, ecosystem: Ecosystem? = nil, runnable: Bool = true, mark: Verification = .none,
                         grade: String? = nil, fixes: Int? = nil, unresolved: [UnresolvedFlaw] = []) -> Finding {
-        // The command is UpgradeCommand's, from the same inputs a scan would record.
-        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem,
-                                           target: malicious ? nil : fixed.map { fix($0, above: installed) }, malicious: malicious)
+        // The command is UpgradeCommand's, from the same inputs a scan would record, and the version one the core checked.
+        let upgrade = malicious ? nil : fixed.map { fix($0, above: installed) }
+        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem, target: upgrade, malicious: malicious)
         let command = runnable ? UpgradeCommand.advice(inputs).command : nil
-        return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, fixedVersion: fixed,
+        return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, upgrade: upgrade,
                        severity: severity, advisoryIDs: [], flawCount: flaws, exploited: exploited, malicious: malicious, note: note,
                        bigIssue: bigIssue, origins: origins, pageURL: page, upgradeCommand: command, verification: mark, grade: grade,
                        fixesCount: fixes, unresolved: unresolved, commandInputs: command == nil ? nil : inputs)

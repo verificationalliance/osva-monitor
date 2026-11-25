@@ -1,6 +1,6 @@
 /-
-  Is an installed version affected, given the affected ranges the issuer publishes? (C: osva_affected_ranges,
-  osva_upgrade_ranges)
+  Is an installed version affected, given the affected ranges the issuer publishes? (C: through Decide.lean's
+  osva_verdicts and osva_upgrade_for)
 
   A range runs from `introduced` (none: from the first version) up to but not including `fixed`, or up to and including
   `lastAffected` (neither: every later version). PostgreSQL's CVE-2026-14662 gives one range per release branch: 16 up

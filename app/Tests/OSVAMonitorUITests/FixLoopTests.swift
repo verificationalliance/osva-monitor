@@ -70,7 +70,14 @@ import OSVAKit
     /// A temporary home with a stand-in npm in ~/.volta/bin, and a last scan that found lodash 4.17.20 (and chalk
     /// 4.0.0) there. `mode` in the folder makes npm fail once, or fail asking for a password inside the app (CI=1)
     /// while it works in Terminal.
-    func setUp(terminal: any TerminalOpener = ScriptRunner(), mode: String = "ok") throws -> Home {
+    /// Settings in which this version of the app made the saved report (`scannedBy`: another version did).
+    static func defaults(scannedBy version: String = AppModel.appVersion) -> UserDefaults {
+        let d = UserDefaults(suiteName: "osva-tests-\(UUID().uuidString)")!
+        d.set(version, forKey: AppModel.scannedByKey)
+        return d
+    }
+
+    func setUp(terminal: any TerminalOpener = ScriptRunner(), mode: String = "ok", scannedBy: String = AppModel.appVersion) throws -> Home {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("osva-fixloop-\(UUID().uuidString)", isDirectory: true)
         let bin = home.appendingPathComponent(".volta/bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
@@ -99,10 +106,10 @@ import OSVAKit
         let tools = ToolEnvironment(home: home, base: ["PATH": "/usr/bin:/bin"], runner: ProcessRunner(),
                                     isExecutable: { $0.hasPrefix(home.path) && FileManager.default.isExecutableFile(atPath: $0) })
         func make(_ name: String, _ installed: String, _ fixed: String) -> (Finding, InstalledPackage) {
-            let inputs = UpgradeCommand.Inputs(origin: .npmGlobal(npm: npm.path), name: name, ecosystem: .npm, target: PreviewData.fix(fixed, above: installed),
-                                               malicious: false)
+            let upgrade = PreviewData.fix(fixed, above: installed)
+            let inputs = UpgradeCommand.Inputs(origin: .npmGlobal(npm: npm.path), name: name, ecosystem: .npm, target: upgrade, malicious: false)
             let f = Finding(id: "pkg|npm|\(name)|\(installed)", group: .criticalHigh, subject: .package(ecosystem: .npm, name: name), title: name,
-                            installedVersion: installed, fixedVersion: fixed, severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 1,
+                            installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 1,
                             exploited: false, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
                             pageURL: SiteURL.packagePage(.npm, name, version: installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
                             verification: .none, grade: nil, commandInputs: inputs)
@@ -113,7 +120,7 @@ import OSVAKit
         storage.save(ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(packages: [lodash.1, chalk.1]),
                                 findings: [lodash.0, chalk.0], sent: SentRecord(), indexGeneratedAt: nil, problems: []))
         let site = Site()
-        let model = AppModel(storage: storage, notifier: Quiet(), tools: tools, transport: site)
+        let model = AppModel(storage: storage, notifier: Quiet(), tools: tools, transport: site, defaults: Self.defaults(scannedBy: scannedBy))
         model.terminal = terminal
         return Home(model: model, findings: [lodash.0, chalk.0], bin: bin, site: site)
     }
@@ -344,7 +351,7 @@ import OSVAKit
         let inputs = UpgradeCommand.Inputs(origin: .pip(python: env, user: false, formula: nil), name: "starlette", ecosystem: .pypi,
                                            target: PreviewData.fix("1.3.1", above: "0.48.0"), malicious: false)
         let finding = Finding(id: "pkg|PyPI|starlette|0.48.0", group: .exploited, subject: .package(ecosystem: .pypi, name: "starlette"), title: "starlette",
-                              installedVersion: "0.48.0", fixedVersion: "1.3.1", severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 6,
+                              installedVersion: "0.48.0", upgrade: PreviewData.fix("1.3.1", above: "0.48.0"), severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 6,
                               exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
                               pageURL: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), upgradeCommand: UpgradeCommand.advice(inputs).command,
                               verification: .none, grade: nil, commandInputs: inputs)
@@ -352,7 +359,7 @@ import OSVAKit
         storage.save(ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(packages: [
             InstalledPackage(ecosystem: .pypi, name: "starlette", version: "0.48.0", origin: inputs.origin)]), findings: [finding], sent: SentRecord(),
                                 indexGeneratedAt: nil, problems: []))
-        let model = AppModel(storage: storage, notifier: Quiet(), tools: tools, transport: Site(index: "K\tPyPI\tstarlette\n"))
+        let model = AppModel(storage: storage, notifier: Quiet(), tools: tools, transport: Site(index: "K\tPyPI\tstarlette\n"), defaults: Self.defaults())
         return (model, finding, bin)
     }
 

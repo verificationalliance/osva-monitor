@@ -181,7 +181,7 @@ import Testing
         #expect(Finding.Group.allCases.filter(\.isNotChecked) == [.likely, .reported])
         // a report saved by 0.5.1 reads with the same group
         let saved = Finding(id: "x", group: .criticalHigh, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1",
-                            fixedVersion: "2", severity: .high, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil,
+                            upgrade: Fixture.fix("2", above: "1"), severity: .high, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil,
                             bigIssue: nil, origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
         let json = String(decoding: try JSONEncoder().encode(saved), as: UTF8.self)
         #expect(json.contains(#""group":2"#))
@@ -221,7 +221,7 @@ import Testing
                                                                          brew: [], projects: [:], bigIssues: []).first)
         #expect(program.group == .reported && program.flawCount == 1 && program.upgradeCommand == nil)
         let app = Finding(id: "product|docker|4.41.2", group: .criticalHigh, subject: .product(key: "docker", name: "Docker"), title: "Docker",
-                          installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
+                          installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
                           malicious: false, note: "The issuer lists 4.41.2 as affected and 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
                           upgradeCommand: nil, verification: .none, grade: nil)
@@ -487,7 +487,7 @@ extension BatchCheckTests {
 
     @Test func notifiedAgainOnlyWhenMoreSerious() throws {
         func f(_ group: Finding.Group, exploited: Bool = false, notChecked: Alert? = nil, big: String? = nil) -> Finding {
-            Finding(id: "x", group: group, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", fixedVersion: nil,
+            Finding(id: "x", group: group, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", upgrade: nil,
                     severity: .high, advisoryIDs: [], flawCount: 1, exploited: exploited, malicious: false, note: nil, bigIssue: big,
                     origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil, notChecked: notChecked)
         }

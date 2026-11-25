@@ -1,5 +1,5 @@
 /-
-  Is an installed version affected? (C: osva_affected)
+  Is an installed version affected? (C: through Decide.lean's osva_verdicts, for an advisory without ranges)
 
   Input: the version installed, and the first fixed version the issuer names for each release branch (nginx's
   CVE-2026-123633: "1.30.7" and "1.31.9"). A version's branch is its first two numbers.

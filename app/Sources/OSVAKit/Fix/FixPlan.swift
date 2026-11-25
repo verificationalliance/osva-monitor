@@ -117,7 +117,7 @@ public struct FixPlan: Hashable, Sendable {
                   UpgradeCommand.advice(shown, home: home).command == finding.upgradeCommand else { return .failure(.notReproducible) }
             let inputs = UpgradeCommand.Inputs(origin: shown.origin, name: shown.name, ecosystem: shown.ecosystem, target: partial, malicious: false)
             finding.commandInputs = inputs
-            finding.fixedVersion = partial.display
+            finding.setUpgrade(partial)
             finding.upgradeCommand = UpgradeCommand.advice(inputs, home: home).command
         }
         guard let command = finding.upgradeCommand else { return .failure(.noCommand) }

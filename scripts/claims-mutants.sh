@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# The mutants of the claims guard, app/Tests/OSVAKitTests/ClaimsTests.swift: each breaks one rule the app's claims rest on,
+# in the app's sources, and ClaimsTests must fail on it. Run it on a Mac from the root of a scratch clone (it edits the
+# sources and puts them back with git checkout):
+#   ./scripts/claims-mutants.sh
+# For each mutant it checks that every marker it needs is on exactly one line, swaps that line for the mutant's, builds,
+# and runs ClaimsTests, which must fail. It ends "claims mutants: N of N caught", and exits 1 if a mutant survives, does
+# not build, or a marker is missing; and before any mutant, if ClaimsTests fails on the sources as they are.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.elan/bin:$PATH"
+if [ -n "$(git status --porcelain -- app/Sources)" ]; then echo "app/Sources has changes: run this in a clean scratch clone"; exit 1; fi
+trap 'git checkout -q -- app/Sources' EXIT
+
+(cd core && lake build OSVACore:static >/dev/null) || { echo "the core did not build"; exit 1; }
+claims() { (cd app && swift build --build-tests >/tmp/claims-build.log 2>&1) || return 2; (cd app && swift test --skip-build --filter ClaimsTests >/tmp/claims-test.log 2>&1); }
+claims; base=$?
+if [ "$base" != 0 ]; then echo "ClaimsTests does not pass on the sources as they are (status $base): no mutant can be told apart"; exit 1; fi
+
+K=app/Sources/OSVAKit
+total=0; caught=0; bad=0
+# mutant NAME FILE MARKER LINE [FILE MARKER LINE ...]: each MARKER (a fixed string) must be on exactly one line of its
+# FILE; that line becomes LINE.
+mutant() {
+  local name=$1; shift
+  total=$((total + 1))
+  while [ $# -gt 0 ]; do
+    local file=$1 marker=$2 line=$3; shift 3
+    local n; n=$(grep -cF -- "$marker" "$file")
+    if [ "$n" != 1 ]; then echo "MARKER $name: found $n times in $file"; bad=$((bad + 1)); git checkout -q -- app/Sources; return; fi
+    M="$marker" L="$line" awk 'index($0, ENVIRON["M"]) { print ENVIRON["L"]; next } { print }' "$file" >"$file.mutant" && mv "$file.mutant" "$file"
+  done
+  claims; local status=$?
+  git checkout -q -- app/Sources
+  case $status in
+    0) echo "SURVIVED $name"; bad=$((bad + 1)) ;;
+    2) echo "DID NOT BUILD $name"; grep -m 3 "error:" /tmp/claims-build.log; bad=$((bad + 1)) ;;
+    *) echo "caught   $name"; caught=$((caught + 1)) ;;
+  esac
+}
+
+# The behaviour the claims are about
+mutant likely-as-flagged \
+  $K/Scan/BatchCheck.swift "// claims-mutant: likely-as-flagged" "            case .inRange, .likely: decisions[i] = .affected"
+mutant unchecked-target \
+  $K/Core.swift "// claims-mutant: unchecked-target" "        return Judgement(leaves: leaves, upgrade: CheckedUpgrade(candidate, fixes: fixes))"
+mutant lenient-decoding \
+  $K/Core.swift "// claims-mutant: lenient-decoding" "        if false, let other = any.allKeys.first(where: { CodingKeys(stringValue: \$0.stringValue) == nil }) {"
+
+# The routing that makes it true
+mutant extension-elsewhere \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; extension CheckedUpgrade { var forged: Bool { true } }"
+mutant bit-cast \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; func forged(_ s: String) -> CheckedUpgrade { unsafeBitCast(s, to: CheckedUpgrade.self) }"
+mutant display-with-text \
+  $K/Core.swift "        case program" "        case program, shown(String)" \
+  $K/Core.swift "        case .program: return FindingBuilder.Component.shown(checked)" \
+                "        case .program: return FindingBuilder.Component.shown(checked); case let .shown(text): return text"
+mutant fixed-version-from-text \
+  $K/Model/Finding.swift "public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }" \
+  "    public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }
+    public mutating func setFixedVersion(_ text: String?) { fixedVersion = text }"
+mutant settable-command-version \
+  $K/Scan/UpgradeCommand.swift "        public private(set) var target: String?" "        public var target: String?"
+mutant latest-command \
+  $K/Scan/UpgradeCommand.swift "// never npm's @latest" "            guard let target else { return Advice(command: \"\\(tool) install -g \\(quote(name + \"@latest\"))\") }"
+mutant newest-version-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func newestFix(_ versions: [String]) -> String? { Core.shared.newestVersion(versions) }"
+mutant server-target-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func planned(_ plan: BatchResponse.Plan?) -> String? { plan?.target }"
+mutant nearest-version-back \
+  $K/Core.swift "    /// The versions, oldest first." \
+  "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"
+
+echo "claims mutants: $caught of $total caught"
+[ "$bad" = 0 ] && [ "$caught" = "$total" ]

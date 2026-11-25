@@ -1,13 +1,13 @@
 /*
  * OSVA Monitor's verified core: the C interface the Swift app calls.
  *
- * These functions decide version order, whether a version is affected by an advisory (by its ranges or by its first
- * fixed versions), the upgrade that leaves the ranges behind, which names may be sent, and how a name is written into a
- * URL, where the app asks them to (app/Sources/OSVAKit/Core.swift says where). Not every decision in the app goes
- * through them: packages checked by exact version are flagged, and their upgrades chosen, by the server. Each function
- * is written in Lean 4 (the .lean files in core/OSVACore) together with theorems about it that Lean checks for every
- * input; Lean compiles those same definitions to C, which is linked into the app. A small shim (core/ffi/osva_shim.c)
- * converts between C bytes and Lean values; it is the only unproved code on this path.
+ * These functions decide version order, what an advisory says about a version (by its ranges or, without them, by
+ * its first fixed versions), the upgrade that leaves the advisories behind, which names may be sent, and how a name is
+ * written into a URL, where the app asks them to (app/Sources/OSVAKit/Core.swift says where). The app flags a version
+ * as affected, and names a version to upgrade to, only through them; its ClaimsTests fail on a path around them.
+ * Each function is written in Lean 4 (the .lean files in core/OSVACore) together with theorems about it that Lean
+ * checks for every input; Lean compiles those same definitions to C, which is linked into the app. A small shim
+ * (core/ffi/osva_shim.c) converts between C bytes and Lean values; it is the only unproved code on this path.
  *
  * Strings are byte buffers with explicit lengths (not NUL-terminated). Call osva_core_init() once before anything
  * else, and call the functions from one thread at a time.
@@ -65,18 +65,6 @@ int osva_vcmp(const uint8_t *a, size_t na, const uint8_t *b, size_t nb);
 int osva_version_uncertain(const uint8_t *v, size_t nv);
 
 /*
- * Is an installed version affected, given the first fixed version the issuer names for each release branch (nginx:
- * "1.30.7", "1.31.9")? A version's branch is its first two numbers. For advisories that carry only these; prefer
- * osva_affected_ranges when the issuer's ranges are known.
- *   affected  <=>  some fixed version is above v,  and no fixed version on v's own branch is at or below v.
- * Returns 1 (affected), 0 (not affected), -1 (unknown: no fixed versions).
- * Theorems (OSVACore/Affected.lean): an affected version always has a fixed version above it to upgrade to; a version
- * at or past its own branch's fix is never affected; a version at or above every fixed version is never affected.
- */
-int osva_affected(const uint8_t *v, size_t nv,
-                  const uint8_t *const *fixed, const size_t *fixed_len, size_t n_fixed);
-
-/*
  * One affected range, as an advisory's issuer publishes it: every version v with introduced <= v, and v < fixed, and
  * v <= last_affected, in the order of osva_vcmp. A NULL pointer means that bound is absent: no introduced means from the
  * first version, no fixed and no last_affected means every later version. A non-NULL pointer is a bound, even with
@@ -92,31 +80,10 @@ typedef struct {
 } osva_range;
 
 /*
- * Is an installed version affected, given an advisory's affected ranges (PostgreSQL: 16 up to 16.15, 17 up to 17.11, ...)?
- *   affected  <=>  v lies in some range.
- * Returns 1 (affected), 0 (not affected), -1 (unknown: n_ranges is 0), -2 (bad argument: ranges is NULL while n_ranges
- * is not 0, or n_ranges is above SIZE_MAX / 3).
- * Theorems (OSVACore/Ranges.lean): a version is flagged exactly when it lies in one of the ranges (sound and complete),
- * so a version outside every range is never flagged; a flagged version's range with a fixed version has it above v.
- */
-int osva_affected_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges);
-
-/*
- * The upgrade to propose, given the affected ranges of one advisory or of several at once: the lowest fixed version
- * of any range that is above v and lies in none of the ranges. Writes it to out and returns its length; returns -1 if
- * there is none, -2 on a bad argument (as osva_affected_ranges, or out NULL while cap is not 0), -3 if cap is smaller
- * than the version (cap at least the longest fixed_len is always enough).
- * Theorems (OSVACore/Ranges.lean): the version is above v, no range includes it (so osva_affected_ranges says 0 for it),
- * and no other fixed version with those two properties is below it; when the range v lies in has a fixed version that
- * no range includes, there is one.
- */
-long osva_upgrade_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges, uint8_t *out, size_t cap);
-
-/*
  * One advisory as the site publishes it, for osva_verdicts, osva_upgrade_for and osva_judge: its affected ranges, and
- * the first fixed versions its issuer names, one per release branch (as for osva_affected). The ranges are read only
- * when has_ranges is not 0. Without them (has_ranges 0, or n_ranges 0: an empty list is no answer, as for
- * osva_affected_ranges) the fixed versions decide. Pointers are read only during the call.
+ * the first fixed versions its issuer names, one per release branch (nginx: "1.30.7", "1.31.9"). The ranges are read
+ * only when has_ranges is not 0. Without them (has_ranges 0, or n_ranges 0: an empty list is no answer) the fixed
+ * versions decide. Pointers are read only during the call.
  *
  * A bad argument, for all three: as NULL while n is not 0; an advisory's ranges NULL while its n_ranges is not 0 (even
  * when has_ranges is 0), its fixed or fixed_len NULL while its n_fixed is not 0, or one of its fixed versions NULL
@@ -136,14 +103,17 @@ typedef struct {
 /*
  * What each advisory says about an installed version. Ranges decide when an advisory has them; without them (see
  * osva_advisory) its first fixed versions decide, and only as "likely":
- *   1 (inside a published range)  <=>  the advisory has ranges, and v lies in one of them (osva_affected_ranges);
- *   2 (likely)                    <=>  it has none, and the first-fixed rule says v is affected (osva_affected);
+ *   1 (inside a published range)  <=>  the advisory has ranges, and v lies in one of them;
+ *   2 (likely)                    <=>  it has none, and the first-fixed rule says v is affected: some first fixed
+ *                                      version is above v, and none on v's own branch (its first two numbers) is at
+ *                                      or below v;
  *   0 (clear)                         otherwise.
  * 0 is not evidence that a version fixes anything: an advisory with neither ranges nor fixed versions is 0 for every
  * version. Never read 0 as "fixed"; ask osva_judge, which answers 0 for such an advisory.
  * Writes one answer per advisory to out[0 .. n-1] and returns 0; returns -2 on a bad argument (above), writing nothing.
  * Theorems (OSVACore/Decide.lean, FFI.lean): 1 only when v lies in one of the advisory's published ranges, and always
- * then; 2 only for an advisory without ranges whose first fixed versions say v is affected.
+ * then; 2 only for an advisory without ranges whose first fixed versions say v is affected (and then, OSVACore/
+ * Affected.lean, one of them is above v).
  */
 int osva_verdicts(const uint8_t *v, size_t nv, const osva_advisory *as, size_t n, uint8_t *out);
 

@@ -49,6 +49,9 @@ extension FindingBuilder {
         var check: Finding.Check?
         /// The server's target, when the core confirms it fixes some of the flaws the part is shown for (BatchCheck).
         var upgrade: CheckedUpgrade?
+        /// The server named a target for the flaws the part is shown for that the core did not confirm, or that does not
+        /// read as a version: there is no checked fix yet, which is not "no fixed release".
+        var unconfirmed = false
         /// Its affected and likely flaws on this Mac, which the program's sentence weighs the newest upgrade against.
         var flagged: [BatchResponse.Flaw]
         /// The flaws on this Mac it is not shown for (likely ones of an affected part, reported ones and those past the
@@ -68,7 +71,7 @@ extension FindingBuilder {
 
         var isStdlib: Bool { package.ecosystem == .go && package.name == "stdlib" }
         /// The upgrade's version as people write it (`shown`).
-        var shownUpgrade: String? { upgrade.map { Self.shown($0.version) } }
+        var shownUpgrade: String? { upgrade?.displayed(.program).display }
         /// What the row shows for it: "Go" for Go's standard library, nil for the program's own package.
         var label: String? { isStdlib ? "Go" : own ? nil : name }
         /// Versions as people write them: Go's "v0.23.0" is "0.23.0", "v25.0.6+incompatible" is "25.0.6", and a
@@ -106,12 +109,15 @@ extension FindingBuilder {
             }
             : state.check == .reported ? [] : Self.unresolved(check, upgrade: upgrade, python: package.python, onThisMac: true)
         let decided = (state.check == .affected || state.check == .likely) && !state.onlyElsewhere
-        return Component(package: package, name: name, group: state.group, severity: state.severity, flawCount: state.flawCount,
+        let target = check.target(for: state.here)
+        var c = Component(package: package, name: name, group: state.group, severity: state.severity, flawCount: state.flawCount,
                          exploited: state.exploited, malicious: state.malicious, check: state.check, upgrade: upgrade,
                          flagged: decided ? check.flagged.filter(\.affectsThisMac) : [], more: state.moreLikely + state.moreReported,
                          moreAlert: .worse(state.likelyAlert, state.reportedAlert), notChecked: state.notChecked,
                          advisories: verdict.advisories, unresolved: unresolved,
                          fixes: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), own: own, onlyElsewhere: state.onlyElsewhere)
+        c.unconfirmed = decided && upgrade == nil && (target == .unconfirmed || target == .notAVersion)
+        return c
     }
 
     /// The parts a program's flaw count is made of: of those with flaws on this Mac, the ones the core found affected
@@ -236,7 +242,7 @@ extension FindingBuilder {
                 id: id, group: group, subject: .package(ecosystem: worst.package.ecosystem, name: worst.package.name), title: title,
                 component: Component.rowLabel(worst.label, installed: Component.shown(worst.package.version), fixed: worst.shownUpgrade),
                 installedVersion: Component.shown(worst.package.version),
-                fixedVersion: worst.shownUpgrade, severity: malicious ? nil : severity, advisoryIDs: advisories,
+                upgrade: worst.upgrade?.displayed(.program), severity: malicious ? nil : severity, advisoryIDs: advisories,
                 flawCount: flaws, exploited: exploited, malicious: malicious,
                 note: [sentence, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil, origins: g.origins,
                 pageURL: SiteURL.packagePage(worst.package.ecosystem, worst.package.name, version: worst.package.version),
@@ -352,7 +358,8 @@ extension FindingBuilder {
     }
 
     /// What the newest upgrade of one package's versions does, by the core: " — fixed in 0.62.0", " — partly fixed in
-    /// 0.62.0", " — no fixed release yet", or " — reported, not checked" when none of them has a checked flaw.
+    /// 0.62.0", " — no fixed release yet", " — no checked fixed version yet" when the server named a fix the core did
+    /// not confirm, or " — reported, not checked" when none of them has a checked flaw.
     static func fixClause(_ same: [Component]) -> String {
         if same.allSatisfy({ $0.check == .reported }) {
             let alert = same.map(\.notChecked).reduce(nil, Finding.NotChecked.worse)
@@ -367,7 +374,7 @@ extension FindingBuilder {
         guard let target = core.newestVersion(decided.compactMap { $0.upgrade?.version }),
               let installed = core.newestVersion(decided.map(\.package.version)), advisories.count == flaws.count,
               let judged = core.judge(target, from: installed, advisories: advisories, flagged: [Bool](repeating: true, count: advisories.count)),
-              let upgrade = judged.upgrade else { return " — no fixed release yet" }
+              let upgrade = judged.upgrade else { return decided.contains(where: \.unconfirmed) ? " — no checked fixed version yet" : " — no fixed release yet" }
         let shown = Component.shown(upgrade.version)
         return judged.leaves.allSatisfy { $0 } ? " — fixed in \(shown)" : " — partly fixed in \(shown)"
     }
@@ -407,29 +414,33 @@ extension FindingBuilder {
 
     /// The program's or tool's command.
     ///
-    /// A command shows a version the core checked, or Homebrew's own pick (UpgradeCommand), with one exception: a rebuild
-    /// that names no version (`go install …@latest`, `cargo install --force`, `uv tool upgrade`, `pipx upgrade`) brings
-    /// the program's next release. When every flagged part is something the program was built with, which release that
-    /// is is its author's choice, as `brew upgrade`'s is Homebrew's, and the rebuild may be offered. When the program's
-    /// own module, crate or package is flagged, only if the core checked an upgrade for it (`rebuildWaits`).
-    /// `pipx runpip` is no rebuild: it pins every version it names, the tool's own at its checked version or where it is.
+    /// A command names a version the core checked, or lets Homebrew pick (UpgradeCommand), with one exception: a rebuild
+    /// (`go install`, `cargo install --force`, `uv tool install --force`) builds the program again at a version it names,
+    /// and what it is built with comes with it, picked by the tool. The version is the one the core checked for the
+    /// program's own module, crate or package, else the one installed. When every flagged part is something the program
+    /// was built with, what comes with that version is its author's choice, as `brew upgrade`'s is Homebrew's, and the
+    /// rebuild may be offered. When the program's own part is flagged, only if the core checked an upgrade for it
+    /// (`rebuildWaits`). `pipx runpip` is no rebuild: it pins every version it names, the tool's own at its checked
+    /// version or where it is.
     static func programAdvice(origin: Origin, programs: Int = 1, parts: [Component], malicious: Bool) -> UpgradeCommand.Advice {
         let advice: UpgradeCommand.Advice, rebuild: Bool, name: String
+        let own = parts.first { $0.own && $0.upgrade != nil }?.upgrade?.version
         switch origin {
         case var .program(p):
             name = p.name
             if programs > 1, p.formula == nil, p.app != nil { p.name = "them" }      // "Docker ships them."
-            advice = UpgradeCommand.program(p, rebuildOnly: !parts.contains(where: \.own), malicious: malicious)
+            advice = UpgradeCommand.program(p, rebuildOnly: !parts.contains(where: \.own), own: own,
+                                            toolchain: parts.contains { $0.isStdlib && $0.upgrade != nil }, malicious: malicious)
             rebuild = p.place == .goInstall || p.place == .cargoInstall
         case let .pythonTool(t):
             name = t.name
             advice = UpgradeCommand.pythonTool(t, upgrades: parts.map { ($0.name, $0.upgrade?.version) }, malicious: malicious)
-            rebuild = t.manager == .uv || !parts.contains { !$0.own && $0.upgrade != nil }        // pipx upgrade, not runpip
+            rebuild = t.manager == .uv
         default:
             return UpgradeCommand.Advice(command: nil)
         }
         guard !malicious, rebuild, advice.command != nil, rebuildWaits(parts) else { return advice }
-        return UpgradeCommand.Advice(command: nil, note: "No checked fixed version of \(name) yet; see the site.")
+        return UpgradeCommand.Advice(command: nil, note: "Not offered: building \(name) again would bring a release of it the app has not checked; see the site.")
     }
 
     /// Whether a rebuild waits for the program's own fix: its own module, crate or package is flagged on this Mac

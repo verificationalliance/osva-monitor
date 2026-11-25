@@ -10,12 +10,12 @@ let home = "/Users/ana"
 /// A finding whose command UpgradeCommand made from these inputs, as FindingBuilder makes them.
 func fixable(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem? = .npm, installed: String = "1.0.0", fixed: String? = "2.0.0",
              malicious: Bool = false, subject: Finding.Subject? = nil, component: String? = nil, id: String? = nil) -> Finding {
-    let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: malicious ? nil : fixed.map { Fixture.fix($0, above: installed) },
-                                       malicious: malicious)
+    let upgrade = malicious ? nil : fixed.map { Fixture.fix($0, above: installed) }
+    let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: upgrade, malicious: malicious)
     let command = UpgradeCommand.advice(inputs, home: home).command
     return Finding(id: id ?? "pkg|\(name)|\(installed)", group: malicious ? .malicious : .criticalHigh,
                    subject: subject ?? .package(ecosystem: ecosystem ?? .npm, name: name), title: name, component: component,
-                   installedVersion: installed, fixedVersion: malicious ? nil : fixed, severity: .high, advisoryIDs: [], flawCount: 1,
+                   installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                    exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin],
                    pageURL: URL(string: "https://verificationalliance.org/")!, upgradeCommand: command, verification: .none, grade: nil,
                    commandInputs: inputs)
@@ -140,7 +140,7 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
     @Test func aSavedLatestCommandIsNotRunAgain() {
         let inputs = Fixture.savedInputs(origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"), name: "lodash", ecosystem: .npm, target: nil, malicious: false)
         var f = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", installed: "4.17.20", fixed: "4.17.21")
-        f.commandInputs = inputs; f.upgradeCommand = "npm install -g lodash@latest"; f.fixedVersion = nil
+        f.commandInputs = inputs; f.upgradeCommand = "npm install -g lodash@latest"; f.setUpgrade(nil)
         #expect(plan(f) == .failure(.notReproducible))
     }
 }
@@ -236,8 +236,7 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
     }
 
     @Test func noButtonForAVersionThatIsNotOne() {
-        var f = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", fixed: "4.17.21")
-        f.fixedVersion = "$(id)"
+        let f = Fixture.saved(fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", fixed: "4.17.21"), fixedVersion: "$(id)")
         #expect(plan(f) == .failure(.unsafeVersion))
         // inputs carrying a bad version (a report written by something else): the command quotes it, the plan refuses it
         let bad = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", fixed: "1.0; touch /tmp/pwned")

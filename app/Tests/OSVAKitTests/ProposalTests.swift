@@ -60,10 +60,10 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
 
     /// A pip finding in the test Python: `name` at `installed`, its fix `fixed`.
     static func finding(_ name: String, _ installed: String, _ fixed: String, flaws: Int = 1, exploited: Bool = false) -> Finding {
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: python, user: false, formula: nil), name: name, ecosystem: .pypi,
-                                           target: Fixture.fix(fixed, above: installed), malicious: false)
+        let upgrade = Fixture.fix(fixed, above: installed)
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: python, user: false, formula: nil), name: name, ecosystem: .pypi, target: upgrade, malicious: false)
         return Finding(id: "pkg|PyPI|\(name)|\(installed)", group: exploited ? .exploited : .criticalHigh, subject: .package(ecosystem: .pypi, name: name),
-                       title: name, installedVersion: installed, fixedVersion: fixed, severity: .high, advisoryIDs: [], flawCount: flaws,
+                       title: name, installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: flaws,
                        exploited: exploited, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
                        pageURL: SiteURL.packagePage(.pypi, name, version: installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
                        verification: .none, grade: nil, commandInputs: inputs)
@@ -386,10 +386,10 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
     @Test func plansJoinTheirToolsCommand() {
         let tools = ToolEnvironment(base: [:], isExecutable: { _ in true })
         func plan(_ origin: Origin, _ name: String, _ eco: Ecosystem?, malicious: Bool = false) -> FixPlan {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: malicious ? nil : Fixture.fix("9.9.9", above: "1.0.0"),
-                                               malicious: malicious)
+            let upgrade = malicious ? nil : Fixture.fix("9.9.9", above: "1.0.0")
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: upgrade, malicious: malicious)
             let f = Finding(id: name, group: .criticalHigh, subject: eco.map { .package(ecosystem: $0, name: name) } ?? .project(slug: name, name: name, installedAs: name),
-                            title: name, installedVersion: "1.0.0", fixedVersion: malicious ? nil : "9.9.9", severity: .high, advisoryIDs: [], flawCount: 1,
+                            title: name, installedVersion: "1.0.0", upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                             exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.projectPage(slug: name),
                             upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
             return try! FixPlan.make(for: f, tools: tools).get()
@@ -478,7 +478,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         let origin = Origin.electronApp(name: name, bundlePath: bundle.path, caskToken: token)
         let inputs = UpgradeCommand.Inputs(origin: origin, name: "electron", ecosystem: .npm, target: Fixture.fix("42.11.16", above: electron), malicious: false)
         return Finding(id: "app|\(bundle.path)|\(electron)", group: .exploited, subject: .package(ecosystem: .npm, name: "electron"), title: name,
-                       component: "Electron", installedVersion: electron, fixedVersion: "42.11.16", severity: .high, advisoryIDs: [], flawCount: 50,
+                       component: "Electron", installedVersion: electron, upgrade: inputs.target.map { _ in Fixture.fix("42.11.16", above: electron) }, severity: .high, advisoryIDs: [], flawCount: 50,
                        exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [origin],
                        pageURL: SiteURL.packagePage(.npm, "electron", version: electron), upgradeCommand: UpgradeCommand.advice(inputs).command,
                        verification: .none, grade: nil, commandInputs: inputs)

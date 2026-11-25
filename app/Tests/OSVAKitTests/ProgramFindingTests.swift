@@ -104,8 +104,8 @@ import Testing
         // the site publishes no ranges for time's flaw (its record names 0.2.0 fixed and affected), so its first fixed
         // versions decide: likely affected, and the core confirms the server's 0.2.23 clears it
         #expect(f.title == "fd" && f.shownVersions == "time 0.1.43 → 0.2.23" && f.group == .likely)
-        #expect(f.note == "fd 10.5.2 was built with time 0.1.43 — fixed in 0.2.23. Builds fd again from its newest release, with the newest compatible crates.")
-        #expect(f.upgradeCommand == "cargo install --force fd-find" && f.fixesCount == 1)
+        #expect(f.note == "fd 10.5.2 was built with time 0.1.43 — fixed in 0.2.23. Builds fd 10.5.2 again, with the newest compatible crates.")
+        #expect(f.upgradeCommand == "cargo install --force fd-find --version 10.5.2" && f.fixesCount == 1)
     }
 
     @Test func aPipxToolAndItsDependencies() throws {
@@ -120,7 +120,8 @@ import Testing
         #expect(f.originSummary == "pipx · Python 3.12.4")
         var uv = Self.black; uv.manager = .uv; uv.venv = "/Users/ana/.local/share/uv/tools/black"
         let u = try #require(findings(installed.map { InstalledPackage(ecosystem: $0.ecosystem, name: $0.name, version: $0.version, origin: .pythonTool(uv)) }).first)
-        #expect(u.upgradeCommand == "uv tool upgrade black" && u.originSummary == "uv tool · Python 3.12.4")
+        #expect(u.upgradeCommand == "uv tool install --force black==26.10.1" && u.originSummary == "uv tool · Python 3.12.4")
+        #expect(u.note?.hasSuffix(" uv installs black 26.10.1, with the newest versions it allows of what it uses.") == true, "\(u.note ?? "")")
     }
 
     @Test func aProgramsSentenceSaysWhatTheCoreConfirms() throws {
@@ -138,7 +139,7 @@ import Testing
         let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in [black, click, requests].first { $0.name == a.name }.map { (a, $0) } })
         let f = try #require(FindingBuilder(index: Self.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:],
                                                                         bigIssues: []).first)
-        #expect(f.note?.hasPrefix("black 24.1.0 has 2 known flaws — partly fixed in 26.0 · uses click 8.1.3 — no fixed release yet"
+        #expect(f.note?.hasPrefix("black 24.1.0 has 2 known flaws — partly fixed in 26.0 · uses click 8.1.3 — no checked fixed version yet"
                                   + " · uses requests 2.25.0 — reported, not checked (RQ, critical, exploited in the wild).") == true, "\(f.note ?? "")")
         // counted and weighed by what the core checked: requests' critical, exploited flaw is said and marked, not counted
         #expect(f.group == .criticalHigh && f.flawCount == 3 && f.severity == .critical && !f.exploited && f.fixedVersion == "26.0")
@@ -158,8 +159,8 @@ import Testing
 
     /// P17: black's own target is one the core rejects (inside its published range). pipx's runpip pins black where it is,
     /// never `--upgrade black` (pip would take its newest release, which nobody checked), and moves requests to the
-    /// version the core checked. uv's `uv tool upgrade` would bring black's newest release: no command, and the row says
-    /// why. Not knowing black's version, nothing pins it: no command.
+    /// version the core checked. uv would install black again at a version nobody checked: no command, and the row says
+    /// why. Not knowing black's version, nothing pins it: no command, and the row says why (m3).
     @Test func aToolsOwnPackageWithoutACheckedVersionStaysWhereItIs() throws {
         typealias B = BatchCheckTests
         let answers = [try B.result("black", "24.1.0", flaws: [B.flaw("BL", ranges: #"[{"fixed":"26.0"}]"#, severity: "CRITICAL")], plan: B.plan("25.0")),
@@ -170,15 +171,26 @@ import Testing
                 == true, "\(pipx.note ?? "")")
         var uv = Self.black; uv.manager = .uv; uv.venv = "/Users/ana/.local/share/uv/tools/black"
         let u = try row(.pythonTool(uv), answers)
-        #expect(u.upgradeCommand == nil && u.note?.hasSuffix(" No checked fixed version of black yet; see the site.") == true, "\(u.note ?? "")")
+        #expect(u.upgradeCommand == nil, "\(u.upgradeCommand ?? "")")
+        #expect(u.note?.hasSuffix(" Not offered: building black again would bring a release of it the app has not checked; see the site.") == true,
+                "\(u.note ?? "")")
+        // the clause says the server's fix was not confirmed, not that there is none
+        #expect(pipx.note?.hasPrefix("black 24.1.0 has 1 known flaw — no checked fixed version yet · uses requests 2.25.0 — fixed in 2.33.0.") == true,
+                "\(pipx.note ?? "")")
         var unknown = Self.black; unknown.version = nil
-        #expect(UpgradeCommand.pythonTool(unknown, upgrades: [("black", nil), ("requests", "2.33.0")], malicious: false).command == nil)
+        #expect(UpgradeCommand.pythonTool(unknown, upgrades: [("black", nil), ("requests", "2.33.0")], malicious: false)
+                == .init(command: nil, note: "No command: the app could not read which version of black is installed, and every command here names one."))
+        // MP1: only black itself flagged, with no checked upgrade: nothing to run, `pipx upgrade` least of all
+        let alone = try row(.pythonTool(Self.black), [answers[0]])
+        #expect(alone.upgradeCommand == nil && alone.commandInputs == nil)
+        #expect(UpgradeCommand.pythonTool(Self.black, upgrades: [("black", nil)], malicious: false).command == nil)
     }
 
-    /// P18: `go install …@latest` and `cargo install --force` rebuild the program from its newest release. Offered when
-    /// only what it was built with is flagged (that release is its author's choice), or when the core checked an upgrade
-    /// for its own module too; never while its own module is flagged and the core rejects the server's version for it.
-    /// Homebrew's formula keeps `brew upgrade`: Homebrew picks.
+    /// P18 and m2: `go install` and `cargo install --force` build the program again, at the version they name (never
+    /// `@latest`): the one the core checked for its own module, else the one installed, with what it is built with brought
+    /// up to date by the tool (Go: only its standard library, from the Go you have). Offered when only what it was built
+    /// with is flagged, or when the core checked an upgrade for its own module too; never while its own module is flagged
+    /// and the core rejects the server's version for it. Homebrew's formula keeps `brew upgrade`: Homebrew picks.
     @Test func aRebuildWaitsForTheProgramsOwnCheckedFix() throws {
         typealias B = BatchCheckTests
         let tool = BuiltProgram(language: .go, path: "/Users/ana/go/bin/tool", name: "tool", version: "v1.0.0", place: .goInstall, formula: nil,
@@ -187,14 +199,27 @@ import Testing
         func own(_ target: String?, _ flaw: String = B.flaw("OWN", ranges: #"[{"fixed":"1.2.0"}]"#, severity: "CRITICAL")) throws -> BatchResponse.Result {
             try B.result("Go", "example.com/tool", "v1.0.0", flaws: [flaw], plan: B.plan(target))
         }
+        let stdlib = try B.result("Go", "stdlib", "1.22.3", flaws: [B.flaw("GO", ranges: #"[{"fixed":"1.22.11"}]"#)], plan: B.plan("1.22.11"))
         // its own module's target lies inside its range: no rebuild, and the row says why
-        let rejected = try row(.program(tool), [try own("v1.1.0"), net])
+        let rejected = try row(.program(tool), [try own("v1.1.0"), net, stdlib])
         #expect(rejected.upgradeCommand == nil, "\(rejected.upgradeCommand ?? "")")
-        #expect(rejected.note?.hasSuffix(" No checked fixed version of tool yet; see the site.") == true, "\(rejected.note ?? "")")
-        // the core confirms its own module's target: the rebuild is offered
-        #expect(try row(.program(tool), [try own("v1.2.0"), net]).upgradeCommand == "go install example.com/tool/cmd/tool@latest")
-        // only what it was built with is flagged (its own module's flaw states nothing: reported, not checked): offered
-        #expect(try row(.program(tool), [try own(nil, B.flaw("OWN")), net]).upgradeCommand == "go install example.com/tool/cmd/tool@latest")
+        #expect(rejected.note == "tool v1.0.0 has 1 known flaw — no checked fixed version yet · built with golang.org/x/net 0.23.0 — fixed in 0.33.0"
+                + " · built with Go 1.22.3, whose stdlib has 1 known flaw."
+                + " Not offered: building tool again would bring a release of it the app has not checked; see the site.")
+        // the core confirms its own module's target: the rebuild is offered, at that version
+        let confirmed = try row(.program(tool), [try own("v1.2.0"), net])
+        #expect(confirmed.upgradeCommand == "go install example.com/tool/cmd/tool@v1.2.0")
+        #expect(confirmed.note?.hasSuffix(" Builds tool 1.2.0 with the Go you have.") == true, "\(confirmed.note ?? "")")
+        // only what it was built with is flagged (its own module's flaw states nothing: reported, not checked): the same
+        // version again, which brings only the Go you have, so only for Go's standard library
+        let modules = try row(.program(tool), [try own(nil, B.flaw("OWN")), net])
+        #expect(modules.upgradeCommand == nil, "\(modules.upgradeCommand ?? "")")
+        #expect(modules.note?.hasSuffix(" The modules tool was built with change only in a newer release of it: update it where it came from.") == true,
+                "\(modules.note ?? "")")
+        let toolchain = try row(.program(tool), [try own(nil, B.flaw("OWN")), net, stdlib])
+        #expect(toolchain.upgradeCommand == "go install example.com/tool/cmd/tool@v1.0.0")
+        #expect(toolchain.note?.hasSuffix(" Builds tool 1.0.0 again with the Go you have, and that Go's standard library;"
+                                          + " the modules it was built with change only in a newer release.") == true, "\(toolchain.note ?? "")")
         // Homebrew's formula: Homebrew picks
         var brewed = tool; brewed.place = .homebrew; brewed.formula = "tool"
         #expect(try row(.program(brewed), [try own("v1.1.0"), net]).upgradeCommand == "brew upgrade tool")
@@ -204,14 +229,19 @@ import Testing
         let time = try B.result("crates.io", "time", "0.1.43", flaws: [B.flaw("TM", ranges: #"[{"fixed":"0.2.23"}]"#)], plan: B.plan("0.2.23"))
         let fdOwn = { (target: String) in try B.result("crates.io", "fd-find", "10.5.2", flaws: [B.flaw("FD", ranges: #"[{"fixed":"10.6.0"}]"#)], plan: B.plan(target)) }
         let cargo = try row(.program(fd), [try fdOwn("10.5.3"), time])
-        #expect(cargo.upgradeCommand == nil && cargo.note?.hasSuffix(" No checked fixed version of fd yet; see the site.") == true, "\(cargo.note ?? "")")
-        #expect(try row(.program(fd), [try fdOwn("10.6.0"), time]).upgradeCommand == "cargo install --force fd-find")
+        #expect(cargo.upgradeCommand == nil && cargo.note?.hasSuffix(" Not offered: building fd again would bring a release of it the app has not checked; see the site.") == true,
+                "\(cargo.note ?? "")")
+        #expect(try row(.program(fd), [try fdOwn("10.6.0"), time]).upgradeCommand == "cargo install --force fd-find --version 10.6.0")
+        #expect(try row(.program(fd), [time]).upgradeCommand == "cargo install --force fd-find --version 10.5.2")        // only a crate it was built with
+        var unknown = fd; unknown.version = nil
+        #expect(try row(.program(unknown), [time]).note?.hasSuffix(" No command: the app could not read which version of fd is installed, and every command here names one.") == true)
     }
 
-    @Test func aToolsOwnPackageOnlyIsUpgradedWithPipx() {
+    @Test func aToolsOwnPackageOnlyIsPinnedWithPipx() {
+        // never `pipx upgrade`, which takes the newest release: the version the core checked, pinned
         let a = UpgradeCommand.pythonTool(Self.black, upgrades: [("black", "26.10.1")], malicious: false)
-        #expect(a.command == "pipx upgrade black" && a.note == nil)
-        #expect(UpgradeCommand.pythonTool(Self.black, upgrades: [("requests", nil)], malicious: false).command == "pipx upgrade black")
+        #expect(a.command == "pipx runpip black install --upgrade black==26.10.1" && a.note == nil)
+        #expect(UpgradeCommand.pythonTool(Self.black, upgrades: [("requests", nil)], malicious: false).command == nil)
         #expect(UpgradeCommand.pythonTool(Self.black, upgrades: [("evil", nil)], malicious: true).command == "pipx uninstall black")
     }
 
@@ -244,18 +274,24 @@ import Testing
 }
 
 @Suite struct ProgramCommandTests {
-    func program(_ place: BuiltProgram.Place, package: String? = nil, formula: String? = nil, app: String? = nil, cask: String? = nil) -> BuiltProgram {
-        BuiltProgram(language: .go, path: "/x/tool", name: "tool", version: nil, place: place, formula: formula, package: package, toolchain: nil,
-                     app: app, cask: cask)
+    func program(_ place: BuiltProgram.Place, package: String? = nil, formula: String? = nil, app: String? = nil, cask: String? = nil,
+                 version: String? = "1.0") -> BuiltProgram {
+        BuiltProgram(language: place == .cargoInstall ? .rust : .go, path: "/x/tool", name: "tool", version: version, place: place, formula: formula,
+                     package: package, toolchain: nil, app: app, cask: cask)
     }
 
     @Test func programs() {
         #expect(UpgradeCommand.program(program(.homebrew, formula: "gh"), rebuildOnly: false, malicious: false).command == "brew upgrade gh")
         #expect(UpgradeCommand.program(program(.homebrew, formula: "gh"), rebuildOnly: false, malicious: true).command == "brew uninstall gh")
-        #expect(UpgradeCommand.program(program(.goInstall, package: "golang.org/x/tools/gopls"), rebuildOnly: true, malicious: false).command
-                == "go install golang.org/x/tools/gopls@latest")
-        #expect(UpgradeCommand.program(program(.goInstall, package: nil), rebuildOnly: true, malicious: false).command == nil)
-        #expect(UpgradeCommand.program(program(.cargoInstall, package: "ripgrep"), rebuildOnly: true, malicious: false).command == "cargo install --force ripgrep")
+        let gopls = program(.goInstall, package: "golang.org/x/tools/gopls", version: "v0.16.1")
+        #expect(UpgradeCommand.program(gopls, rebuildOnly: true, own: "v0.17.0", malicious: false).command == "go install golang.org/x/tools/gopls@v0.17.0")
+        #expect(UpgradeCommand.program(gopls, rebuildOnly: true, toolchain: true, malicious: false).command == "go install golang.org/x/tools/gopls@v0.16.1")
+        #expect(UpgradeCommand.program(gopls, rebuildOnly: true, malicious: false).command == nil)
+        #expect(UpgradeCommand.program(program(.goInstall, package: nil), rebuildOnly: true, own: "1.0", malicious: false).command == nil)
+        #expect(UpgradeCommand.program(program(.cargoInstall, package: "ripgrep", version: "13.0.0"), rebuildOnly: true, malicious: false).command
+                == "cargo install --force ripgrep --version 13.0.0")
+        #expect(UpgradeCommand.program(program(.cargoInstall, package: "ripgrep", version: "13.0.0"), rebuildOnly: true, own: "14.1.1", malicious: false).command
+                == "cargo install --force ripgrep --version 14.1.1")
         #expect(UpgradeCommand.program(program(.app, app: "Docker", cask: "docker-desktop"), rebuildOnly: true, malicious: false).command
                 == "brew upgrade --cask docker-desktop")
         let other = UpgradeCommand.program(program(.other), rebuildOnly: true, malicious: false)
@@ -263,10 +299,10 @@ import Testing
     }
 
     @Test func hostileNamesStayOneWord() {
-        #expect(UpgradeCommand.program(program(.goInstall, package: "example.com/x;rm -rf ~/cmd"), rebuildOnly: true, malicious: false).command
-                == "go install 'example.com/x;rm -rf ~/cmd@latest'")
+        #expect(UpgradeCommand.program(program(.goInstall, package: "example.com/x;rm -rf ~/cmd"), rebuildOnly: true, own: "1.2", malicious: false).command
+                == "go install 'example.com/x;rm -rf ~/cmd@v1.2'")
         #expect(UpgradeCommand.program(program(.cargoInstall, package: "evil$(curl x)"), rebuildOnly: true, malicious: false).command
-                == "cargo install --force 'evil$(curl x)'")
+                == "cargo install --force 'evil$(curl x)' --version 1.0")
         #expect(UpgradeCommand.program(program(.homebrew, formula: "-rf"), rebuildOnly: true, malicious: false).command == "brew upgrade '-rf'")
         let tool = PythonTool(manager: .pipx, name: "my tool", mainPackage: "my-tool", version: "1.0", venv: "/v", python: nil)
         #expect(UpgradeCommand.pythonTool(tool, upgrades: [("it's", "2.0")], malicious: false).command
@@ -353,7 +389,10 @@ import Testing
 
         #expect(Set(report.findings.map(\.title)) == ["black", "secret-tool", "pyyaml", "nginx"])
         let tool = try #require(report.findings.first { $0.title == "secret-tool" })
-        #expect(tool.upgradeCommand == "go install example.com/osva/gofixture@latest" && tool.shownVersions == "golang.org/x/net 0.23.0 → 0.62.0")
+        // its modules change only with a newer release of it, and no Go has a checked fix for its standard library: no command
+        #expect(tool.upgradeCommand == nil && tool.shownVersions == "golang.org/x/net 0.23.0 → 0.62.0")
+        #expect(tool.note?.hasSuffix(" The modules secret-tool was built with change only in a newer release of it: update it where it came from.") == true,
+                "\(tool.note ?? "")")
         #expect(report.findings.first { $0.title == "nginx" }?.upgradeCommand == "nix profile upgrade nginx")
         #expect(report.coverage.notChecked.contains(.init(source: "Nix packages with no graded project", items: ["private-thing 1.0"])))
         #expect(report.coverage.notChecked.contains(.init(source: "conda packages with no graded project", items: ["python 3.11.5", "secret-corp-pkg 1.0"])))
@@ -404,7 +443,7 @@ private extension Finding {
     func finding(_ origin: Origin, inputs: UpgradeCommand.Inputs?) -> Finding {
         let command = inputs.flatMap { UpgradeCommand.advice($0).command } ?? UpgradeCommand.advice(for: origin, name: "x", ecosystem: nil, target: nil, malicious: false).command
         return Finding(id: "f", group: .criticalHigh, subject: .package(ecosystem: .go, name: "golang.org/x/net"), title: "gh", component: "golang.org/x/net",
-                       installedVersion: "0.23.0", fixedVersion: "0.33.0", severity: .critical, advisoryIDs: [], flawCount: 1, exploited: false,
+                       installedVersion: "0.23.0", upgrade: Fixture.fix("0.33.0", above: "0.23.0"), severity: .critical, advisoryIDs: [], flawCount: 1, exploited: false,
                        malicious: false, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.home, upgradeCommand: command,
                        verification: .none, grade: nil, commandInputs: inputs)
     }
@@ -487,11 +526,11 @@ extension ProgramFindingTests {
         }
         let programs = findings(program(docker("docker"), [("stdlib", "1.22.3")]) + program(docker("kubectl"), [("golang.org/x/net", "v0.23.0")]))
         let app = Finding(id: "product|docker|4.41.2", group: .criticalHigh, subject: .product(key: "docker", name: "Docker"),
-                          title: "Docker", installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6,
+                          title: "Docker", installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6,
                           exploited: false, malicious: false, note: "Likely affected: the issuer names 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
                           upgradeCommand: nil, verification: .none, grade: nil)
-        let other = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", fixedVersion: nil,
+        let other = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", upgrade: nil,
                             severity: nil, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
                             origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
         let folded = FindingBuilder.foldingProgramsIntoApps(programs + [app, other])
@@ -563,7 +602,7 @@ extension ProgramFindingTests {
                                   toolchain: nil, app: "Docker", cask: nil)
         let program = try #require(findings([(try Self.stdlib(), .program(docker))]).first)
         let app = Finding(id: "product|docker|4.41.2", group: .criticalHigh, subject: .product(key: "docker", name: "Docker"), title: "Docker",
-                          installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
+                          installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
                           malicious: false, note: "The issuer lists 4.41.2 as affected and 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
                           upgradeCommand: nil, verification: .none, grade: nil)
@@ -615,7 +654,7 @@ extension ProgramFindingTests {
         #expect(program.group == .other && program.onlyElsewhere == true && program.upgradeCommand == nil)
         // into an app's likely finding: it stays as it was
         let app = Finding(id: "product|docker|4.41.2", group: .likely, subject: .product(key: "docker", name: "Docker"), title: "Docker",
-                          installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .critical, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: true,
+                          installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .critical, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: true,
                           malicious: false, note: "Likely affected: the site publishes no affected ranges, and the issuer names 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
                           upgradeCommand: nil, verification: .none, grade: nil)

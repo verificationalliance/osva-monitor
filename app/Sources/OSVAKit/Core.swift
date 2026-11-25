@@ -74,69 +74,6 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         }
     }
 
-    /// The oldest of the versions that are newer than `version`: the nearest upgrade among them.
-    public func nearestVersion(in versions: [String], above version: String) -> String? {
-        sortedVersions(versions.filter { compareVersions($0, version) > 0 }).first
-    }
-
-    // MARK: Affectedness
-
-    public enum Affectedness: Sendable, Equatable {
-        /// Some fixed version is above the installed one and its own branch has no fix at or below it.
-        case affected
-        case notAffected
-        /// The issuer names no fixed version.
-        case unknown
-    }
-
-    /// Is `installed` affected, given the first fixed version the issuer names for each release branch? For advisories
-    /// that carry only these (`fixed_hint`); `affectedness(installed:ranges:)` decides when the issuer's ranges are known.
-    public func affectedness(installed: String, fixedVersions: [String]) -> Affectedness {
-        let version = Array(installed.utf8)
-        let fixed = KeyList(fixedVersions)
-        let answer = queue.sync {
-            withBytes(version) { pv, nv in
-                fixed.withPointers { pointers, lengths, count in osva_affected(pv, nv, pointers, lengths, count) }
-            }
-        }
-        switch answer {
-        case 1: return .affected
-        case 0: return .notAffected
-        default: return .unknown
-        }
-    }
-
-    /// Is `installed` affected, given the issuer's affected ranges? Affected exactly when it lies in one of them
-    /// (Ranges.lean: sound and complete); `.unknown` when there are none.
-    public func affectedness(installed: String, ranges: [AffectedRange]) -> Affectedness {
-        let version = Array(installed.utf8)
-        let list = RangeList(ranges)
-        let answer = queue.sync {
-            withBytes(version) { pv, nv in list.withRanges { p, n in osva_affected_ranges(pv, nv, p, n) } }
-        }
-        switch answer {
-        case 1: return .affected
-        case 0: return .notAffected
-        default: return .unknown
-        }
-    }
-
-    /// The upgrade that leaves every range behind: the lowest fixed version of any of `ranges` that is above `installed`
-    /// and lies in none of them (Ranges.lean `upgradeIn`). Give it the ranges of every advisory weighed together, so the
-    /// upgrade never lands in a flaw that starts later. Nil when there is none.
-    public func upgrade(from installed: String, ranges: [AffectedRange]) -> String? {
-        let version = Array(installed.utf8)
-        let list = RangeList(ranges)
-        var output = [UInt8](repeating: 0, count: max(list.longestFixed, 1))
-        let length = queue.sync {
-            withBytes(version) { pv, nv in
-                list.withRanges { p, n in output.withUnsafeMutableBufferPointer { o in osva_upgrade_ranges(pv, nv, p, n, o.baseAddress!, o.count) } }
-            }
-        }
-        precondition(length >= -1, "The verified core refused the ranges (osva_upgrade_ranges returned \(length)).")
-        return length < 0 ? nil : String(decoding: output.prefix(length), as: UTF8.self)
-    }
-
     /// Whether the core's version order may not be the ecosystem's for `version`: it has a word right after a '-' that
     /// is neither the release itself (ga, final, release) nor after it (p, patch, pl, sp, r, post, rev), such as Maven's
     /// "33.7.2-jre" or "1.0.0-rc.1". Maven and Composer may order such a version otherwise than the core does, so the
@@ -287,7 +224,7 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         guard status == 1 else { return nil }
         let leaves = out.prefix(advisories.count).map { $0 == 1 }
         let fixes = zip(leaves, flagged).map { $0 && $1 }
-        return Judgement(leaves: leaves, upgrade: fixes.contains(true) ? CheckedUpgrade(candidate, fixes: fixes) : nil)
+        return Judgement(leaves: leaves, upgrade: fixes.contains(true) ? CheckedUpgrade(candidate, fixes: fixes) : nil)   // claims-mutant: unchecked-target
     }
 
     // MARK: Privacy filter
@@ -342,7 +279,7 @@ public struct AffectedRange: Codable, Sendable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let any = try decoder.container(keyedBy: AnyKey.self)
-        if let other = any.allKeys.first(where: { CodingKeys(stringValue: $0.stringValue) == nil }) {
+        if let other = any.allKeys.first(where: { CodingKeys(stringValue: $0.stringValue) == nil }) {   // claims-mutant: lenient-decoding
             throw DecodingError.dataCorruptedError(forKey: other, in: any, debugDescription: "An affected range has no bound named \(other.stringValue).")
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -377,12 +314,16 @@ public struct CoreAdvisory: Sendable, Hashable {
 /// above the installed version and clear of an advisory the app flags. Its storage is private and its initialisers
 /// file-private, so only Core.swift can make one, and a version the app suggests can only come from the core.
 public struct CheckedUpgrade: Sendable, Hashable {
-    /// The ways a checked version may be shown: the version itself, written as its ecosystem writes it.
+    /// The ways a checked version may be shown: the version itself, written as its ecosystem writes it. Closed: a
+    /// style carries no text of its own, so what the app shows is always the checked version, rewritten only by these.
     public enum Display: Sendable, Hashable {
         /// As the core checked it.
         case asChecked
         /// As Java names it: "8u511" for 8.0.511, the canonical form from 9 on (`JavaVersion.shown`).
         case java
+        /// As a program's parts are shown (`FindingBuilder.Component.shown`): Go's "v0.33.0" as "0.33.0", and a
+        /// pseudo-version as its base and date.
+        case program
     }
 
     private let checked: String
@@ -400,6 +341,7 @@ public struct CheckedUpgrade: Sendable, Hashable {
         switch style {
         case .asChecked: return checked
         case .java: return JavaVersion.shown(checked)
+        case .program: return FindingBuilder.Component.shown(checked)
         }
     }
 
@@ -427,44 +369,9 @@ public struct Judgement: Sendable, Equatable {
     public var upgrade: CheckedUpgrade? { checked }
 }
 
-/// Ranges laid out the way osva_affected_ranges wants them: their bounds in one buffer, an osva_range per range pointing
-/// into it, and NULL for an absent bound.
-private struct RangeList {
-    private var bytes: [UInt8] = []
-    private var bounds: [[(offset: Int, length: Int)?]] = []
-
-    init(_ ranges: [AffectedRange]) {
-        for r in ranges {
-            bounds.append([r.introduced, r.fixed, r.lastAffected].map { s in
-                guard let s else { return nil }
-                let start = bytes.count
-                bytes.append(contentsOf: s.utf8)
-                return (start, bytes.count - start)
-            })
-        }
-    }
-
-    var longestFixed: Int { bounds.compactMap { $0[1]?.length }.max() ?? 0 }
-
-    func withRanges<R>(_ body: (UnsafePointer<osva_range>, Int) -> R) -> R {
-        let storage = bytes.isEmpty ? [0] : bytes                 // a present bound is never a null pointer, even when empty
-        return storage.withUnsafeBufferPointer { buffer in
-            let base = buffer.baseAddress!
-            func pointer(_ b: (offset: Int, length: Int)?) -> UnsafePointer<UInt8>? { b.map { base + $0.offset } }
-            var ranges = bounds.map { b in
-                osva_range(introduced: pointer(b[0]), introduced_len: b[0]?.length ?? 0, fixed: pointer(b[1]), fixed_len: b[1]?.length ?? 0,
-                           last_affected: pointer(b[2]), last_affected_len: b[2]?.length ?? 0)
-            }
-            let count = ranges.count
-            if ranges.isEmpty { ranges = [osva_range()] }        // never hand the core a null base pointer
-            return ranges.withUnsafeBufferPointer { body($0.baseAddress!, count) }
-        }
-    }
-}
-
-/// Advisories laid out the way osva_verdicts, osva_upgrade_for and osva_judge want them, as RangeList lays out ranges:
-/// every bound and fixed version in one buffer, then one array of osva_range, one of fixed-version pointers and one of
-/// their lengths, each advisory's osva_advisory pointing at its own run of them. NULL only for an absent bound.
+/// Advisories laid out the way osva_verdicts, osva_upgrade_for and osva_judge want them: every bound and fixed version
+/// in one buffer, then one array of osva_range, one of fixed-version pointers and one of their lengths, each advisory's
+/// osva_advisory pointing at its own run of them. NULL only for an absent bound.
 private struct AdvisoryList {
     private typealias Span = (offset: Int, length: Int)
     private var bytes: [UInt8] = []

@@ -6,9 +6,13 @@ import Foundation
 extension UpgradeCommand {
     static let removeNote = "Remove it, then rotate every secret it could read."
 
-    /// A Go or Rust program: Homebrew's formula, `go install` again, `cargo install` again, or wherever it came from.
-    /// `rebuildOnly` says the program's own code is fine and only what it was built with needs newer versions.
-    static func program(_ p: BuiltProgram, rebuildOnly: Bool, malicious: Bool) -> Advice {
+    /// A Go or Rust program: Homebrew's formula, `go install` or `cargo install` again, or wherever it came from.
+    /// `rebuildOnly` says the program's own code is fine and only what it was built with needs newer versions. A rebuild
+    /// names the version it builds, never `@latest`: `own`, the version the core checked for the program's own module or
+    /// crate, else the one installed (built again, with what it is built with brought up to date where the tool can:
+    /// cargo's newest compatible crates; for Go only the standard library, from the Go you have, so only when `toolchain`,
+    /// a part that is Go's standard library has a checked fix). Without a version that reads as one, no command.
+    static func program(_ p: BuiltProgram, rebuildOnly: Bool, own: String? = nil, toolchain: Bool = false, malicious: Bool) -> Advice {
         switch p.place {
         case .homebrew where p.formula != nil:
             let f = p.formula!
@@ -16,12 +20,22 @@ extension UpgradeCommand {
             return Advice(command: "brew upgrade \(quote(f))",
                           note: rebuildOnly ? "If brew says \(f) is up to date, the fix waits for Homebrew's next build of it." : nil)
         case .goInstall where p.package != nil && !malicious:
-            return Advice(command: "go install \(quote(p.package! + "@latest"))",
-                          note: "Builds \(p.name) again from its newest release, with the Go you have.")
+            func tag(_ v: String) -> String { quote(p.package! + "@" + (v.hasPrefix("v") ? v : "v" + v)) }
+            if let own {
+                return Advice(command: "go install \(tag(own))", note: "Builds \(p.name) \(FindingBuilder.Component.shown(own)) with the Go you have.")
+            }
+            guard toolchain else {
+                return Advice(command: nil, note: "The modules \(p.name) was built with change only in a newer release of it: update it where it came from.")
+            }
+            guard let v = p.version, FixSafety.isSafeVersion(v) else { return Advice(command: nil, note: versionUnknown(p.name)) }
+            return Advice(command: "go install \(tag(v))",
+                          note: "Builds \(p.name) \(FindingBuilder.Component.shown(v)) again with the Go you have, and that Go's standard library; "
+                              + "the modules it was built with change only in a newer release.")
         case .cargoInstall where p.package != nil:
             if malicious { return Advice(command: "cargo uninstall \(quote(p.package!))", note: removeNote) }
-            return Advice(command: "cargo install --force \(quote(p.package!))",
-                          note: "Builds \(p.name) again from its newest release, with the newest compatible crates.")
+            guard let v = own ?? p.version, FixSafety.isSafeVersion(v) else { return Advice(command: nil, note: versionUnknown(p.name)) }
+            return Advice(command: "cargo install --force \(quote(p.package!)) --version \(quote(v))",
+                          note: "Builds \(p.name) \(v)\(own == nil ? " again" : ""), with the newest compatible crates.")
         case .app:
             let app = p.app ?? p.name
             if let cask = p.cask {
@@ -36,32 +50,38 @@ extension UpgradeCommand {
         }
     }
 
-    /// A pipx or uv tool. uv upgrades everything in the tool's environment within the versions the tool allows. pipx
-    /// upgrades the tool itself; for its dependencies, pip is asked for the fixed versions together with the tool, so
-    /// pip keeps within what the tool requires (and changes nothing if they conflict). `upgrades`: each package's version
-    /// as the core checked it, or nil. The tool's own package goes to its checked version, or stays where it is
-    /// (`t.version`): pip is never asked for a release of it the core did not check. Not knowing where it is, there is
-    /// no command, since leaving it out would let pip break what it requires.
+    /// A pipx or uv tool, its own package at the version the core checked for it (in `upgrades`), else where it is
+    /// (`t.version`): never a release of it the core did not check, and never one a registry picks. uv installs the tool
+    /// again at that version, with the newest versions it allows of what it uses. pipx's pip is asked for the fixed
+    /// versions together with the tool's package pinned, so pip keeps within what the tool requires (and changes nothing
+    /// if they conflict). Not knowing the tool's version, no command, and the note says why.
     static func pythonTool(_ t: PythonTool, upgrades: [(name: String, target: String?)], malicious: Bool) -> Advice {
         let tool = quote(t.name)
+        func isMain(_ name: String) -> Bool { PackageNames.indexName(name, in: .pypi) == t.mainPackage }
+        let checked = upgrades.first { isMain($0.name) }?.target
         switch t.manager {
         case .uv:
             if malicious { return Advice(command: "uv tool uninstall \(tool)", note: removeNote) }
-            return Advice(command: "uv tool upgrade \(tool)")
+            guard let v = checked ?? t.version, FixSafety.isSafeVersion(v) else { return Advice(command: nil, note: versionUnknown(t.mainPackage)) }
+            return Advice(command: "uv tool install --force \(quote("\(t.mainPackage)==\(v)"))",
+                          note: "uv installs \(t.mainPackage) \(v)\(checked == nil ? " again" : ""), with the newest versions it allows of what it uses.")
         case .pipx:
             if malicious { return Advice(command: "pipx uninstall \(tool)", note: removeNote) }
-            func isMain(_ name: String) -> Bool { PackageNames.indexName(name, in: .pypi) == t.mainPackage }
             let deps = upgrades.filter { !isMain($0.name) && $0.target != nil }
-            guard !deps.isEmpty else { return Advice(command: "pipx upgrade \(tool)") }
+            guard checked != nil || !deps.isEmpty else { return Advice(command: nil) }          // nothing checked to move
             // exact pins (never ">=", which let pip take a newer release than the fix and break what needed an older one)
-            let checked = upgrades.first { isMain($0.name) }?.target
-            guard let main = checked ?? t.version else { return Advice(command: nil) }
+            guard let main = checked ?? t.version, FixSafety.isSafeVersion(main) else { return Advice(command: nil, note: versionUnknown(t.mainPackage)) }
             let requirements = ["\(t.mainPackage)==\(main)"] + deps.map { "\($0.name)==\($0.target!)" }
-            return Advice(command: "pipx runpip \(tool) install --upgrade " + requirements.map(quote).joined(separator: " "),
-                          note: checked == nil
-                            ? "pip keeps \(t.mainPackage) at \(main) and upgrades them within the versions it allows; if they conflict, pip changes nothing."
-                            : "pip upgrades them together with \(t.mainPackage), within the versions it allows; if they conflict, pip changes nothing.")
+            let note: String? = deps.isEmpty ? nil : checked == nil
+                ? "pip keeps \(t.mainPackage) at \(main) and upgrades them within the versions it allows; if they conflict, pip changes nothing."
+                : "pip upgrades them together with \(t.mainPackage), within the versions it allows; if they conflict, pip changes nothing."
+            return Advice(command: "pipx runpip \(tool) install --upgrade " + requirements.map(quote).joined(separator: " "), note: note)
         }
+    }
+
+    /// Why a program or tool whose version the app could not read gets no command: every command names the version.
+    static func versionUnknown(_ name: String) -> String {
+        "No command: the app could not read which version of \(name) is installed, and every command here names one."
     }
 
     /// A package in a conda environment, named or by its folder.

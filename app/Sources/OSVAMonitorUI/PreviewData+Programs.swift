@@ -65,7 +65,7 @@ extension PreviewData {
                     note: "black 24.1.0 has 4 known flaws — fixed in 26.10.1 · uses requests 2.25.0 — fixed in 2.33.0. "
                         + "pip upgrades them together with black, within the versions it allows; if they conflict, pip changes nothing.",
                     origins: [.pythonTool(black)], page: SiteURL.packagePage(.pypi, "black", version: "24.1.0"),
-                    command: "pipx runpip black install --upgrade 'black>=26.10.1' 'requests>=2.33.0'"),
+                    command: "pipx runpip black install --upgrade black==26.10.1 requests==2.33.0"),
             programFinding("pkg|PyPI|pyyaml|5.3|py3.11.5", .criticalHigh, .package(ecosystem: .pypi, name: "pyyaml"), "pyyaml", "5.3", "5.4", .critical,
                     flaws: 2, note: "Needs pyyaml 5.4 or later in the environment's channels.", origins: [.conda(env: base)],
                     page: SiteURL.packagePage(.pypi, "pyyaml", version: "5.3"),
@@ -73,12 +73,13 @@ extension PreviewData {
                                                   malicious: false)),
             programFinding("prog|" + gopls.path, .other, .package(ecosystem: .go, name: "stdlib"), "gopls", component: "Go", "1.23.0", "1.23.11", .moderate,
                     flaws: 3, note: "gopls 0.16.1 was built with Go 1.23.0, whose stdlib has 3 known flaws. "
-                        + "Builds gopls again from its newest release, with the Go you have.",
+                        + "Builds gopls 0.16.1 again with the Go you have, and that Go's standard library; "
+                        + "the modules it was built with change only in a newer release.",
                     origins: [.program(gopls)], page: SiteURL.packagePage(.go, "stdlib", version: "1.23.0"),
-                    command: "go install golang.org/x/tools/gopls@latest"),
+                    command: "go install golang.org/x/tools/gopls@v0.16.1"),
             programFinding("prog|" + rg.path, .other, .package(ecosystem: .crates, name: "regex"), "rg", component: "regex", "1.5.4", "1.5.5", .moderate,
-                    flaws: 1, note: "rg 13.0.0 was built with regex 1.5.4 — fixed in 1.5.5. Builds rg again from its newest release, with the newest compatible crates.",
-                    origins: [.program(rg)], page: SiteURL.packagePage(.crates, "regex", version: "1.5.4"), command: "cargo install --force ripgrep"),
+                    flaws: 1, note: "rg 13.0.0 was built with regex 1.5.4 — fixed in 1.5.5. Builds rg 13.0.0 again, with the newest compatible crates.",
+                    origins: [.program(rg)], page: SiteURL.packagePage(.crates, "regex", version: "1.5.4"), command: "cargo install --force ripgrep --version 13.0.0"),
             programFinding("nix|openssl|3.0.12|" + profile.path, .other, .project(slug: "openssl", name: "OpenSSL", installedAs: "openssl"), "OpenSSL",
                     "3.0.12", "3.0.15", .moderate, flaws: 1, note: "The issuer lists 3.0.12 as affected and 3.0.15 as fixed.",
                     origins: [.nix(profile: profile, element: "openssl")], page: SiteURL.projectPage(slug: "openssl"),
@@ -97,7 +98,8 @@ extension PreviewData {
                                _ installed: String, _ fixed: String?, _ severity: Severity?, flaws: Int, note: String? = nil,
                                bigIssue: String? = nil, origins: [Origin], page: URL, command: String? = nil,
                                inputs: UpgradeCommand.Inputs? = nil, grade: String? = nil) -> Finding {
-        Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, fixedVersion: fixed,
+        Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed,
+                upgrade: fixed.map { fix($0, above: installed).displayed(.program) },
                 severity: severity, advisoryIDs: [], flawCount: flaws, exploited: false, malicious: false, note: note, bigIssue: bigIssue,
                 origins: origins, pageURL: page, upgradeCommand: inputs.flatMap { UpgradeCommand.advice($0).command } ?? command,
                 verification: .none, grade: grade, commandInputs: inputs)

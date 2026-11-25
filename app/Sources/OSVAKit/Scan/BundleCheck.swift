@@ -187,7 +187,7 @@ public struct BundleCheck: Sendable {
             }
             out.append(Finding(
                 id: "ext|\(m.record.store)|\(m.record.id)|\(host.rawValue)", group: .malicious, subject: .addOn(store: m.record.store, id: m.record.id),
-                title: first.name, installedVersion: first.version, fixedVersion: nil, severity: nil, advisoryIDs: [], flawCount: 0,
+                title: first.name, installedVersion: first.version, upgrade: nil, severity: nil, advisoryIDs: [], flawCount: 0,
                 exploited: false, malicious: true, note: flagged + " " + what, bigIssue: nil, origins: m.copies.map(\.origin),
                 pageURL: m.record.source ?? SiteURL.home, upgradeCommand: advice.command, verification: .none, grade: nil))
         }

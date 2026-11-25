@@ -13,9 +13,6 @@
 #include "osva_core.h"
 
 extern uint8_t osva_lean_vcmp(lean_object *a, lean_object *b);
-extern uint8_t osva_lean_affected(lean_object *v, lean_object *fixed);
-extern uint8_t osva_lean_affected_ranges(lean_object *v, lean_object *present, lean_object *bounds);
-extern lean_object *osva_lean_upgrade_ranges(lean_object *v, lean_object *present, lean_object *bounds);
 extern lean_object *osva_lean_verdicts(lean_object *v, lean_object *has, lean_object *presents, lean_object *bounds,
                                        lean_object *fixed);
 extern lean_object *osva_lean_upgrade_for(lean_object *v, lean_object *has, lean_object *presents, lean_object *bounds,
@@ -61,12 +58,6 @@ int osva_vcmp(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
     return (int)osva_lean_vcmp(mk_bytes(a, na), mk_bytes(b, nb)) - 1;     /* 0,1,2 -> -1,0,1 */
 }
 
-int osva_affected(const uint8_t *v, size_t nv, const uint8_t *const *fixed, const size_t *fixed_len, size_t n_fixed) {
-    if (osva_core_init() != 0) return -1;
-    uint8_t r = osva_lean_affected(mk_bytes(v, nv), mk_byte_arrays(fixed, fixed_len, n_fixed));
-    return r == 2 ? -1 : (int)r;                                            /* 2 = unknown */
-}
-
 static int ranges_ok(const osva_range *ranges, size_t n) { return (n == 0 || ranges != NULL) && n <= SIZE_MAX / 3; }
 
 /* The ranges as FFI.lean's decodeRanges reads them: bound 3k, 3k+1, 3k+2 of range k (introduced, fixed, last affected),
@@ -87,34 +78,17 @@ static void mk_ranges(const osva_range *ranges, size_t n, lean_object **present,
     *present = p; *bounds = b;
 }
 
-int osva_affected_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges) {
-    if (osva_core_init() != 0) return -2;
-    if (!ranges_ok(ranges, n_ranges)) return -2;
-    lean_object *present, *bounds;
-    mk_ranges(ranges, n_ranges, &present, &bounds);
-    uint8_t r = osva_lean_affected_ranges(mk_bytes(v, nv), present, bounds);
-    return r == 2 ? -1 : (int)r;                                            /* 2 = unknown */
-}
-
-/* Copies a Lean answer, `[]` (none) or `1 :: version` (ffiUpgradeRanges_spec, ffiUpgradeFor_spec), to out, and releases
- * it. */
+/* Copies a Lean answer, `[]` (none) or `1 :: version` (ffiUpgradeFor_spec), to out, and releases it. */
 static long copy_version(lean_object *res, uint8_t *out, size_t cap) {
     size_t m = lean_sarray_size(res);
     const uint8_t *r = lean_sarray_cptr(res);
     long out_len;
     if (m == 0) out_len = -1;                                               /* no upgrade */
-    else if (r[0] != 1 || m - 1 > (size_t)LONG_MAX) out_len = -2;           /* cannot happen (ffiUpgrade*_spec) */
+    else if (r[0] != 1 || m - 1 > (size_t)LONG_MAX) out_len = -2;           /* cannot happen (ffiUpgradeFor_spec) */
     else if (m - 1 > cap) out_len = -3;
     else { if (m > 1) memcpy(out, r + 1, m - 1); out_len = (long)(m - 1); }
     lean_dec(res);
     return out_len;
-}
-
-long osva_upgrade_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges, uint8_t *out, size_t cap) {
-    if (osva_core_init() != 0 || (cap > 0 && out == NULL) || !ranges_ok(ranges, n_ranges)) return -2;
-    lean_object *present, *bounds;
-    mk_ranges(ranges, n_ranges, &present, &bounds);
-    return copy_version(osva_lean_upgrade_ranges(mk_bytes(v, nv), present, bounds), out, cap);
 }
 
 /* A byte string the caller passes: NULL only with length 0. */
