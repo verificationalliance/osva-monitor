@@ -217,7 +217,7 @@ public struct GroupContainer<Content: View>: View {
             Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.palette).foregroundStyle(.white, Tokens.critical.glyph.color)
         case .findings(.other):
             Image(systemName: "info.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
-        case .notChecked:
+        case .findings(.likely), .findings(.reported), .notChecked:      // their own section and mark come with the popover's redesign
             Image(systemName: "questionmark.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         }
     }

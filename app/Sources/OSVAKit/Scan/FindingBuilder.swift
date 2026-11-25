@@ -2,7 +2,9 @@ import Foundation
 
 /// Turns the API's answers into findings. Pure: everything it needs is passed in, so the tests drive it directly.
 /// For a project's or product's advisories, affectedness and the upgrade are the verified core's (AdvisoryCheck); for
-/// packages checked by exact version, they are the server's verdict and plan (`packageFindings`).
+/// packages checked by exact version, each flaw is decided by the core from the ranges the site publishes, and the
+/// server's target is the upgrade only when the core confirms it (BatchCheck, `packageFindings`). Call it off the main
+/// thread: the core's judgements must not block it.
 public struct FindingBuilder: Sendable {
     public let index: PublicIndex
     private let core = Core.shared
@@ -41,34 +43,103 @@ public struct FindingBuilder: Sendable {
 
     // MARK: Packages (exact versions, from api/v1/check/batch)
 
+    /// What one package's answer makes of its finding (BatchCheck decides each flaw): the group, how serious, and how
+    /// many flaws it is shown for. A malicious package is flagged from the malware record itself, as before.
+    struct PackageState {
+        /// Nil for a malicious package.
+        var check: Finding.Check?
+        var group: Finding.Group
+        var severity: Severity?
+        var exploited: Bool
+        var malicious: Bool
+        var flawCount: Int
+        /// Affected, but only by flaws of another platform: listed, not urgent, nothing to do on this Mac.
+        var onlyElsewhere: Bool
+        /// The ids of the flaws the finding is shown for that can affect where the package runs.
+        var here: Set<String>
+    }
+
+    /// For software on this Mac (`onThisMac`), flaws of another platform are listed but do not make the finding urgent.
+    /// A project folder's dependencies run wherever the project is deployed: every flaw counts. `program`: a part of a
+    /// program or tool, where a malicious package's unlisted flaws are counted too.
+    static func state(_ verdict: BatchResponse.Result, _ check: BatchCheck, onThisMac: Bool, program: Bool = false) -> PackageState {
+        let flaws = verdict.flaws
+        func onThisMacOnly(_ fs: [BatchResponse.Flaw]) -> [BatchResponse.Flaw] { onThisMac ? fs.filter(\.affectsThisMac) : fs }
+        func worst(_ fs: [BatchResponse.Flaw]) -> Severity? { fs.compactMap { Severity(api: $0.severity) }.max() }
+        let malicious = verdict.malicious || flaws.contains(where: \.malicious) || verdict.plan?.remaining.contains { $0.reason == .malicious } == true
+        if malicious {
+            let here = onThisMacOnly(flaws)
+            let count = flaws.isEmpty ? max(verdict.distinctFlaws, 0) : here.count + (program ? check.unlisted : 0)
+            return PackageState(check: nil, group: .malicious, severity: nil,
+                                exploited: flaws.isEmpty ? !verdict.exploited.isEmpty : here.contains { $0.exploitedSince != nil },
+                                malicious: true, flawCount: count, onlyElsewhere: false, here: Set(here.map(\.id)))
+        }
+        switch check.check {
+        case .affected:
+            // Today's groups, applied to the affected flaws only.
+            let shown = check.affected, here = onThisMacOnly(shown)
+            let onlyElsewhere = here.isEmpty
+            let exploited = here.contains { $0.exploitedSince != nil }
+            let severityHere = worst(here)
+            let group: Finding.Group = onlyElsewhere ? .other : exploited ? .exploited : (severityHere ?? .low) >= .high ? .criticalHigh : .other
+            return PackageState(check: .affected, group: group, severity: severityHere ?? worst(shown), exploited: exploited, malicious: false,
+                                flawCount: onlyElsewhere ? shown.count : here.count, onlyElsewhere: onlyElsewhere, here: Set(here.map(\.id)))
+        case .likely:
+            let shown = check.likely, here = onThisMacOnly(shown)
+            return PackageState(check: .likely, group: .likely, severity: worst(here) ?? worst(shown),
+                                exploited: here.contains { $0.exploitedSince != nil }, malicious: false,
+                                flawCount: here.isEmpty ? shown.count : here.count, onlyElsewhere: false, here: Set(here.map(\.id)))
+        case .reported:
+            // Never counted and never fixed by a version; how serious it would be stays visible.
+            let shown = check.reported.map(\.flaw), here = onThisMacOnly(shown)
+            let severity = worst(here) ?? worst(shown) ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)
+            let exploited = here.contains { $0.exploitedSince != nil } || (flaws.isEmpty && !verdict.exploited.isEmpty)
+            return PackageState(check: .reported, group: .reported, severity: severity, exploited: exploited, malicious: false,
+                                flawCount: max(check.reportedCount, 1), onlyElsewhere: false, here: Set(here.map(\.id)))
+        }
+    }
+
+    /// The flaws an upgrade leaves the package with, as the core decided them (BatchCheck.notFixed). Without an upgrade,
+    /// only those the server's plan says why of, or of another platform: "not fixed by this upgrade" needs an upgrade.
+    static func unresolved(_ check: BatchCheck, upgrade: CheckedUpgrade?, python: String?, onThisMac: Bool) -> [UnresolvedFlaw] {
+        check.notFixed.filter { upgrade != nil || $0.reason != nil || !$0.flaw.affectsThisMac }.map { n in
+            let elsewhere = n.reason == nil && !n.flaw.affectsThisMac
+            return UnresolvedFlaw(id: n.flaw.id, severity: Severity(api: n.flaw.severity), fixedIn: n.fixedIn?.display,
+                                  reason: n.reason.map(Self.reason) ?? (elsewhere ? .otherPlatform : .unknown),
+                                  detail: n.detail ?? (elsewhere ? n.flaw.platform : nil), python: python, onThisMac: onThisMac,
+                                  summary: Self.shortSummary(n.flaw.summary))
+        }
+    }
+
+    /// "fixes N here": the flaws the upgrade leaves that can affect where the package runs.
+    static func fixesCount(_ check: BatchCheck, _ state: PackageState, upgrade: CheckedUpgrade?, plan: BatchResponse.Plan?) -> Int? {
+        guard upgrade != nil else { return plan.map { _ in 0 } }
+        let ids = state.onlyElsewhere ? Set(check.flagged.map(\.id)) : state.here
+        return check.fixed.filter(ids.contains).count
+    }
+
     func packageFindings(approved: [ApprovedPackage: [InstalledPackage]], verdicts: [ApprovedPackage: BatchResponse.Result]) -> [Finding] {
         var out: [Finding] = []
         for (package, verdict) in verdicts {
             let installs = approved[package] ?? []
             guard !installs.isEmpty else { continue }
-            let flaws = verdict.flaws
-            // For software on this Mac, flaws of another platform are listed but do not make the finding urgent. A
-            // project folder's dependencies run wherever the project is deployed: every flaw counts.
             let onThisMac = package.platform == "macos"
-            let here = onThisMac ? flaws.filter(\.affectsThisMac) : flaws
-            let malicious = verdict.malicious || flaws.contains(where: \.malicious) || verdict.plan?.remaining.contains { $0.reason == .malicious } == true
-            let exploited = flaws.isEmpty ? !verdict.exploited.isEmpty : here.contains { $0.exploitedSince != nil }
-            let severityHere = flaws.isEmpty ? Severity(api: verdict.worstSeverity) : here.compactMap { Severity(api: $0.severity) }.max()
-            let severityAnywhere = severityHere ?? flaws.compactMap { Severity(api: $0.severity) }.max()
-            let onlyElsewhere = !flaws.isEmpty && here.isEmpty && !malicious
-            let group: Finding.Group = malicious ? .malicious : onlyElsewhere ? .other : exploited ? .exploited
-                : (severityHere ?? .low) >= .high ? .criticalHigh : .other
-            // A version from the server goes into a command only if it reads as a version and nothing else (FixSafety).
-            let planned = malicious ? nil : verdict.plan?.target
-            let target = planned.flatMap { FixSafety.isSafeVersion($0) ? $0 : nil }
-            let rejected = planned != nil && target == nil
-            let unresolved = (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
-                // The API lists at most 40 flaws per package: a remaining one may have no entry, and is then named by its id.
-                let flaw = flaws.first { $0.id == r.id }
-                return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: r.fixedIn,
-                                      reason: Self.reason(r.reason), detail: r.detail, python: package.python, onThisMac: onThisMac,
-                                      summary: Self.shortSummary(flaw?.summary))
-            }
+            let check = BatchCheck.read(verdict, installed: package.version)
+            let state = Self.state(verdict, check, onThisMac: onThisMac)
+            let malicious = state.malicious, onlyElsewhere = state.onlyElsewhere
+            // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck). One the
+            // core does not confirm leaves no version, and no command that would install it.
+            let upgrade = malicious || state.check == .reported ? nil : check.upgrade
+            let rejected = !malicious && check.target == .notAVersion
+            let unconfirmed = !malicious && state.check != .reported && check.target == .unconfirmed
+            let unresolved = malicious
+                ? (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
+                    let flaw = verdict.flaws.first { $0.id == r.id }
+                    return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: r.fixedIn, reason: Self.reason(r.reason),
+                                          detail: r.detail, python: package.python, onThisMac: onThisMac, summary: Self.shortSummary(flaw?.summary))
+                }
+                : state.check == .reported ? [] : Self.unresolved(check, upgrade: upgrade, python: package.python, onThisMac: onThisMac)
+            let noCommand = !malicious && (rejected || unconfirmed || state.check == .reported || onlyElsewhere)
             let page = SiteURL.packagePage(package.ecosystem, package.name, version: package.version)
 
             // An app that bundles Electron is its own finding (it is updated on its own), and so is an extension that
@@ -77,20 +148,35 @@ public struct FindingBuilder: Sendable {
             let extensions = installs.filter { $0.origin.kind == .extensions }
             let others = installs.filter { $0.origin.kind != .electron && $0.origin.kind != .extensions }
             func finding(id: String, title: String, component: String?, origins: [Origin], spelledAs: String) -> Finding {
-                let inputs = UpgradeCommand.Inputs(origin: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: target, malicious: malicious)
-                let advice = rejected ? UpgradeCommand.Advice(command: nil) : UpgradeCommand.advice(inputs)
-                let note = malicious ? "Remove it, then rotate every secret it could read."
-                    : onlyElsewhere ? nil
-                    : rejected ? "The server named a fixed version the app does not accept as a version; see the site."
-                    : (verdict.plan != nil && target == nil && unresolved.isEmpty ? "No fixed release yet." : advice.note)
-                return Finding(id: id, group: group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
-                               component: component, installedVersion: package.version, fixedVersion: target,
-                               severity: malicious ? nil : severityAnywhere, advisoryIDs: verdict.advisories,
-                               flawCount: flaws.isEmpty ? max(verdict.distinctFlaws, malicious ? 0 : 1) : max(here.count, onlyElsewhere ? flaws.count : 0),
-                               exploited: exploited, malicious: malicious, note: note, bigIssue: nil, origins: origins, pageURL: page,
-                               upgradeCommand: onlyElsewhere ? nil : advice.command, verification: .none, grade: nil,
-                               fixesCount: verdict.plan.map { $0.fixes.count }, unresolved: unresolved,
-                               commandInputs: onlyElsewhere || advice.command == nil ? nil : inputs)
+                let inputs = UpgradeCommand.Inputs(origin: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: upgrade?.version,
+                                                   malicious: malicious)
+                let advice = noCommand ? UpgradeCommand.Advice(command: nil) : UpgradeCommand.advice(inputs)
+                let rejectedNote = "The server named a fixed version the app does not accept as a version; see the site."
+                let note: String?
+                switch state.check {
+                case nil:
+                    note = "Remove it, then rotate every secret it could read."
+                case .affected?:
+                    let why: String?
+                    if onlyElsewhere { why = nil }
+                    else if rejected { why = rejectedNote }
+                    else if unconfirmed { why = "No checked fixed version yet; see the site." }
+                    else if verdict.plan != nil && check.target == .none && unresolved.isEmpty { why = "No fixed release yet." }
+                    else { why = advice.note }
+                    note = Self.sentences(why, check.moreLikely, check.moreReported)
+                case .likely?:
+                    let how: String? = rejected ? rejectedNote : upgrade == nil ? nil : advice.note
+                    note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, check.moreReported)
+                case .reported?:
+                    note = check.reportedNote(ecosystem: verdict.ecosystem)
+                }
+                return Finding(id: id, group: state.group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
+                               component: component, installedVersion: package.version, upgrade: upgrade,
+                               severity: state.severity, advisoryIDs: verdict.advisories, flawCount: state.flawCount,
+                               exploited: state.exploited, malicious: malicious, note: note, bigIssue: nil, origins: origins, pageURL: page,
+                               upgradeCommand: advice.command, verification: .none, grade: nil,
+                               fixesCount: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), unresolved: unresolved,
+                               commandInputs: advice.command == nil ? nil : inputs)
             }
             for app in apps {
                 guard case let .electronApp(name, path, _) = app.origin else { continue }
@@ -108,6 +194,12 @@ public struct FindingBuilder: Sendable {
             }
         }
         return out
+    }
+
+    /// Sentences joined into one note; nil when there are none.
+    static func sentences(_ parts: String?...) -> String? {
+        let present = parts.compactMap { $0 }
+        return present.isEmpty ? nil : present.joined(separator: " ")
     }
 
     /// An advisory summary short enough for one or two lines in the panel.

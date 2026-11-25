@@ -22,15 +22,16 @@ import OSVACore
 /// published range, likely affected by its first fixed versions, or outside with evidence; this wrapper marks
 /// `.unstated` an advisory that states nothing to decide by, which is "reported, not checked"), the upgrade that leaves
 /// every one of them that states something (`upgrade(from:advisories:)`, refused past a measured amount of work), and
-/// which of them an upgrade it did not pick leaves (`judge`). Only these make a `CheckedUpgrade` or a `Judgement`. `versionUncertain` names the
-/// versions whose order Maven or Composer may not share. The scan and fix paths do not ask them yet: until they do, the
-/// paths below decide as they say.
+/// which of them an upgrade it did not pick leaves (`judge`). Only these make a `CheckedUpgrade` or a `Judgement`.
+/// `versionUncertain` names the versions whose order Maven or Composer may not share. Packages checked by exact version
+/// (`api/v1/check/batch`: registry packages, project folders' lockfiles, the Electron inside apps, the packages inside
+/// Go and Rust programs and pipx and uv tools) ask them (BatchCheck): a flaw is affected only inside its published
+/// ranges, and the server's `plan.target` is shown only when `judge` confirms it. The project, product and fix paths do
+/// not ask them yet: until they do, the paths below decide as they say.
 ///
 /// The rest is not the core's:
-///   - Packages checked by exact version (`api/v1/check/batch`: registry packages, project folders' lockfiles, the
-///     Electron inside apps, the packages inside Go and Rust programs and pipx and uv tools) are flagged on the
-///     server's verdict, and their upgrade is the server's `plan.target`, which the app checks only for reading as a
-///     version (FixSafety). FixAdvisor's partial fixes are the server's plans too.
+///   - FixAdvisor's partial fixes and pip's resolved versions are the server's plans, which the app checks only for
+///     reading as versions (FixSafety).
 ///   - Only `upgrade(from:ranges:)` is proved to leave every range it is given behind. Without ranges the upgrade is
 ///     the nearest first fixed version above the installed one (`nearestVersion`); AdvisoryCheck proposes the newest
 ///     of the two paths' upgrades (`newestVersion`), and JavaCheck, when there is none, the vendor's own fixed build.

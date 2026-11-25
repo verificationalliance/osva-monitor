@@ -91,9 +91,14 @@ public struct UnresolvedFlaw: Hashable, Codable, Sendable {
 
 /// Something installed on this Mac that the site knows to be wrong.
 public struct Finding: Identifiable, Hashable, Codable, Sendable {
-    /// The popover's groups, in the order they are shown.
+    /// The popover's groups, in the order they are shown. The raw values are what saved reports hold: 0-3 are the
+    /// groups of 0.5.1 and before, and the new ones come after them.
     public enum Group: Int, Codable, Sendable, CaseIterable, Comparable {
-        case malicious, exploited, criticalHigh, other
+        case malicious = 0, exploited = 1, criticalHigh = 2, other = 3
+        /// No published ranges, and the first fixed versions say the version is affected (`Check.likely`).
+        case likely = 4
+        /// The site reports it, but the app did not check it against published ranges (`Check.reported`).
+        case reported = 5
 
         public var title: String {
             switch self {
@@ -101,14 +106,24 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
             case .exploited: return "Exploited in the wild"
             case .criticalHigh: return "Critical and high"
             case .other: return "Other"
+            case .likely: return "Likely affected"
+            case .reported: return "Reported, not checked"
             }
         }
 
-        /// Groups that call for action now; they decide the menu-bar icon and the count beside it.
-        public var needsAction: Bool { self != .other }
+        /// Groups that call for action now; they decide the menu-bar icon and the count beside it. Only what the core
+        /// checked is counted: never `likely` or `reported`.
+        public var needsAction: Bool { self == .malicious || self == .exploited || self == .criticalHigh }
+
+        /// Not checked against published ranges: likely affected, or reported.
+        public var isNotChecked: Bool { self == .likely || self == .reported }
 
         public static func < (a: Group, b: Group) -> Bool { a.rawValue < b.rawValue }
     }
+
+    /// How a finding's flaws were checked against the ranges the site publishes (BatchCheck): affected when the core
+    /// finds the version inside one, likely when there are none and the first fixed versions say so, else reported.
+    public enum Check: String, Codable, Sendable { case affected, likely, reported }
 
     public enum Subject: Hashable, Codable, Sendable {
         /// A registry package, checked at its exact version.
@@ -169,6 +184,19 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         self.origins = origins; self.pageURL = pageURL; self.upgradeCommand = upgradeCommand
         self.verification = verification; self.grade = grade
         self.fixesCount = fixesCount; self.unresolved = unresolved; self.commandInputs = commandInputs
+    }
+
+    /// A finding whose version to upgrade to is one the core checked (`upgrade.display`). The `fixedVersion:`
+    /// initialiser stays until every path builds its version this way.
+    public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String,
+                upgrade: CheckedUpgrade?, severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
+                note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
+                verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
+                commandInputs: UpgradeCommand.Inputs? = nil) {
+        self.init(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installedVersion,
+                  fixedVersion: upgrade?.display, severity: severity, advisoryIDs: advisoryIDs, flawCount: flawCount, exploited: exploited,
+                  malicious: malicious, note: note, bigIssue: bigIssue, origins: origins, pageURL: pageURL, upgradeCommand: upgradeCommand,
+                  verification: verification, grade: grade, fixesCount: fixesCount, unresolved: unresolved, commandInputs: commandInputs)
     }
 
     public var ecosystem: Ecosystem? {

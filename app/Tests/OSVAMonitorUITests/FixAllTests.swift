@@ -29,7 +29,7 @@ import OSVAKit
             case "/api/v1/check/batch":
                 let asked = ((try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any])?["packages"] as? [[String: Any]] ?? []
                 let packages = vulnerable.filter { v in asked.contains { $0["name"] as? String == v.name && $0["version"] as? String == v.version } }.map { v in
-                    #"{"ecosystem":"\#(v.ecosystem)","name":"\#(v.name)","version":"\#(v.version)","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(v.fixed)"]}],"plan":{"target":"\#(v.fixed)","fixes":["GHSA-x"],"remaining":[]}}"#
+                    #"{"ecosystem":"\#(v.ecosystem)","name":"\#(v.name)","version":"\#(v.version)","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(v.fixed)"],"ranges":[{"fixed":"\#(v.fixed)"}]}],"plan":{"target":"\#(v.fixed)","fixes":["GHSA-x"],"remaining":[]}}"#
                 }
                 body = Data(#"{"checked":1,"packages":[\#(packages.joined(separator: ","))]}"#.utf8)
             default: body = Data("{}".utf8)

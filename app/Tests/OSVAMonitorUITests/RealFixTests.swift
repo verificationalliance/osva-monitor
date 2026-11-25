@@ -18,7 +18,7 @@ import OSVAKit
             case "/api/v1/check/batch":
                 // six 1.16.0 is "vulnerable" for the test, fixed in 1.17.0; anything else has nothing to report
                 let asked = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
-                let six = #"{"ecosystem":"PyPI","name":"six","version":"1.16.0","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["TEST-1"],"flaws":[{"id":"TEST-1","severity":"HIGH","fixed_in":["1.17.0"]}],"plan":{"target":"1.17.0","fixes":["TEST-1"],"remaining":[]}}"#
+                let six = #"{"ecosystem":"PyPI","name":"six","version":"1.16.0","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["TEST-1"],"flaws":[{"id":"TEST-1","severity":"HIGH","fixed_in":["1.17.0"],"ranges":[{"fixed":"1.17.0"}]}],"plan":{"target":"1.17.0","fixes":["TEST-1"],"remaining":[]}}"#
                 body = Data((#"{"checked":1,"packages":["# + (asked.contains(#""version":"1.16.0""#) ? six : "") + "]}").utf8)
             default: body = Data("{}".utf8)
             }
