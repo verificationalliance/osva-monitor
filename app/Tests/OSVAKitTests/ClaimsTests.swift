@@ -389,22 +389,29 @@ import Testing
         { path, line in list.contains { $0.0 == path && line.contains($0.1) } }
     }
 
-    /// Only Core.swift makes a `CheckedUpgrade` or a `Judgement`, and only it extends them; a version is shown only as a
+    /// Only Core.swift makes a `CheckedUpgrade` or a `Judgement`, and only it extends them, but for the one extension that
+    /// writes a checked version in its style (OSVAKit's `display`, in Verified.swift); a version is shown only as a
     /// `CheckedUpgrade.Display` style writes it (`.displayed(.java)`, `.displayed(.program)`); the old doors are gone; a
     /// newest or oldest version is picked only on the lines that read installed versions or hand it to the core's judge;
     /// the server's planned target (`unjudgedTarget`) is read only where the core judges it.
     @Test func onlyCoreSwiftBuildsACheckedUpgrade() throws {
-        try #require(Self.code("OSVAKit/Core.swift") != nil, "the scan reads app/Sources")
-        let core = "OSVAKit/Core.swift"
+        try #require(Self.code("OSVAVerified/Core.swift") != nil, "the scan reads app/Sources")
+        let core = "OSVAVerified/Core.swift", shown = "OSVAKit/Verified.swift"
         #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])(?:CheckedUpgrade|Judgement)\s*\(/, except: { path, _ in path == core }) == [])
-        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])extension\s+(?:OSVAKit\s*\.\s*)?(?:CheckedUpgrade|Judgement)(?![A-Za-z0-9_])/,
-                           except: { path, _ in path == core }) == [])
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])extension\s+(?:(?:OSVAKit|OSVAVerified)\s*\.\s*)?(?:CheckedUpgrade|Judgement)(?![A-Za-z0-9_])/,
+                           except: { path, line in path == core || (path == shown && line == "extension CheckedUpgrade {") }) == [])
         // a version is shown only as CheckedUpgrade.Display writes it: a closed set of styles that carry no text
         let display = try #require(Self.code(core))
         let styles = try #require(display.firstMatch(of: /public enum Display: Sendable, Hashable \{([^}]*)\}/)?.1)
         let cases = styles.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("case ") }
         #expect(cases == ["case asChecked", "case java", "case program"], "CheckedUpgrade.Display: \(cases)")
         #expect(display.contains("public func displayed(_ style: Display) -> CheckedUpgrade { CheckedUpgrade(self, style: style) }"))
+        // and the one extension writes the checked version in its style, and nothing else
+        let written = try #require(Self.code(shown).flatMap { Self.declarations($0).first { $0.keyword == "extension" && $0.name == "CheckedUpgrade" } })
+        #expect(written.body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } == [
+            "public var display: String {", "switch style {", "case .asChecked: return version", "case .java: return JavaVersion.shown(version)",
+            "case .program: return FindingBuilder.Component.shown(version)", "}", "}",
+        ], "OSVAKit's display")
         #expect(Self.lines(matching: /\.displayed\((?!\.java\)|\.asChecked\)|\.program\)|Self\.display\(slug: slug\)\))/) == [])
         // the old doors are gone
         #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])(?:nearestVersion|affectedness)(?![A-Za-z0-9_])|osva_affected|osva_upgrade_ranges/) == [])
@@ -441,7 +448,7 @@ import Testing
     /// or a mutating method, and nothing extends either outside Core.swift (an extension could rebuild one; making one
     /// is held to the answers' readers by `onlyCoreSwiftBuildsACheckedUpgrade`).
     @Test func publishedRangesAreConstants() throws {
-        let core = try #require(Self.code("OSVAKit/Core.swift"))
+        let core = try #require(Self.code("OSVAVerified/Core.swift"))
         let types = Self.declarations(core).filter { $0.keyword == "struct" && ($0.name == "AffectedRange" || $0.name == "CoreAdvisory") }
         #expect(types.map(\.name).sorted() == ["AffectedRange", "CoreAdvisory"])
         for t in types {
@@ -452,7 +459,34 @@ import Testing
                      "public let ranges: [AffectedRange]?", "public let fixed: [String]"] {
             #expect(core.contains(line), "Core.swift: \(line)")
         }
-        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])extension\s+(?:OSVAKit\s*\.\s*)?(?:AffectedRange|CoreAdvisory)(?![A-Za-z0-9_])/) == [])
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])extension\s+(?:(?:OSVAKit|OSVAVerified)\s*\.\s*)?(?:AffectedRange|CoreAdvisory)(?![A-Za-z0-9_])/) == [])
+    }
+
+    /// Core.swift is the whole of its module, OSVAVerified, which depends on the C module (OSVACore) alone; OSVAKit
+    /// reaches the core only through it. So no other Swift code of the app is in scope where Core.swift calls the core:
+    /// were Core.swift in OSVAKit, a function of OSVAKit's own named like a core function (osva_pct_encode, with the same
+    /// signature) would be called in its place. And nothing else declares a core function's name or a type named like
+    /// either module, or imports the C module.
+    @Test func theBridgeIsAloneInItsModule() throws {
+        let folder = Self.repository.appendingPathComponent("app/Sources/OSVAVerified")
+        let files = try #require(FileManager.default.enumerator(atPath: folder.path)).compactMap { $0 as? String }.sorted()
+        #expect(files == ["Core.swift"], "app/Sources/OSVAVerified holds \(files)")
+        let manifest = try Self.text("app/Package.swift").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(manifest.filter { $0.contains("\"OSVAVerified\"") } == [
+            ".target(name: \"OSVAVerified\", dependencies: [\"OSVACore\"]),",
+            ".target(name: \"OSVAKit\", dependencies: [\"OSVAVerified\"]),",
+            ".testTarget(name: \"OSVAKitTests\", dependencies: [\"OSVAKit\", \"OSVAVerified\", \"OSVACore\"], resources: [.copy(\"Fixtures\")]),",
+        ], "the targets that name OSVAVerified")
+        #expect(manifest.filter { $0.contains("\"OSVACore\"") } == [
+            "name: \"OSVACore\",",
+            ".target(name: \"OSVAVerified\", dependencies: [\"OSVACore\"]),",
+            ".testTarget(name: \"OSVAKitTests\", dependencies: [\"OSVAKit\", \"OSVAVerified\", \"OSVACore\"], resources: [.copy(\"Fixtures\")]),",
+        ], "the C module, and what depends on it")
+        let bridge = "OSVAVerified/Core.swift"
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])(?:func|var|let|case|struct|enum|class|actor|protocol|typealias|macro)\s+`?osva_/,
+                           except: { path, _ in path == bridge }) == [])
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])(?:struct|enum|class|actor|protocol|typealias)\s+`?(?:OSVACore|OSVAVerified)`?(?![A-Za-z0-9_])/) == [])
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])import\s+(?:[a-z]+\s+)?OSVACore(?![A-Za-z0-9_])/, except: { path, _ in path == bridge }) == [])
     }
 
     /// Nothing writes a finding's version to upgrade to, its command, or a command's version, but from a `CheckedUpgrade`

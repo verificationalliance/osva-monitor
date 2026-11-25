@@ -18,6 +18,7 @@ claims; base=$?
 if [ "$base" != 0 ]; then echo "ClaimsTests does not pass on the sources as they are (status $base): no mutant can be told apart"; exit 1; fi
 
 K=app/Sources/OSVAKit
+V=app/Sources/OSVAVerified
 total=0; caught=0; bad=0
 # mutant NAME FILE MARKER LINE [FILE MARKER LINE ...]: each MARKER (a fixed string) must be on exactly one line of its
 # FILE; that line becomes LINE.
@@ -43,9 +44,9 @@ mutant() {
 mutant likely-as-flagged \
   $K/Scan/BatchCheck.swift "// claims-mutant: likely-as-flagged" "            case .inRange, .likely: decisions[i] = .affected"
 mutant unchecked-target \
-  $K/Core.swift "// claims-mutant: unchecked-target" "        return Judgement(leaves: leaves, upgrade: CheckedUpgrade(candidate, fixes: fixes))"
+  $V/Core.swift "// claims-mutant: unchecked-target" "        return Judgement(leaves: leaves, upgrade: CheckedUpgrade(candidate, fixes: fixes))"
 mutant lenient-decoding \
-  $K/Core.swift "// claims-mutant: lenient-decoding" "        if false, let other = any.allKeys.first(where: { CodingKeys(stringValue: \$0.stringValue) == nil }) {"
+  $V/Core.swift "// claims-mutant: lenient-decoding" "        if false, let other = any.allKeys.first(where: { CodingKeys(stringValue: \$0.stringValue) == nil }) {"
 
 # What affects nothing here, what a suggested version may land in, and what a note or a flaw's line may name (the
 # final review of core-decisions)
@@ -79,9 +80,17 @@ mutant extension-elsewhere \
 mutant bit-cast \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; func forged(_ s: String) -> CheckedUpgrade { unsafeBitCast(s, to: CheckedUpgrade.self) }"
 mutant display-with-text \
-  $K/Core.swift "        case program" "        case program, shown(String)" \
-  $K/Core.swift "        case .program: return FindingBuilder.Component.shown(checked)" \
-                "        case .program: return FindingBuilder.Component.shown(checked); case let .shown(text): return text"
+  $V/Core.swift "        case program" "        case program, shown(String)" \
+  $K/Verified.swift "        case .program: return FindingBuilder.Component.shown(version)" \
+                "        case .program: return FindingBuilder.Component.shown(version); case let .shown(text): return text"
+mutant display-rewritten \
+  $K/Verified.swift "        case .asChecked: return version" "        case .asChecked: return version + \".0\""
+# A core function's name declared outside OSVAVerified. (With the C signature itself the tests do not build: CoreTests
+# sees both and finds the call ambiguous.)
+mutant core-name-declared \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; func osva_pct_encode(_ name: String) -> String { name }"
+mutant core-imported-elsewhere \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; import OSVACore"
 mutant fixed-version-from-text \
   $K/Model/Finding.swift "public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }" \
   "    public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }
@@ -160,16 +169,16 @@ mutant range-made-elsewhere \
 mutant report-kept-elsewhere \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct KeptReport: Codable { var report: ScanReport }"
 mutant range-bound-rewritten \
-  $K/Core.swift "    public let fixed: String?" "    public var fixed: String?" \
+  $V/Core.swift "    public let fixed: String?" "    public var fixed: String?" \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func widened(_ r: AffectedRange) -> AffectedRange { var w = r; w.fixed = \"999\"; return w }"
 mutant advisory-ranges-rewritten \
-  $K/Core.swift "    public let ranges: [AffectedRange]?" "    public var ranges: [AffectedRange]?" \
+  $V/Core.swift "    public let ranges: [AffectedRange]?" "    public var ranges: [AffectedRange]?" \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func cleared(_ a: CoreAdvisory) -> CoreAdvisory { var c = a; c.ranges = []; return c }"
 mutant range-rewritten-by-extension \
   $K/Fix/FixAdvisor.swift "import Foundation" \
   "import Foundation; extension AffectedRange { func refixed(_ v: String) -> AffectedRange { AffectedRange(introduced: introduced, fixed: v, lastAffected: lastAffected) } }"
 mutant nearest-version-back \
-  $K/Core.swift "    /// The versions, oldest first." \
+  $V/Core.swift "    /// The versions, oldest first." \
   "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"
 
 echo "claims mutants: $caught of $total caught"

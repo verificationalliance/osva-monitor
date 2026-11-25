@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import OSVACore
 @testable import OSVAKit
+@testable import OSVAVerified
 
 /// The wrapper's wiring to the verified core (the Lean-compiled core and its C shim), checked against the contracts
 /// written in osva_core.h and the examples there.

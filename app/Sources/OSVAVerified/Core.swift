@@ -2,7 +2,9 @@ import Foundation
 import OSVACore
 
 /// The only door to the verified core (`Sources/OSVACore`, declared in `osva_core.h`): the app calls the core here and
-/// nowhere else.
+/// nowhere else. This file is the whole of its module, OSVAVerified, which depends on OSVACore alone, so no other Swift
+/// code is in scope here: a function of the app's own with a core function's name cannot stand in for it (ClaimsTests
+/// holds the module to this one file).
 ///
 /// Four kinds of decision would mislead the person using OSVA Monitor if they were wrong: which of two versions is
 /// newer, whether an installed version is affected by an advisory (and which upgrade clears it), which installed
@@ -313,7 +315,8 @@ public struct CoreAdvisory: Sendable, Hashable {
 
 /// A version the core has checked as an upgrade: `Core.upgrade(from:advisories:)` picked it, or `Core.judge` found it
 /// above the installed version and clear of an advisory the app flags. Its storage is private and its initialisers
-/// file-private, so only Core.swift can make one, and a version the app suggests can only come from the core.
+/// file-private, so only Core.swift can make one, and a version the app suggests can only come from the core. How the
+/// app writes it in each style is OSVAKit's `display` (Verified.swift), from `version` and `style`.
 public struct CheckedUpgrade: Sendable, Hashable {
     /// The ways a checked version may be shown: the version itself, written as its ecosystem writes it. Closed: a
     /// style carries no text of its own, so what the app shows is always the checked version, rewritten only by these.
@@ -328,23 +331,17 @@ public struct CheckedUpgrade: Sendable, Hashable {
     }
 
     private let checked: String
-    private let style: Display
+    private let written: Display
     private let fixesByAdvisory: [Bool]
 
-    fileprivate init(_ version: String, fixes: [Bool]) { checked = version; style = .asChecked; fixesByAdvisory = fixes }
-    private init(_ other: CheckedUpgrade, style: Display) { checked = other.checked; self.style = style; fixesByAdvisory = other.fixesByAdvisory }
+    fileprivate init(_ version: String, fixes: [Bool]) { checked = version; written = .asChecked; fixesByAdvisory = fixes }
+    private init(_ other: CheckedUpgrade, style: Display) { checked = other.checked; written = style; fixesByAdvisory = other.fixesByAdvisory }
 
     /// The version, as the core checked it.
     public var version: String { checked }
 
-    /// How the app shows it.
-    public var display: String {
-        switch style {
-        case .asChecked: return checked
-        case .java: return JavaVersion.shown(checked)
-        case .program: return FindingBuilder.Component.shown(checked)
-        }
-    }
+    /// The style the app shows it in.
+    public var style: Display { written }
 
     /// One per advisory the core was given, in order: whether the app flags it and the core says this version is clear
     /// of it, with evidence. So "fixes N" is the core's count.
@@ -446,13 +443,13 @@ public struct KeyList: Sendable {
     }
 
     /// Keys already laid out (the index reader builds them straight from the downloaded bytes).
-    init(bytes: [UInt8], offsets: [Int], lengths: [Int]) {
+    public init(bytes: [UInt8], offsets: [Int], lengths: [Int]) {
         precondition(offsets.count == lengths.count)
         self.bytes = bytes; self.offsets = offsets; self.lengths = lengths
     }
 
     /// These keys followed by more.
-    func appending(_ strings: [String]) -> KeyList {
+    public func appending(_ strings: [String]) -> KeyList {
         var bytes = self.bytes, offsets = self.offsets, lengths = self.lengths
         for s in strings {
             offsets.append(bytes.count)

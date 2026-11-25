@@ -7,11 +7,13 @@
 // Targets
 //   OSVACore       C. The verified core: version order, what an advisory says about a version and which upgrade
 //                  leaves it, the privacy filter, URL encoding.
+//   OSVAVerified   Swift's one door to the core: Sources/OSVAVerified/Core.swift and nothing else, depending on
+//                  OSVACore alone, so no other code of the app is in scope where it calls the core (ClaimsTests holds
+//                  it to that). It alone makes a CheckedUpgrade. Core.swift says what is not the core's.
 //   OSVAKit        What the app knows how to do: take inventory (Homebrew, Electron apps, global packages, project
-//                  folders), download the public index, ask the API, and turn answers into findings. It calls the
-//                  core only through Sources/OSVAKit/Core.swift, and flags a version as affected, or names a version
-//                  to upgrade to, only from the core's answers (ClaimsTests scans for ways around it). Core.swift
-//                  says what is not the core's.
+//                  folders), download the public index, ask the API, and turn answers into findings. It reaches the
+//                  core only through OSVAVerified (which it passes on to its users), and flags a version as affected,
+//                  or names a version to upgrade to, only from the core's answers (ClaimsTests scans for ways around it).
 //   OSVAMonitorUI  SwiftUI views and the app model, and the app's changelog (Resources/CHANGELOG.md, What's New).
 //   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
 //   osva-scan      One scan from the command line, with the same code the app runs.
@@ -83,14 +85,15 @@ let package = Package(
     ],
     targets: [
         verifiedCore,
-        .target(name: "OSVAKit", dependencies: ["OSVACore"]),
+        .target(name: "OSVAVerified", dependencies: ["OSVACore"]),
+        .target(name: "OSVAKit", dependencies: ["OSVAVerified"]),
         .target(name: "OSVAMonitorUI", dependencies: ["OSVAKit"], resources: [.copy("Resources/CHANGELOG.md")]),
         .executableTarget(name: "OSVAMonitor", dependencies: ["OSVAKit", "OSVAMonitorUI", .product(name: "Sparkle", package: "Sparkle")]),
         .executableTarget(name: "osva-scan", dependencies: ["OSVAKit"]),
         .executableTarget(name: "osva-render", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
         .target(name: "OSVARelease"),
         .executableTarget(name: "osva-appcast", dependencies: ["OSVARelease"]),
-        .testTarget(name: "OSVAKitTests", dependencies: ["OSVAKit", "OSVACore"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "OSVAKitTests", dependencies: ["OSVAKit", "OSVAVerified", "OSVACore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "OSVAMonitorUITests", dependencies: ["OSVAKit", "OSVAMonitorUI"]),
         .testTarget(name: "OSVAReleaseTests", dependencies: ["OSVARelease"], resources: [.copy("Fixtures")]),
     ]

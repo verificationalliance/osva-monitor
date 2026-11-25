@@ -3,8 +3,9 @@
  *
  * These functions decide version order, what an advisory says about a version (by its ranges or, without them, by
  * its first fixed versions), the upgrade that leaves the advisories behind, which names may be sent, and how a name is
- * written into a URL, where the app asks them to (app/Sources/OSVAKit/Core.swift says where). The app flags a version
- * as affected, and names a version to upgrade to, only through them; its ClaimsTests fail on a path around them.
+ * written into a URL, where the app asks them to (app/Sources/OSVAVerified/Core.swift says where). The app flags a
+ * version as affected, and names a version to upgrade to, only through them; its ClaimsTests fail on a path around
+ * them.
  * Each function is written in Lean 4 (the .lean files in core/OSVACore) together with theorems about it that Lean
  * checks for every input; Lean compiles those same definitions to C, which is linked into the app. A small shim
  * (core/ffi/osva_shim.c) converts between C bytes and Lean values; it is the only unproved code on this path.
