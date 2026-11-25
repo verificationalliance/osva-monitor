@@ -394,6 +394,9 @@ import OSVAKit
         #expect(s.summary == "Fixed 5 · 1 partly fixed · 1 failed · 2 need you · 3 not run")
         #expect(FixAllState(phase: .done, batches: [batch([.needsPassword])], skipped: []).summary == "1 needs you")
         #expect(FixAllState(phase: .done, batches: [batch([.putBack("httpx 0.27.0"), .couldNotCheck("x")])], skipped: []).summary == "1 failed · 1 needs you")
+        // ran, and the version now is only reported by the site: neither fixed nor failed
+        let reported = FixAllState(phase: .done, batches: [batch([.fixed(now: "1"), .notChecked("now 4.17.21")])], skipped: [])
+        #expect(reported.summary == "Fixed 1 · 1 still reported, not checked" && reported.failedItems.isEmpty)
     }
 
     // MARK: The run

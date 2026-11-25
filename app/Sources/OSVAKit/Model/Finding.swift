@@ -125,6 +125,27 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     /// finds the version inside one, likely when there are none and the first fixed versions say so, else reported.
     public enum Check: String, Codable, Sendable { case affected, likely, reported }
 
+    /// The most urgent flaw of a finding that the app did not check against published ranges (likely affected, or
+    /// reported), when it is exploited in the wild or critical. Never counted and never fixed by a version, but never
+    /// silent either: an exploited one makes the finding notify, and either marks its row.
+    public struct NotChecked: Hashable, Codable, Sendable {
+        /// The flaw's id ("CVE-2026-1"); nil for a critical flaw past the list the server sends, which it does not name.
+        public var id: String?
+        public var exploited: Bool
+        public var critical: Bool
+
+        public init(id: String?, exploited: Bool, critical: Bool) { self.id = id; self.exploited = exploited; self.critical = critical }
+
+        /// The more urgent of two: exploited first, then critical; the first on a tie.
+        public static func worse(_ a: NotChecked?, _ b: NotChecked?) -> NotChecked? {
+            func rank(_ x: NotChecked?) -> Int { x.map { ($0.exploited ? 2 : 0) + ($0.critical ? 1 : 0) } ?? -1 }
+            return rank(b) > rank(a) ? b : a
+        }
+
+        /// "critical, exploited in the wild", "exploited in the wild", "critical".
+        public var words: String { exploited && critical ? "critical, exploited in the wild" : exploited ? "exploited in the wild" : "critical" }
+    }
+
     public enum Subject: Hashable, Codable, Sendable {
         /// A registry package, checked at its exact version.
         case package(ecosystem: Ecosystem, name: String)
@@ -171,19 +192,21 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     /// Where each copy is on this Mac and why it is there, one per copy (nil in reports saved before, or when nothing
     /// could be told). Read from local files after the API was asked; never sent.
     public var provenance: [Provenance]? = nil
+    /// An exploited or critical flaw the app did not check against published ranges (nil in reports saved before).
+    public var notChecked: NotChecked? = nil
 
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String, fixedVersion: String?,
                 severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
                 note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
                 verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
-                commandInputs: UpgradeCommand.Inputs? = nil) {
+                commandInputs: UpgradeCommand.Inputs? = nil, notChecked: NotChecked? = nil) {
         self.id = id; self.group = group; self.subject = subject; self.title = title; self.component = component
         self.installedVersion = installedVersion
         self.fixedVersion = fixedVersion; self.severity = severity; self.advisoryIDs = advisoryIDs; self.flawCount = flawCount
         self.exploited = exploited; self.malicious = malicious; self.note = note; self.bigIssue = bigIssue
         self.origins = origins; self.pageURL = pageURL; self.upgradeCommand = upgradeCommand
         self.verification = verification; self.grade = grade
-        self.fixesCount = fixesCount; self.unresolved = unresolved; self.commandInputs = commandInputs
+        self.fixesCount = fixesCount; self.unresolved = unresolved; self.commandInputs = commandInputs; self.notChecked = notChecked
     }
 
     /// A finding whose version to upgrade to is one the core checked (`upgrade.display`). The `fixedVersion:`
@@ -192,11 +215,12 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
                 upgrade: CheckedUpgrade?, severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
                 note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
                 verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
-                commandInputs: UpgradeCommand.Inputs? = nil) {
+                commandInputs: UpgradeCommand.Inputs? = nil, notChecked: NotChecked? = nil) {
         self.init(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installedVersion,
                   fixedVersion: upgrade?.display, severity: severity, advisoryIDs: advisoryIDs, flawCount: flawCount, exploited: exploited,
                   malicious: malicious, note: note, bigIssue: bigIssue, origins: origins, pageURL: pageURL, upgradeCommand: upgradeCommand,
-                  verification: verification, grade: grade, fixesCount: fixesCount, unresolved: unresolved, commandInputs: commandInputs)
+                  verification: verification, grade: grade, fixesCount: fixesCount, unresolved: unresolved, commandInputs: commandInputs,
+                  notChecked: notChecked)
     }
 
     public var ecosystem: Ecosystem? {
@@ -225,10 +249,22 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         return fixedVersion.map { "\(installedLabel) → \($0)" } ?? installedLabel
     }
 
-    /// Notifications are sent for these when they first appear.
-    public var deservesNotification: Bool { malicious || exploited || bigIssue != nil }
+    /// Notifications are sent for these when they first appear: malicious, exploited in the wild (checked or not), or
+    /// on the site's "patch these first" list.
+    public var deservesNotification: Bool { malicious || exploited || notChecked?.exploited == true || bigIssue != nil }
 
-    /// Changes when a finding becomes more serious (newly exploited, newly on the "patch these first" list), so that
-    /// it is notified again then.
-    public var notificationKey: String { "\(id)|\(group.rawValue)|\(bigIssue ?? "")" }
+    /// The findings to notify about after a scan: those that deserve it and did not before, or have become more serious
+    /// since: a more urgent group, newly malicious or exploited, or a new "patch these first" item. A group that only
+    /// moved the other way, as when a report saved by 0.5.1 is followed by one that checks ranges, notifies nothing.
+    public static func toNotify(_ findings: [Finding], after previous: [Finding]?) -> [Finding] {
+        let before = Dictionary((previous ?? []).filter(\.deservesNotification).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return findings.filter { f in
+            guard f.deservesNotification else { return false }
+            guard let old = before[f.id] else { return true }
+            func exploited(_ x: Finding) -> Bool { x.exploited || x.notChecked?.exploited == true }
+            return f.group < old.group || (f.malicious && !old.malicious) || (exploited(f) && !exploited(old))
+                || (f.bigIssue != nil && f.bigIssue != old.bigIssue)
+        }
+    }
+
 }

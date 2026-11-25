@@ -138,9 +138,10 @@ import Testing
         let f = try #require(FindingBuilder(index: Self.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:],
                                                                         bigIssues: []).first)
         #expect(f.note?.hasPrefix("black 24.1.0 has 2 known flaws — partly fixed in 26.0 · uses click 8.1.3 — no fixed release yet"
-                                  + " · uses requests 2.25.0 — reported, not checked.") == true, "\(f.note ?? "")")
-        // counted and weighed by what the core checked: requests' critical, exploited flaw is said, not counted
+                                  + " · uses requests 2.25.0 — reported, not checked (RQ, critical, exploited in the wild).") == true, "\(f.note ?? "")")
+        // counted and weighed by what the core checked: requests' critical, exploited flaw is said and marked, not counted
         #expect(f.group == .criticalHigh && f.flawCount == 3 && f.severity == .critical && !f.exploited && f.fixedVersion == "26.0")
+        #expect(f.notChecked == Finding.NotChecked(id: "RQ", exploited: true, critical: true) && f.deservesNotification)
     }
 
     @Test func aToolsOwnPackageOnlyIsUpgradedWithPipx() {
@@ -436,5 +437,84 @@ extension ProgramFindingTests {
         #expect(d.severity == .critical && d.flawCount == 6 + 20 + 74 && d.fixedVersion == "4.86.0")
         // without the app's own finding, the programs stay a finding
         #expect(FindingBuilder.foldingProgramsIntoApps(programs).map(\.title) == ["Docker"])
+    }
+}
+
+/// The review of #16: a program's parts never hide the flaws they are not counted for.
+extension ProgramFindingTests {
+    typealias B = BatchCheckTests
+
+    /// The findings of these parts' answers, each installed where `origin` says.
+    func findings(_ answers: [(BatchResponse.Result, Origin)], brew: [FindingBuilder.BrewMatch] = [], projects: [String: ProjectResponse] = [:]) -> [Finding] {
+        let installed = answers.map { InstalledPackage(ecosystem: Ecosystem($0.0.ecosystem), name: $0.0.name, version: $0.0.version, origin: $0.1) }
+        let selection = PrivacyFilter(index: Self.index).approve(installed)
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in
+            answers.map(\.0).first { $0.name == a.name && $0.version == a.version }.map { (a, $0) }
+        })
+        return FindingBuilder(index: Self.index).findings(approved: selection.approved, verdicts: verdicts, brew: brew, projects: projects, bigIssues: [])
+    }
+
+    /// Go's stdlib with one affected moderate flaw, and one reported flaw that is critical and exploited; x/net with 40
+    /// affected flaws listed of 76.
+    static func stdlib() throws -> BatchResponse.Result {
+        try B.result("Go", "stdlib", "1.22.3", flaws: [B.flaw("GO-A", ranges: #"[{"fixed":"1.22.4"}]"#, severity: "MODERATE"),
+                                                       B.flaw("GO-X", severity: "CRITICAL", exploited: true)], plan: B.plan("1.22.4"))
+    }
+    static func xnet() throws -> BatchResponse.Result {
+        try B.result("Go", "golang.org/x/net", "v0.23.0", distinct: 76,
+                     flaws: (0..<40).map { B.flaw("NET-\($0)", ranges: #"[{"fixed":"0.62.0"}]"#, severity: "MODERATE") }, plan: B.plan("v0.62.0"))
+    }
+
+    @Test func aProgramNeverHidesFlawsItsPartsAreNotCountedFor() throws {
+        let f = try #require(findings([(try Self.xnet(), .program(Self.gh)), (try Self.stdlib(), .program(Self.gh))]).first)
+        #expect(f.note == "gh 2.62.0 was built with golang.org/x/net 0.23.0 — fixed in 0.62.0, and 36 more reported, not checked"
+                + " · built with Go 1.22.3, whose stdlib has 1 known flaw, and 1 more reported, not checked (GO-X, critical, exploited in the wild)."
+                + " If brew says gh is up to date, the fix waits for Homebrew's next build of it.")
+        #expect(f.group == .other && f.flawCount == 40 + 1 && !f.exploited)                // counted: what the core found affected
+        #expect(f.notChecked == Finding.NotChecked(id: "GO-X", exploited: true, critical: true) && f.deservesNotification)
+    }
+
+    @Test func aFoldedProgramBringsItsUncheckedFlawsAlong() throws {
+        // into its formula's project finding
+        let exporter = BuiltProgram(language: .go, path: "/opt/homebrew/bin/nginx-exporter", name: "nginx-exporter", version: "1.30.2", place: .homebrew,
+                                    formula: "nginx", package: nil, toolchain: "1.22.3")
+        let brew = FindingBuilder.BrewMatch(item: HomebrewItem(kind: .formula, name: "nginx", version: "1.30.2", urls: []), project: Self.index.project(slug: "nginx")!)
+        let alone = try #require(findings([InstalledPackage](), brew: [brew], projects: ["nginx": Self.nginx]).first)
+        let n = try #require(findings([(try Self.stdlib(), .program(exporter))], brew: [brew], projects: ["nginx": Self.nginx]).first)
+        #expect(n.id == alone.id && n.flawCount == alone.flawCount + 1 && n.group == alone.group)
+        #expect(n.note == (alone.note ?? "") + " nginx-exporter 1.30.2 was built with Go 1.22.3, whose stdlib has 1 known flaw, and 1 more reported,"
+                + " not checked (GO-X, critical, exploited in the wild).")
+        #expect(n.notChecked == Finding.NotChecked(id: "GO-X", exploited: true, critical: true))
+        // into its app's own finding
+        let docker = BuiltProgram(language: .go, path: "/usr/local/bin/docker", name: "docker", version: nil, place: .app, formula: nil, package: nil,
+                                  toolchain: nil, app: "Docker", cask: nil)
+        let program = try #require(findings([(try Self.stdlib(), .program(docker))]).first)
+        let app = Finding(id: "product|docker|4.41.2", group: .criticalHigh, subject: .product(key: "docker", name: "Docker"), title: "Docker",
+                          installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
+                          malicious: false, note: "The issuer lists 4.41.2 as affected and 4.86.0 as fixed.", bigIssue: nil,
+                          origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
+                          upgradeCommand: nil, verification: .none, grade: nil)
+        let d = try #require(FindingBuilder.foldingProgramsIntoApps([program, app]).first)
+        #expect(d.flawCount == 7 && d.notChecked == Finding.NotChecked(id: "GO-X", exploited: true, critical: true) && d.deservesNotification)
+        #expect(d.note == "The issuer lists 4.41.2 as affected and 4.86.0 as fixed. docker was built with Go 1.22.3, whose stdlib has 1 known flaw,"
+                + " and 1 more reported, not checked (GO-X, critical, exploited in the wild).")
+    }
+
+    @Test func aProgramsFixIsJudgedFromThisMacsFlawsAtTheAffectedVersions() throws {
+        // a Windows-only flaw 26.0 does not fix does not make it "partly fixed" on a Mac
+        let black = try B.result("black", "24.1.0", flaws: [B.flaw("BL", ranges: #"[{"fixed":"26.0"}]"#), B.flaw("WIN", ranges: "[{}]", platform: "windows")],
+                                 plan: B.plan("26.0"))
+        let tool = try #require(findings([(black, .pythonTool(Self.black))]).first)
+        #expect(tool.note?.hasPrefix("black 24.1.0 has 1 known flaw — fixed in 26.0.") == true, "\(tool.note ?? "")")
+        // a newer version with only a reported flaw is not the one the fix is judged from, and its flaw is said
+        func docker(_ name: String) -> BuiltProgram {
+            BuiltProgram(language: .go, path: "/usr/local/bin/\(name)", name: name, version: nil, place: .app, formula: nil, package: nil,
+                         toolchain: nil, app: "Docker", cask: nil)
+        }
+        let old = try B.result("Go", "golang.org/x/net", "v0.23.0", flaws: [B.flaw("NET-A", ranges: #"[{"fixed":"0.33.0"}]"#)], plan: B.plan("v0.33.0"))
+        let new = try B.result("Go", "golang.org/x/net", "v0.40.0", flaws: [B.flaw("NET-R")])
+        let d = try #require(findings([(old, .program(docker("docker"))), (new, .program(docker("kubectl")))]).first)
+        #expect(d.note?.hasPrefix("docker and kubectl were built with golang.org/x/net 0.23.0 to 0.40.0 — fixed in 0.33.0, and 1 more reported, not checked.")
+                == true, "\(d.note ?? "")")
     }
 }

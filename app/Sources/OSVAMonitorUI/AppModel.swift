@@ -214,8 +214,7 @@ public final class AppModel {
         if full { defaults.set(version, forKey: Self.scannedByKey) }
         scanReplacedFindings(full: full)
         if settings.notificationsEnabled {
-            let before = Set(previous?.findings.filter(\.deservesNotification).map(\.notificationKey) ?? [])
-            let fresh = result.findings.filter { $0.deservesNotification && !before.contains($0.notificationKey) }
+            let fresh = Finding.toNotify(result.findings, after: previous?.findings)
             if !fresh.isEmpty { Task { await notifier.post(fresh) } }
         }
         recheckNext()
@@ -771,7 +770,10 @@ public final class AppModel {
         var state = FixRowState(progress: .finished(outcome), run: run.script == nil ? fixes[id]?.run : nil)
         if case .undone = outcome { state.run?.undo = nil }
         // Still found, perhaps at a new version (a new id): its row says so, and gets its button again if one applies.
-        let now: Finding? = if case let .stillAffected(f) = recheck { f } else { updated.findings.first { $0.id == id } }
+        let now: Finding? = switch recheck {
+        case let .stillAffected(f), let .notChecked(f): f
+        default: updated.findings.first { $0.id == id }
+        }
         resolved.removeAll { $0.id == id }
         fixes[id] = nil
         if let now, !outcome.isResolved {
@@ -1279,6 +1281,8 @@ public final class AppModel {
                 case .removed: settle(f, .removed)
                 case let .stillAffected(now) where now.id != f.id:
                     settle(f, .blocked("It changed since the review: now \(now.installedLabel)"), now: now)
+                case let .notChecked(now):                  // only reported now: not the batch's to fix
+                    settle(f, .notChecked(FixOutcome.found(before: f, after: now)), now: now)
                 case .stillAffected, .couldNotCheck: findings.append(f); offers.append(offer)
                 }
             }

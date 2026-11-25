@@ -204,6 +204,9 @@ public actor Scanner {
         case removed
         /// Still found: the finding as it is now.
         case stillAffected(Finding)
+        /// Still found, but only as likely affected or reported by the site: not checked against published ranges, so
+        /// neither fixed nor still affected. The finding as it is now.
+        case notChecked(Finding)
         case couldNotCheck(String)
     }
 
@@ -291,7 +294,7 @@ public actor Scanner {
         let explained = await ProvenanceExplainer(tools: configuration.tools).explain(rebuilt, inventory: updated.inventory)
         updated = Self.replacing(finding, with: explained, in: updated)
         updated.sent.requests += await api.takeSentRequests()
-        return (updated, explained.first.map(Recheck.stillAffected) ?? .fixed(now: now))
+        return (updated, explained.first.map { $0.group.isNotChecked ? .notChecked($0) : .stillAffected($0) } ?? .fixed(now: now))
     }
 
     /// What a Java runtime's re-check found: its findings now, or the answer to give instead (nil: it is gone).
