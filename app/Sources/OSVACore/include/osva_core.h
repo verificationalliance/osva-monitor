@@ -148,7 +148,10 @@ int osva_judge(const uint8_t *v, size_t nv, const uint8_t *u, size_t nu, const o
 
 /*
  * Privacy filter. Keys are "<ecosystem>\x1f<name>". mask[i] is set to 1 if inventory key i is in the public index
- * the app downloaded, else 0; only keys with mask 1 may be sent to the API. Returns 0, or -1 on a bad argument.
+ * the app downloaded, else 0; only keys with mask 1 may be sent to the API. Returns 0, or -1 on a bad argument,
+ * writing nothing: index or index_len NULL while n_index is not 0, inventory or inventory_len NULL while n_inventory
+ * is not 0, a key NULL with a length that is not 0, or mask NULL while n_inventory is not 0. Every argument is checked
+ * before any is used. Also -1 if the core could not start (osva_core_init failed).
  * Theorem (OSVACore/Select.lean): mask[i] = 1 exactly when inventory key i equals some index key byte for byte.
  */
 int osva_select(const uint8_t *const *index, const size_t *index_len, size_t n_index,

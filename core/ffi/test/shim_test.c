@@ -221,6 +221,18 @@ int main(void) {
     uint8_t mask[3] = { 9, 9, 9 };
     CHECK(osva_select(ix, il, 2, inv, invl, 3, mask) == 0 && mask[0] == 1 && mask[1] == 0 && mask[2] == 1, "privacy filter");
     CHECK(osva_select(ix, il, 2, inv, invl, 0, NULL) == 0, "empty inventory");
+    /* bad arguments: -1, nothing written */
+    const uint8_t *null_key[] = { NULL };
+    size_t len3[] = { 3 }, len0[] = { 0 };
+    mask[0] = mask[1] = mask[2] = 9;
+    CHECK(osva_select(NULL, il, 2, inv, invl, 3, mask) == -1 && osva_select(ix, NULL, 2, inv, invl, 3, mask) == -1 &&
+          osva_select(ix, il, 2, NULL, invl, 3, mask) == -1 && osva_select(ix, il, 2, inv, NULL, 3, mask) == -1,
+          "privacy filter refuses NULL keys or lengths with a count");
+    CHECK(osva_select(null_key, len3, 1, inv, invl, 3, mask) == -1 &&
+          osva_select(ix, il, 2, null_key, len3, 1, mask) == -1 && osva_select(ix, il, 2, inv, invl, 3, NULL) == -1 &&
+          mask[0] == 9 && mask[1] == 9 && mask[2] == 9, "privacy filter refuses a NULL key with a length, and a NULL mask");
+    CHECK(osva_select(NULL, NULL, 0, null_key, len0, 1, mask) == 0 && mask[0] == 0,
+          "privacy filter: no index, and a NULL key of length 0 is the empty key");
 
     uint8_t out[64];
     long n = osva_pct_encode(S("@scope/name"), out, sizeof out);

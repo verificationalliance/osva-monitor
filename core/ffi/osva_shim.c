@@ -94,14 +94,20 @@ static long copy_version(lean_object *res, uint8_t *out, size_t cap) {
 /* A byte string the caller passes: NULL only with length 0. */
 static int bytes_ok(const uint8_t *p, size_t n) { return n == 0 || p != NULL; }
 
+/* n byte strings the caller passes as pointers and lengths: either array NULL only when n is 0; each one bytes_ok. */
+static int byte_arrays_ok(const uint8_t *const *items, const size_t *lens, size_t n) {
+    if (n > 0 && (items == NULL || lens == NULL)) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (!bytes_ok(items[i], lens[i])) return 0;
+    return 1;
+}
+
 /* Every check osva_core.h names as a bad argument, made before anything is allocated, so a refusal leaks nothing. */
 static int advisories_ok(const osva_advisory *as, size_t n) {
     if ((n > 0 && as == NULL) || n > SIZE_MAX / 3) return 0;
     for (size_t k = 0; k < n; k++) {
         if (!ranges_ok(as[k].ranges, as[k].n_ranges)) return 0;
-        if (as[k].n_fixed > 0 && (as[k].fixed == NULL || as[k].fixed_len == NULL)) return 0;
-        for (size_t i = 0; i < as[k].n_fixed; i++)
-            if (!bytes_ok(as[k].fixed[i], as[k].fixed_len[i])) return 0;
+        if (!byte_arrays_ok(as[k].fixed, as[k].fixed_len, as[k].n_fixed)) return 0;
     }
     return 1;
 }
@@ -166,7 +172,8 @@ int osva_version_uncertain(const uint8_t *v, size_t nv) {
 int osva_select(const uint8_t *const *index, const size_t *index_len, size_t n_index,
                 const uint8_t *const *inventory, const size_t *inventory_len, size_t n_inventory,
                 uint8_t *mask) {
-    if (osva_core_init() != 0 || (n_inventory > 0 && mask == NULL)) return -1;
+    if (osva_core_init() != 0 || !byte_arrays_ok(index, index_len, n_index) ||
+        !byte_arrays_ok(inventory, inventory_len, n_inventory) || (n_inventory > 0 && mask == NULL)) return -1;
     lean_object *res = osva_lean_select(mk_byte_arrays(index, index_len, n_index),
                                         mk_byte_arrays(inventory, inventory_len, n_inventory));
     size_t m = lean_sarray_size(res);
