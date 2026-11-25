@@ -172,10 +172,11 @@ saved until the app scans again. The type is `CheckedUpgrade` in `Core.swift` an
 `scripts/claims-mutants.sh` breaks the rules one at a time and checks that the test fails. This part is held by types
 and tests, not proved in Lean.
 
-**The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the
-app. `build-app.sh` reads the linker's map and stops unless every core function in the app came from the archive Lean
-built (its header lists exactly what is checked). There is no hand-written Swift copy that could drift away from what was proved. About 190 lines of C pass
-bytes between Swift and Lean. That bridge is the only unproved code on the path, and it has its own tests.
+**The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the app.
+`build-app.sh` reads the linker's map and stops unless every core function in the app came from the archive Lean built
+(its header lists exactly what is checked). There is no hand-written Swift copy that could drift away from what was
+proved. About 190 lines of C pass bytes between Swift and Lean. That bridge is the only unproved code on the path, and
+it has its own tests.
 
 **Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 47 proofs again. It
 then confirms that they rest only on Lean's three standard axioms (no `sorry`, nothing assumed without proof) and runs
