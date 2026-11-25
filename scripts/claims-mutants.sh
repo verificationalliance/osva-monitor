@@ -97,9 +97,10 @@ mutant silgen-name-elsewhere \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; @_silgen_name(\"osva_mutant_silgen\") func forgedSilgen() {}"
 mutant cdecl-elsewhere \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; @_cdecl(\"osva_mutant_cdecl\") public func forgedCdecl() {}"
-# A member of a Core.swift type declared again outside it: OSVAKit's own calls would go to it.
+# A member of a Core.swift type declared again outside it: OSVAKit's own call (PublicIndex's) would go to it. It is one
+# no test calls: a member the tests call, compareVersions say, makes their call ambiguous and the tests do not build.
 mutant core-member-shadowed \
-  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; extension Core { public func compareVersions(_ a: String, _ b: String) -> Int { 0 } }"
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; extension KeyList { public func appending(_ strings: [String]) -> KeyList { self } }"
 mutant core-type-named-elsewhere \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; enum ForgedTypes { struct KeyList {} }"
 mutant fixed-version-from-text \
