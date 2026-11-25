@@ -22,6 +22,13 @@ open OSVA
 #print axioms upgradeIn_clears
 #print axioms upgradeIn_nearest
 #print axioms upgradeIn_exists
+#print axioms verdict_inRange_sound
+#print axioms verdict_inRange_complete
+#print axioms verdict_likely_spec
+#print axioms leaves_sound
+#print axioms upgradeFor_leaves
+#print axioms upgradeFor_nearest
+#print axioms judge_spec
 #print axioms select_spec
 #print axioms select_sound
 #print axioms decode_encode
