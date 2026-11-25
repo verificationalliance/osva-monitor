@@ -31,9 +31,14 @@ int osva_core_init(void);
  *   - a leading 'v' or 'V' before a digit, and everything from the first '+' (build metadata), are ignored;
  *   - the rest is read as tokens: maximal runs of digits (numbers, leading zeros ignored, any length) and maximal
  *     runs of ASCII letters (words, case-insensitive); every other byte separates tokens;
- *   - tokens are compared in turn: pre-release word < end of version < other word < number; numbers numerically;
- *     pre-release words by rank (dev < a = alpha < b = beta < c = rc = pre = preview); other words bytewise.
- * So "1.0rc1" < "1.0" < "1.0.post1" < "1.0.1", and "10.6" < "10.6p2". Returns -1, 0 or 1.
+ *   - a word right after a '-' is a pre-release ("15.0.0-canary.12"), unless it is a pre-release word below or one of
+ *     the post-release words PEP 440 allows there (post, rev, r); a number after a '-' is still a number ("7.1.1-41");
+ *   - the release numbers a version starts with lose the zeros that end them, keeping the first ("1.0" = "1.0.0");
+ *   - tokens are compared in turn: word after a '-' < pre-release word < end of version < other word < number;
+ *     numbers numerically; pre-release words by rank (dev < a = alpha < b = beta < c = rc = pre = preview); other
+ *     words, and words after a '-', bytewise.
+ * So "1.0rc1" < "1.0" < "1.0.post1" < "1.0.1", "15.0.0-canary.12" < "15.0.0-rc.1" < "15.0.0", and "10.6" < "10.6p2".
+ * Returns -1, 0 or 1.
  * Theorems (OSVACore/Version.lean): reflexive, antisymmetric, transitive, for all inputs.
  */
 int osva_vcmp(const uint8_t *a, size_t na, const uint8_t *b, size_t nb);

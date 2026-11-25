@@ -15,10 +15,8 @@ import OSVACore.Version
 
 namespace OSVA
 
-def isNumKey (k : List Nat) : Bool := k.head? == some 3
-
-/-- The first two numbers of a version (as keys, so "007" and "7" are the same branch number). -/
-def branchKey (s : Bytes) : List (List Nat) := ((tokens s).filter isNumKey).take 2
+/-- The first two numbers of a version as written (as keys, so "007" and "7" are the same branch number). -/
+def branchKey (s : Bytes) : List (List Nat) := ((keys s).filter isNumKey).take 2
 
 /-- `none` when there is nothing to compare against; otherwise whether `v` is affected. -/
 def affected (v : Bytes) (fixed : List Bytes) : Option Bool :=
