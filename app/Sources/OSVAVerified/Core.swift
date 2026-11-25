@@ -442,9 +442,15 @@ public struct KeyList: Sendable {
         self.bytes = bytes; self.offsets = offsets; self.lengths = lengths
     }
 
-    /// Keys already laid out (the index reader builds them straight from the downloaded bytes).
+    /// Keys already laid out (the index reader builds them straight from the downloaded bytes). Every key must lie inside
+    /// `bytes`, since `withPointers` hands the core a pointer and a length for each: a key past the end would have
+    /// osva_select read memory that is not the list's. The reader lays them out itself, so a key outside is a bug, and
+    /// stops the app here rather than reaching the core.
     public init(bytes: [UInt8], offsets: [Int], lengths: [Int]) {
-        precondition(offsets.count == lengths.count)
+        precondition(offsets.count == lengths.count, "A KeyList needs one length per offset.")
+        precondition(zip(offsets, lengths).allSatisfy { offset, length in
+            offset >= 0 && length >= 0 && offset <= bytes.count && length <= bytes.count - offset
+        }, "Every key of a KeyList must lie inside its bytes.")
         self.bytes = bytes; self.offsets = offsets; self.lengths = lengths
     }
 

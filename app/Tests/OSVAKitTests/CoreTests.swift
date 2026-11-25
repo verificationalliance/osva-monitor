@@ -259,6 +259,19 @@ import OSVACore
         #expect(core.select(inventory: ["npm\u{1F}lodash"], index: KeyList([])) == [false])
     }
 
+    /// Keys laid out by hand (as the index reader does) are used as laid out, up to the last byte; a key that reaches
+    /// past the bytes, or starts before them, stops the process at the KeyList, before the core could read past them.
+    @Test func keysLaidOutByHandStayInsideTheirBytes() async {
+        let bytes = Array("npm\u{1F}lodashPyPI\u{1F}urllib3".utf8)
+        let index = KeyList(bytes: bytes, offsets: [0, 10, bytes.count], lengths: [10, 12, 0])
+        #expect(core.select(inventory: ["npm\u{1F}lodash", "PyPI\u{1F}urllib3", "", "npm\u{1F}lodas"], index: index) == [true, true, true, false])
+        await #expect(processExitsWith: .failure) { _ = KeyList(bytes: [1, 2, 3], offsets: [2], lengths: [2]) }
+        await #expect(processExitsWith: .failure) { _ = KeyList(bytes: [1, 2, 3], offsets: [4], lengths: [0]) }
+        await #expect(processExitsWith: .failure) { _ = KeyList(bytes: [1, 2, 3], offsets: [-1], lengths: [1]) }
+        await #expect(processExitsWith: .failure) { _ = KeyList(bytes: [1, 2, 3], offsets: [1], lengths: [Int.max]) }
+        await #expect(processExitsWith: .failure) { _ = KeyList(bytes: [1, 2, 3], offsets: [0, 1], lengths: [1]) }
+    }
+
     @Test func percentEncodingKeepsOnlyUnreservedBytes() {
         #expect(core.percentEncode("lodash") == "lodash")
         #expect(core.percentEncode("@babel/core") == "%40babel%2Fcore")
