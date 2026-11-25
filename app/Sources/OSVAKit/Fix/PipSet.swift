@@ -171,8 +171,9 @@ public enum PipSetGuard {
     }
 
     /// Whether pip's version of an upgrade together's `package` fixes what `fix` fixes. The core judges both against
-    /// the flaws the site reports at the installed version (BatchCheck: those it finds affected or likely affected): pip's
-    /// must leave every one `fix` leaves. The line that refuses it, or nil. Without an answer for the installed version,
+    /// the flaws the site reports at the installed version (BatchCheck: those it finds affected or likely affected, and
+    /// every other one with published ranges): pip's must leave every one `fix` leaves, so it lands inside none `fix`
+    /// stays out of. The line that refuses it, or nil. Without an answer for the installed version,
     /// the site knows no flaw there, and there is nothing to keep. Call it off the main thread.
     static func keepsTheFix(_ package: String, fix: String, site: PythonSite, installs: [PythonDistribution],
                             known: [PackageVersion: BatchResponse.Result]) -> String? {

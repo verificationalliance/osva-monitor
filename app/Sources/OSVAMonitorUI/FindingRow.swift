@@ -305,9 +305,11 @@ extension Finding {
     }
 
     /// The version line without a version to upgrade to: what the core could not check has no checked fix to name, and
-    /// a version the core found outside every published range has none to need.
+    /// a version the core found outside every published range, or whose every flaw is of another platform, has none to
+    /// need.
     public var withoutVersion: String {
         if outsideItsRanges == true { return "outside its published ranges" }
+        if onlyElsewhere == true { return "does not affect this Mac" }
         if !unresolved.isEmpty && unresolved.allSatisfy({ !$0.affectsThisMac }) { return "does not affect this Mac" }
         return group.isNotChecked ? "no checked fixed version" : "no fixed release known"
     }

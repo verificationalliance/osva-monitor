@@ -118,16 +118,18 @@ public struct FindingBuilder: Sendable {
         if !reported.isEmpty || check.unlisted > 0 || flaws.isEmpty {
             // Never counted and never fixed by a version; how serious it would be stays visible, past the list too, from
             // the flaws the core could not check only: one outside its published ranges was checked and found clear.
-            let severity = [worst(unchecked), check.unlistedWorst].compactMap { $0 }.max() ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)
+            let severity = [worst(unchecked), check.unlistedWorst].compactMap { $0 }.max() ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)   // claims-mutant: outside-severity
             let outsideOnly = unchecked.isEmpty && check.unlisted == 0 && !flaws.isEmpty
             let isExploited = exploited(unchecked) || !check.unlistedExploited.isEmpty || (flaws.isEmpty && !verdict.exploited.isEmpty)
             return PackageState(check: .reported, group: outsideOnly ? .other : .reported, severity: severity, exploited: isExploited, malicious: false,
                                 flawCount: max(moreReported + outside, 1), onlyElsewhere: false, here: ids(reported), outside: outside,
                                 outsideOnly: outsideOnly, notChecked: reportedAlert)
         }
+        // Every flaw is of another platform. It is as serious as its flaws only when the core found it inside their
+        // published ranges: a likely or reported flaw elsewhere gives it no severity, so it never looks affected.
         let shown = check.check == .affected ? check.affected : check.check == .likely ? check.likely : check.reported.map(\.flaw)
-        return PackageState(check: check.check, group: .other, severity: worst(shown), exploited: false, malicious: false, flawCount: shown.count,
-                            onlyElsewhere: true, here: [])
+        return PackageState(check: check.check, group: .other, severity: check.check == .affected ? worst(shown) : nil,   // claims-mutant: elsewhere-severity
+                            exploited: false, malicious: false, flawCount: shown.count, onlyElsewhere: true, here: [])
     }
 
     /// The flaws an upgrade leaves the package with, as the core decided them (BatchCheck.notFixed). Without an upgrade
@@ -142,6 +144,17 @@ public struct FindingBuilder: Sendable {
                                   summary: Self.shortSummary(n.flaw.summary))
         }
         return upgrade == nil ? all.filter { $0.reason != .unknown } : all
+    }
+
+    /// A malicious package's other flaws its plan lists, and why: never a version they are fixed in, which the core did not
+    /// check and which is beside the point (the advice is to remove the package), and never "not fixed by this
+    /// upgrade", with no upgrade. Its programs' parts the same.
+    static func maliciousUnresolved(_ verdict: BatchResponse.Result, python: String?, onThisMac: Bool) -> [UnresolvedFlaw] {
+        (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
+            let flaw = verdict.flaws.first { $0.id == r.id }
+            return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: nil, reason: Self.reason(r.reason),   // claims-mutant: malicious-fixed-in
+                                  detail: r.detail, python: python, onThisMac: onThisMac, summary: Self.shortSummary(flaw?.summary))
+        }.filter { $0.reason != .unknown }
     }
 
     /// "fixes N here": the flaws the finding is shown for (its affected ones, or its likely ones) that can affect where
@@ -200,17 +213,14 @@ public struct FindingBuilder: Sendable {
         let malicious = state.malicious, onlyElsewhere = state.onlyElsewhere
         // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck), and
         // leaves a flaw the finding is shown for (`here`). One the core does not confirm leaves no version, and no
-        // command that would install it.
+        // command that would install it. A finding whose every flaw is of another platform has nothing to upgrade on
+        // this Mac: no version, as a program's part has none.
         let target = onlyElsewhere ? check.target : check.target(for: state.here)
-        let upgrade = malicious || state.check == .reported ? nil : onlyElsewhere ? check.upgrade : check.upgrade(for: state.here)
+        let upgrade = malicious || state.check == .reported || onlyElsewhere ? nil : check.upgrade(for: state.here)
         let rejected = !malicious && target == .notAVersion
         let unconfirmed = !malicious && state.check != .reported && target == .unconfirmed
         let unresolved = malicious
-            ? (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
-                let flaw = verdict.flaws.first { $0.id == r.id }
-                return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: r.fixedIn, reason: Self.reason(r.reason),
-                                      detail: r.detail, python: package.python, onThisMac: onThisMac, summary: Self.shortSummary(flaw?.summary))
-            }
+            ? Self.maliciousUnresolved(verdict, python: package.python, onThisMac: onThisMac)
             : state.check == .reported ? [] : Self.unresolved(check, upgrade: upgrade, python: package.python, onThisMac: onThisMac)
         // A command needs a version the core checked, unless Homebrew picks it (`brew upgrade`, whose versions the
         // person already takes): never npm's @latest, `cargo install x` or `gem update x` on the server's word. Without
@@ -244,7 +254,7 @@ public struct FindingBuilder: Sendable {
         case .likely?:
             // with no target, the likely sentence already says no fixed version clears it
             let how = itemNote ?? (rejected ? rejectedNote : unconfirmed ? noChecked : upgrade == nil && advice.note == noChecked ? nil : advice.note)
-            note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, more)
+            note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, more)   // claims-mutant: likely-names-unchecked
         case .reported?:
             note = check.reportedNote(ecosystem: verdict.ecosystem, onThisMac: onThisMac)
         }
@@ -256,6 +266,7 @@ public struct FindingBuilder: Sendable {
                               fixesCount: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), unresolved: unresolved,
                               commandInputs: advice.command == nil ? nil : inputs, notChecked: state.notChecked)
         if state.outsideOnly { finding.outsideItsRanges = true }
+        if onlyElsewhere { finding.onlyElsewhere = true }                    // claims-mutant: elsewhere-unmarked
         return finding
     }
 

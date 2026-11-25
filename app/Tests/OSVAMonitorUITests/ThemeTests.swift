@@ -132,6 +132,32 @@ import OSVAKit
         }
     }
 
+    /// The hero's quiet lines lie on the panel's bare glass. The subline (with the breakdown under the count, Fix all's
+    /// reason and a scan's problem) clears 3:1 there, from white (black) glass to mid-grey: osva-render's backdrops
+    /// (#ececec, #323232 and grey 128) and the modelled worst glass, in each appearance. The caveat, on its
+    /// `Surface.control` plate, clears 4.5:1, also over the owner's measured mid-grey (138). `.secondary` measured
+    /// 2.31-2.63:1 and `.tertiary` 1.49-2.27:1 on the greys; and no text colour alone reaches 4.5:1 on mid-grey dark
+    /// glass, which is why the caveat has a plate. (On 138 under dark mode the subline is 2.8:1, as primary text is 2.96:1.)
+    @Test func theHerosQuietLinesReadOnAnyGlass() {
+        let light: [UInt32] = [0xFFFFFF, 0xECECEC, 0xE9E9EE, 0x8A8A8A, 0x808080], dark: [UInt32] = [0x000000, 0x1E1E1E, 0x323232, 0x3A3A3C, 0x808080]
+        for v in Tone.Variant.allCases {
+            let isDark = v == .dark || v == .darkIC
+            for glass in isDark ? dark + [0x8A8A8A] : light {
+                let plate = Self.over(glass, Surface.control, v)
+                let caveat = Self.contrast(Self.over(plate, Ink.caveat, v), plate)
+                #expect(caveat >= 4.5, "caveat \(v) on \(String(glass, radix: 16)): \(caveat)")
+                guard glass != 0x8A8A8A || !isDark else { continue }
+                let subline = Self.contrast(Self.over(glass, Ink.subline, v), glass)
+                #expect(subline >= 3, "subline \(v) on \(String(glass, radix: 16)): \(subline)")
+            }
+        }
+        let secondary = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.5, darkAlpha: 0.55)
+        #expect(Self.contrast(Self.over(0x808080, secondary, .light), 0x808080) < 3 && Self.contrast(Self.over(0x808080, secondary, .dark), 0x808080) < 3)
+        #expect(Self.contrast(0xFFFFFF, 0x808080) < 4.5 && Self.contrast(0x000000, 0x808080) >= 4.5)
+        // the caveat is the louder of the two, and both are quieter than the sentence's primary text in their appearance
+        #expect(Ink.caveat.alpha[.light]! > Ink.subline.alpha[.light]! && Ink.subline.alpha[.light]! < 0.85 && Ink.caveat.alpha[.dark]! < 0.85)
+    }
+
     @Test func theExploitedChipIsTheOnlySolidRedAndItsLabelReads() {
         for v in Tone.Variant.allCases { #expect(Self.contrast(0xFFFFFF, Tokens.Exploited.chip.hex(v)) >= 4.5) }
     }
@@ -197,7 +223,7 @@ import OSVAKit
                           "ListDisclosureRow", "QuietCoverageSection", "AppIcon", "PanelCard", "WhatsNewCard", "ChangelogLines",
                           "WhatsNewSection", "FixAllCard", "FixAllReview", "FixAllBatchLine", "FixAllSkipLine", "FixAllProgress",
                           "FixAllSummary", "FixNotice", "FixDisclosure", "ConsentView", "FixAllProposalLine", "FixAllNeedLine",
-                          "TerminalButton", "NeedActionBreakdown", "GlyphPlate", "ScanProgress"] {
+                          "TerminalButton", "NeedActionBreakdown", "GlyphPlate", "ScanProgress", "HeroCaveat"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
@@ -235,7 +261,7 @@ import OSVAKit
         let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
         #expect(views.contains("GlyphPlate(size: 38, width: 42, plate: content.isScanning ? .none : content.hero.plate, alignment: .leading) {"))
         // and the quiet coverage lines keep the plates' width, so every heading's words start at one x
-        #expect(views.contains("Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)"))
+        #expect(views.contains("Image(systemName: symbol).foregroundStyle(Ink.subline.color).frame(width: 20)"))
         let plates = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
         #expect(plates.contains("GlyphPlate(size: 20, plate: heading.plate) { glyph.font(.system(size: 12, weight: .semibold)) }"))
         #expect(plates.contains("        chip.lineLimit(1).fixedSize()"))
@@ -255,6 +281,22 @@ import OSVAKit
             let ink = Tone(0x000000, dark: 0xFFFFFF, alpha: label), v: Tone.Variant = dark ? .dark : .light
             #expect(ToneTests.contrast(ToneTests.over(0x808080, ink, v), 0x808080) >= 3)
         }
+    }
+
+    /// The hero's quiet lines and the quiet coverage lines under the groups are drawn in their tones (ToneTests), and the
+    /// caveat on its plate: never `.secondary` or `.tertiary` on the bare glass, which measured under 3:1 over grey.
+    @Test func theHerosQuietLinesUseTheirTones() {
+        let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
+        let hero = views.components(separatedBy: "struct HeroView")[1].components(separatedBy: "@ViewBuilder private var shield")[0]
+        let quiet = views.components(separatedBy: "struct QuietCoverageSection")[1].components(separatedBy: "\nstruct ")[0]
+        for (name, body) in [("the hero", hero), ("a quiet coverage line", quiet)] {
+            #expect(!body.contains(".foregroundStyle(.secondary)") && !body.contains(".foregroundStyle(.tertiary)"), "\(name) is drawn in a system shade")
+        }
+        #expect(hero.contains("Text(content.subline).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)") && hero.contains("HeroCaveat(text: caveat)"))
+        #expect(views.contains("Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)"))
+        let components = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
+        #expect(components.contains("Text(text).font(Typeface.heroSubline).foregroundStyle(Ink.caveat.color)")
+                && components.contains(".background { Capsule().fill(Surface.control.color) }"))
     }
 
     /// Every SF Symbol the panel, Settings and the menu bar name exists on this macOS: a missing one draws nothing at

@@ -578,6 +578,23 @@ extension View {
     }
 }
 
+/// The hero's caveat under a hero that says nothing (checked) needs action ("Not proof of safety: it is what has been
+/// reported."): `Ink.caveat` on the summary chips' surface, a `Surface.control` capsule, so it reads at 4.5:1 or more on
+/// any glass, mid-grey included, where no bare text colour does. The capsule hangs into the gutter beside the hero's
+/// words, so the caveat's words start where the subline's do: on light glass, where the capsule is all but white, they
+/// would otherwise look indented.
+struct HeroCaveat: View {
+    static let inset: CGFloat = 7
+    let text: String
+    var body: some View {
+        Text(text).font(Typeface.heroSubline).foregroundStyle(Ink.caveat.color)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, Self.inset).padding(.vertical, 2.5)
+            .background { Capsule().fill(Surface.control.color) }
+            .padding(.leading, -Self.inset)
+    }
+}
+
 /// A link out of the app, readable on any glass: `.primary` text and a small accent-coloured arrow on a
 /// `Surface.control` capsule with a hairline edge. Never system-blue text straight on the glass, which measured 1.7:1
 /// on the owner's grey glass.

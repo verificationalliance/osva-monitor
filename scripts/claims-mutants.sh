@@ -47,6 +47,27 @@ mutant unchecked-target \
 mutant lenient-decoding \
   $K/Core.swift "// claims-mutant: lenient-decoding" "        if false, let other = any.allKeys.first(where: { CodingKeys(stringValue: \$0.stringValue) == nil }) {"
 
+# What affects nothing here, what a suggested version may land in, and what a note or a flaw's line may name (the
+# final review of core-decisions)
+mutant elsewhere-severity \
+  $K/Scan/FindingBuilder.swift "// claims-mutant: elsewhere-severity" "        return PackageState(check: check.check, group: .other, severity: worst(shown),"
+mutant elsewhere-unmarked \
+  $K/Scan/FindingBuilder.swift "// claims-mutant: elsewhere-unmarked" "        if false { finding.onlyElsewhere = true }"
+mutant outside-severity \
+  $K/Scan/FindingBuilder.swift "// claims-mutant: outside-severity" \
+  "            let severity = [worst(reported), check.unlistedWorst].compactMap { \$0 }.max() ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)"
+mutant flagged-only-judge \
+  $K/Scan/BatchCheck.swift "// claims-mutant: flagged-only-judge" "        _ = reported"
+mutant fixed-in-for-another-flaw \
+  $K/Scan/BatchCheck.swift "// claims-mutant: fixed-in-for-another-flaw" \
+  "            let fixedIn = r?.fixedIn.flatMap { Self.judge(\$0, from: installed, advisories, [])?.upgrade }"
+mutant malicious-fixed-in \
+  $K/Scan/FindingBuilder.swift "// claims-mutant: malicious-fixed-in" \
+  "            return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: r.fixedIn, reason: Self.reason(r.reason),"
+mutant likely-names-unchecked \
+  $K/Scan/FindingBuilder.swift "// claims-mutant: likely-names-unchecked" \
+  "            note = Self.sentences(check.likelySentence(upgrade: upgrade?.display ?? check.likely.first?.fixedIn.last), how, more)"
+
 # The routing that makes it true
 mutant extension-elsewhere \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; extension CheckedUpgrade { var forged: Bool { true } }"
@@ -127,6 +148,12 @@ mutant finding-kept-elsewhere \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct Kept: Codable { var finding: Finding }"
 mutant inputs-kept-by-an-extension \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct Kept { var inputs: UpgradeCommand.Inputs }; extension Kept: Codable {}"
+mutant advisory-made-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let wide = CoreAdvisory(ranges: nil, fixed: [])"
+mutant range-made-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let everything = AffectedRange()"
+mutant report-kept-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct KeptReport: Codable { var report: ScanReport }"
 mutant nearest-version-back \
   $K/Core.swift "    /// The versions, oldest first." \
   "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"

@@ -704,4 +704,24 @@ extension ProgramFindingTests {
         let n = try #require(findings([(try Self.stdlib(), .program(exporter))], brew: [brew], projects: ["nginx": kev]).first)
         #expect(n.group == .other && !n.exploited && n.notChecked?.exploited == true)
     }
+
+    /// Ruling 8 in a program's sentence: the newest part's upgrade, judged again from the newest installed version, never
+    /// lands inside the published ranges of a flaw that version is outside of. And a program whose every part lies
+    /// outside its published ranges says so on its version line, as a package does.
+    @Test func aProgramsNewestFixNeverLandsInsideAnotherPublishedRange() throws {
+        func docker(_ name: String) -> BuiltProgram {
+            BuiltProgram(language: .go, path: "/usr/local/bin/\(name)", name: name, version: nil, place: .app, formula: nil, package: nil,
+                         toolchain: nil, app: "Docker", cask: nil)
+        }
+        let netA = B.flaw("NET-A", ranges: #"[{"fixed":"0.33.0"}]"#)
+        let old = try B.result("Go", "golang.org/x/net", "v0.23.0", flaws: [netA], plan: B.plan("v0.33.0"))
+        let new = try B.result("Go", "golang.org/x/net", "v0.30.0", flaws: [netA, B.flaw("NET-B", ranges: #"[{"introduced":"0.32.0","fixed":"0.34.0"}]"#)])
+        let d = try #require(findings([(old, .program(docker("docker"))), (new, .program(docker("kubectl")))]).first)
+        #expect(d.note?.hasPrefix("docker and kubectl were built with golang.org/x/net 0.23.0 to 0.30.0 — no checked fixed version yet") == true,
+                "\(d.note ?? "")")
+        // every part outside its published ranges: nothing to do, and the row says why
+        let outside = try B.result("Go", "golang.org/x/net", "v0.40.0", flaws: [netA])
+        let o = try #require(findings([(outside, .program(docker("docker")))]).first)
+        #expect(o.group == .other && o.outsideItsRanges == true && o.onlyElsewhere == true && o.severity == nil && o.fixedVersion == nil)
+    }
 }

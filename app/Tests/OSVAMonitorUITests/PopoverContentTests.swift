@@ -51,13 +51,13 @@ import SwiftUI
         let other = PreviewData.findings.filter { $0.group == .other }
         var marked = other
         marked[0].notChecked = Finding.NotChecked(id: "CVE-X", exploited: true, critical: false)
-        #expect(content(marked).hero == .notChecked && content(marked).subline.hasPrefix(PopoverContent.unbroken("4 lower-severity findings")))
+        #expect(content(marked).hero == .notChecked && content(marked).subline.hasPrefix(PopoverContent.unbroken("3 lower-severity findings")))
         // only a likely high finding: nothing urgent, so the green hero, which says what it did not check; Other alone
         // counts as lower-severity
         let likely = PreviewData.notCheckedFindings.filter { $0.group == .likely }
         let clean = content(other + likely)
         #expect(clean.hero == .clean && clean.sentence == "Nothing needs action" && clean.menuBarState == .clean)
-        #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("4 lower-severity findings"),
+        #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("3 lower-severity findings"),
                                          PopoverContent.unbroken("8 with no record"), "Scanned"].joined(separator: " ·\u{00A0}")))
         // anything the core checked that needs action comes first
         #expect(content(PreviewData.findings).hero == .malicious && content(PreviewData.findings).caveat == nil && clean.caveat != nil)
@@ -92,8 +92,36 @@ import SwiftUI
         let numeric = PreviewData.crowdedFindings.first { $0.title == "numeric" }!
         #expect(numeric.group == .other && numeric.severity == nil && numeric.statusChips.isEmpty)
         #expect(numeric.withoutVersion == "outside its published ranges")
-        #expect(c.sections.first { $0.group == .other }?.findings.map(\.id) == [numeric.id])
+        let windows = PreviewData.crowdedFindings.first { $0.title == "win-path" }!
+        #expect(c.sections.first { $0.group == .other }?.findings.map(\.id) == [numeric.id, windows.id])
         #expect(c.subline.hasPrefix(PopoverContent.unbroken("1 not checked against published ranges") + PopoverContent.dot))
+    }
+
+    /// A finding whose every flaw is of another platform, not affected there by published ranges: in Other, with no
+    /// severity, and a version line that says it does not affect this Mac, never "no fixed release known".
+    @Test func anotherPlatformsFindingSaysItDoesNotAffectThisMac() {
+        let windows = PreviewData.crowdedFindings.first { $0.title == "win-path" }!
+        #expect(windows.group == .other && windows.severity == nil && windows.statusChips.isEmpty && windows.fixedVersion == nil)
+        #expect(windows.withoutVersion == "does not affect this Mac")
+        // whatever its flaws' lines say: a finding with no unresolved flaws to tell it by
+        let bare = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1.0", upgrade: nil,
+                           severity: nil, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
+                           origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil)
+        var elsewhere = bare
+        elsewhere.onlyElsewhere = true
+        #expect(bare.withoutVersion == "no fixed release known" && elsewhere.withoutVersion == "does not affect this Mac")
+    }
+
+    /// The hero counts as lower-severity only what is in Other for something to do here: never a finding outside its
+    /// published ranges, nor one whose flaws are all of another platform.
+    @Test func whatAffectsNothingHereIsNoLowerSeverityFinding() {
+        func content(_ findings: [Finding]) -> PopoverContent { PopoverContent(report: PreviewData.report(findings: findings), isScanning: false, now: now) }
+        let other = PreviewData.findings.filter { $0.group == .other }
+        let listed = PreviewData.crowdedFindings.filter { $0.title == "numeric" || $0.title == "win-path" }
+        #expect(listed.count == 2 && listed.allSatisfy { $0.group == .other })
+        let c = content(other + listed)
+        #expect(c.hero == .clean && c.subline.hasPrefix(PopoverContent.unbroken("3 lower-severity findings") + PopoverContent.dot), "\(c.subline)")
+        #expect(!content(listed).subline.contains("lower-severity"))
     }
 
     @MainActor @Test func whatNothingChecksIsNoRecord() {
@@ -230,7 +258,7 @@ import SwiftUI
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
-        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}8\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))   // never "clean" without saying so
+        #expect(clean.subline.hasPrefix("3\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}8\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))   // never "clean" without saying so
         #expect(clean.menuBarState == .clean && clean.hero.symbol == "checkmark.shield.fill")
         let none = PopoverContent(report: nil, isScanning: false, now: now)
         #expect(none.hero == .notScanned && none.sentence == "Not scanned yet" && none.menuBarState == .notScanned)

@@ -215,14 +215,14 @@ struct QuietCoverageSection: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 // the headings' plate width, so this line's words start where theirs do
-                Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)
+                Image(systemName: symbol).foregroundStyle(Ink.subline.color).frame(width: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).foregroundStyle(.secondary)
-                    Text(caption).font(Typeface.caption).foregroundStyle(.secondary)
+                    Text(title).foregroundStyle(Ink.subline.color)
+                    Text(caption).font(Typeface.caption).foregroundStyle(Ink.subline.color)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.subline.color)
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .font(Typeface.small)
@@ -251,7 +251,7 @@ struct QuietCoverageSection: View {
 struct NeedActionBreakdown: View {
     let line: String
     var body: some View {
-        Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(.secondary)
+        Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("Of these: " + line)
     }
@@ -292,7 +292,7 @@ struct HeroView: View {
                 }
                 .frame(minHeight: 32, alignment: .bottomLeading)              // the sentence alone sits level with the shield
                 if fixAll.count > 0, let why = fixAll.why {
-                    Text(why).font(Typeface.caption).foregroundStyle(.secondary)
+                    Text(why).font(Typeface.caption).foregroundStyle(Ink.subline.color)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 if content.heroCount != nil, let line = fixAll.breakdown { NeedActionBreakdown(line: line) }
@@ -306,17 +306,17 @@ struct HeroView: View {
                     .padding(.vertical, 2)
                 }
                 if !content.subline.isEmpty {
-                    Text(content.subline).font(Typeface.heroSubline).foregroundStyle(.secondary)
+                    Text(content.subline).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)
                         .contentTransition(.numericText())
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let p = content.problem {
                     Label(p, systemImage: "exclamationmark.triangle")
-                        .font(Typeface.heroSubline).foregroundStyle(.secondary)
+                        .font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let caveat = content.caveat {
-                    Text(caveat).font(Typeface.heroSubline).foregroundStyle(.tertiary)
+                    HeroCaveat(text: caveat).padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

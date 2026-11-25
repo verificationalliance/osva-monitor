@@ -27,6 +27,10 @@ public actor Scanner {
     /// never read as checked answers: a scan asks again and keeps the new answer here.
     static let batchCache = "batch-v2"
 
+    /// Where project records are cached. Records saved by 0.5.1 and before ("project") were decoded leniently and saved
+    /// again as decoded, so a range they could not read may be missing from them: never read as checked records.
+    static let projectCache = "project-v2"
+
     private let configuration: ScanConfiguration
     private let indexStore: IndexStore
     private let api: APIClient
@@ -123,14 +127,14 @@ public actor Scanner {
         // 5. Projects matched from Homebrew (and those the vulnerable packages belong to are already in the answers).
         var projects: [String: ProjectResponse] = [:]
         for p in approvedProjects {
-            if let cached = cache.readJSON(ProjectResponse.self, "project", p.slug, maxAge: Freshness.project) {
+            if let cached = cache.readJSON(ProjectResponse.self, Self.projectCache, p.slug, maxAge: Freshness.project) {
                 projects[p.slug] = cached; fromCache.append(p.sentDescription); continue
             }
             progress("Reading \(p.slug)'s advisories…")
             do {
                 let r = try await api.project(p)
                 projects[p.slug] = r
-                cache.writeJSON(r, "project", p.slug)
+                cache.writeJSON(r, Self.projectCache, p.slug)
             } catch {
                 problems.append("Project \(p.slug): \(error.localizedDescription)")
                 if error as? APIClient.APIError == .keptRateLimiting { break }
@@ -247,9 +251,9 @@ public actor Scanner {
             guard let project = index.project(slug: slug), let approved = PrivacyFilter(index: index).approve(projects: [slug]).first else {
                 return (report, .couldNotCheck("\(slug) is not in the public index"))
             }
-            var response = cache.readJSON(ProjectResponse.self, "project", slug, maxAge: Freshness.project)
+            var response = cache.readJSON(ProjectResponse.self, Self.projectCache, slug, maxAge: Freshness.project)
             if response == nil {
-                do { response = try await api.project(approved); cache.writeJSON(response!, "project", slug) }
+                do { response = try await api.project(approved); cache.writeJSON(response!, Self.projectCache, slug) }
                 catch { return (report, .couldNotCheck(error.localizedDescription)) }
             }
             rebuilt = builder.findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)], projects: [slug: response!],
@@ -294,7 +298,10 @@ public actor Scanner {
         let explained = await ProvenanceExplainer(tools: configuration.tools).explain(rebuilt, inventory: updated.inventory)
         updated = Self.replacing(finding, with: explained, in: updated)
         updated.sent.requests += await api.takeSentRequests()
-        return (updated, explained.first.map { $0.group.isNotChecked ? .notChecked($0) : .stillAffected($0) } ?? .fixed(now: now))
+        // a finding listed with nothing to do on this Mac (every flaw outside its published ranges, or of another
+        // platform) is what the core found clear: fixed, never "still affected"
+        let standing = explained.filter { !$0.affectsNothingHere }
+        return (updated, standing.first.map { $0.group.isNotChecked ? .notChecked($0) : .stillAffected($0) } ?? .fixed(now: now))
     }
 
     /// What a Java runtime's re-check found: its findings now, or the answer to give instead (nil: it is gone).
@@ -315,10 +322,10 @@ public actor Scanner {
         switch m.route {
         case let .project(slug, _):
             guard let approved = filter.approve(projects: [slug]).first else { return .answer(.couldNotCheck("\(slug) is not in the public index")) }
-            if let cached = cache.readJSON(ProjectResponse.self, "project", slug, maxAge: Freshness.project) {
+            if let cached = cache.readJSON(ProjectResponse.self, Self.projectCache, slug, maxAge: Freshness.project) {
                 projects[slug] = cached
             } else {
-                do { projects[slug] = try await api.project(approved); cache.writeJSON(projects[slug]!, "project", slug) }
+                do { projects[slug] = try await api.project(approved); cache.writeJSON(projects[slug]!, Self.projectCache, slug) }
                 catch { return .answer(.couldNotCheck(error.localizedDescription)) }
             }
         case let .product(c):

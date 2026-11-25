@@ -107,11 +107,17 @@ public enum PreviewData {
             finding("pkg|npm|hacl-wasm|1.4.0", .other, .package(ecosystem: .npm, name: "hacl-wasm"), "hacl-wasm", "1.4.0", "1.4.2", .low, flaws: 1,
                     origins: [.folder(root: home + "/code/storefront", lockfile: home + "/code/storefront/package-lock.json", direct: true)],
                     page: SiteURL.packagePage(.npm, "hacl-wasm", version: "1.4.0"), ecosystem: .npm, mark: .whole, grade: "A"),
-            finding("pkg|PyPI|pygments|2.14.0|py3.15.2", .other, .package(ecosystem: .pypi, name: "pygments"), "pygments", "2.14.0", nil, .moderate,
-                    flaws: 1, origins: [.pip(python: homebrewPython, user: false, formula: "pygments")],
-                    page: SiteURL.packagePage(.pypi, "pygments", version: "2.14.0"), runnable: false,
-                    unresolved: [UnresolvedFlaw(id: "GHSA-x9mx-xxxx-wq5c", severity: .moderate, fixedIn: "2.15.0", reason: .otherPlatform, detail: "Windows",
-                                                summary: "Code execution via a crafted path on Windows")]),
+            // its one flaw is Windows-only, inside its published ranges there: listed, nothing to do on this Mac, never
+            // counted among the lower-severity findings
+            { () -> Finding in
+                var f = finding("pkg|PyPI|pygments|2.14.0|py3.15.2", .other, .package(ecosystem: .pypi, name: "pygments"), "pygments", "2.14.0", nil,
+                                .moderate, flaws: 1, origins: [.pip(python: homebrewPython, user: false, formula: "pygments")],
+                                page: SiteURL.packagePage(.pypi, "pygments", version: "2.14.0"), runnable: false,
+                                unresolved: [UnresolvedFlaw(id: "GHSA-x9mx-xxxx-wq5c", severity: .moderate, fixedIn: "2.15.0", reason: .otherPlatform,
+                                                            detail: "Windows", summary: "Code execution via a crafted path on Windows")])
+                f.onlyElsewhere = true
+                return f
+            }(),
             finding("pkg|crates.io|time|0.1.43", .other, .package(ecosystem: .crates, name: "time"), "time", "0.1.43", nil, .moderate, flaws: 1,
                     note: "No fixed release yet.",
                     origins: [.folder(root: home + "/code/tools", lockfile: home + "/code/tools/cli/Cargo.lock", direct: false)],
@@ -170,6 +176,16 @@ public enum PreviewData {
                                 note: "Reported by the site; its published ranges for CVE-2026-50115 do not include 2.0.0-1.", origins: [storefront],
                                 page: SiteURL.packagePage(.npm, "numeric", version: "2.0.0-1"), ecosystem: .npm, runnable: false)
                 f.outsideItsRanges = true
+                return f
+            }(),
+            // its one flaw, high, is Windows-only and has no published ranges: in Other, with no severity and nothing to do
+            { () -> Finding in
+                var f = finding("crowded|win-path", .other, .package(ecosystem: .npm, name: "win-path"), "win-path", "1.4.0", nil, nil, flaws: 1,
+                                origins: [.npmGlobal(npm: "/opt/homebrew/bin/npm")], page: SiteURL.packagePage(.npm, "win-path", version: "1.4.0"),
+                                ecosystem: .npm, runnable: false,
+                                unresolved: [UnresolvedFlaw(id: "CVE-2026-50116", severity: .high, fixedIn: nil, reason: .otherPlatform, detail: "windows",
+                                                            summary: "Path traversal through drive-relative paths on Windows")])
+                f.onlyElsewhere = true
                 return f
             }(),
         ]

@@ -216,6 +216,10 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     /// clear, listed in Other with nothing to do (nil otherwise, and in reports saved before).
     public var outsideItsRanges: Bool? = nil
 
+    /// Listed with nothing to do on this Mac: every flaw lies outside its published ranges, or is of another platform.
+    /// Such a finding is never counted, never a lower-severity finding, and never "still affected" after a fix.
+    public var affectsNothingHere: Bool { outsideItsRanges == true || onlyElsewhere == true }
+
     /// A finding whose version to upgrade to is one the core checked (`upgrade.display`), or none, and whose command is
     /// UpgradeCommand's (`advice.command`), or none.
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String,
