@@ -101,6 +101,18 @@ import SwiftUI
         #expect(SystemNotifier.text(for: [fresh[1]]).title == "Exploited flaw: OpenSSH")
     }
 
+    /// A finding that notifies only because a flaw the app did not check is exploited says that, not "patch these first".
+    @Test func anUncheckedExploitedFlawNamesItsNotification() {
+        let lodash = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "lodash"), title: "lodash", installedVersion: "4.17.20",
+                             fixedVersion: nil, severity: .low, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
+                             origins: [.npmGlobal(npm: "npm")], pageURL: PreviewData.findings[0].pageURL, upgradeCommand: nil, verification: .none,
+                             grade: nil, notChecked: Finding.NotChecked(id: "CVE-1", exploited: true, critical: false))
+        #expect(lodash.deservesNotification && SystemNotifier.text(for: [lodash]).title == "Exploited flaw, not checked: lodash")
+        var listed = lodash
+        listed.notChecked = nil; listed.bigIssue = "On the site's list"
+        #expect(SystemNotifier.text(for: [listed]).title == "On the “patch these first” list: lodash")
+    }
+
     @Test func aFixedFindingKeepsItsRowButIsNotCounted() {
         let nginx = PreviewData.findings.first { $0.id == PreviewData.FixID.nginx }!
         let rest = PreviewData.findings.filter { $0.id != nginx.id }

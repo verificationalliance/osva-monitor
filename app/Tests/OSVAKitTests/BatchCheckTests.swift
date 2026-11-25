@@ -500,5 +500,48 @@ extension BatchCheckTests {
         #expect(Finding.toNotify([f(.other, big: "list 2")], after: [f(.other, big: "list")]).count == 1)
         #expect(Finding.toNotify([f(.other, big: "list")], after: [f(.other, big: "list")]).isEmpty)
         #expect(Finding.toNotify([f(.other, notChecked: kev)], after: nil).count == 1 && Finding.toNotify([f(.other)], after: nil).isEmpty)
+        // Other, likely and reported call for no action: moving among them, with the same flaw exploited, is not more serious
+        #expect(Finding.toNotify([f(.other, notChecked: kev)], after: [f(.likely, exploited: true, notChecked: kev)]).isEmpty)
+        #expect(Finding.toNotify([f(.likely, exploited: true, notChecked: kev)], after: [f(.reported, exploited: true, notChecked: kev)]).isEmpty)
+        #expect(Finding.toNotify([f(.criticalHigh, notChecked: kev)], after: [f(.likely, exploited: true, notChecked: kev)]).count == 1)
+    }
+}
+
+/// The re-review of #18.
+extension BatchCheckTests {
+    @Test func aTargetIsShownOnlyWhenItFixesAFlawTheFindingIsShownFor() throws {
+        // a Windows-only affected flaw, a macOS likely flaw first fixed in 3.0.0, and the server's target 2.0.0: the core
+        // confirms 2.0.0 for the Windows flaw only, so the likely finding names no version and offers no command
+        let flaws = [Self.flaw("WIN", ranges: #"[{"fixed":"2.0.0"}]"#, platform: "windows"), Self.flaw("L", fixedIn: #"["3.0.0"]"#)]
+        let r = try Self.result("npm", "p", "1.0.0", flaws: flaws, plan: Self.plan("2.0.0"))
+        #expect(BatchCheck.read(r, installed: "1.0.0").upgrade?.version == "2.0.0")
+        let f = try #require(Self.findings([r]).first)
+        #expect(f.group == .likely && f.fixedVersion == nil && f.upgradeCommand == nil && f.commandInputs == nil)
+        #expect(f.note == "Likely affected: the site publishes no affected ranges. No checked fixed version yet; see the site.")
+        // a program's part the same
+        let fd = BuiltProgram(language: .rust, path: "/Users/ana/.cargo/bin/fd", name: "fd", version: "10.5.2", place: .cargoInstall, formula: nil,
+                              package: "fd-find", module: "fd-find", toolchain: nil)
+        let crate = try Self.result("crates.io", "p", "1.0.0", flaws: flaws, plan: Self.plan("2.0.0"))
+        let program = try #require(Self.findings([crate]) { _ in .program(fd) }.first)
+        #expect(program.group == .likely && program.fixedVersion == nil && program.upgradeCommand == nil)
+        // in a project folder, which may be deployed anywhere, the Windows flaw counts: affected, and 2.0.0 fixes it
+        let folder = try #require(Self.findings([r]) { _ in .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true) }.first)
+        #expect(folder.group == .criticalHigh && folder.fixedVersion == "2.0.0")
+    }
+
+    @Test func theReportedNoteCountsWhatTheFindingCounts() throws {
+        // this Mac's reported flaw is named, not a Windows-only one, and "(and k more)" counts what the finding counts
+        let outside = #"[{"fixed":"2.0"}]"#
+        let r = try Self.result("npm", "n", "3.0", distinct: 4, flaws: [Self.flaw("WIN", ranges: outside, severity: "CRITICAL", exploited: true, platform: "windows"),
+                                                                       Self.flaw("MAC", ranges: outside)])
+        let f = try #require(Self.findings([r]).first)
+        #expect(f.group == .reported && f.flawCount == 3)
+        #expect(f.note == "Reported by the site, not checked: the affected ranges it publishes for MAC do not include 3.0 (and 2 more).")
+        // in a project folder every flaw counts, and the most urgent is named
+        let folder = try #require(Self.findings([r]) { _ in .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true) }.first)
+        #expect(folder.flawCount == 4 && folder.note == "Reported by the site, not checked: the affected ranges it publishes for WIN do not include 3.0 (and 3 more).")
+        // only the flaws past the list on this Mac: they are what it says
+        let unlisted = try Self.result("npm", "n", "3.0", distinct: 3, flaws: [Self.flaw("WIN", ranges: outside, platform: "windows")])
+        #expect(Self.findings([unlisted]).first?.note == "Reported by the site, not checked: 2 flaws are not listed.")
     }
 }

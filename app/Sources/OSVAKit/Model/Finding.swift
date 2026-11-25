@@ -118,6 +118,10 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
         /// Not checked against published ranges: likely affected, or reported.
         public var isNotChecked: Bool { self == .likely || self == .reported }
 
+        /// How urgent the group is, lower first: the groups that call for action in their order, and every other group
+        /// (Other, likely, reported) the same, since none of them calls for action.
+        public var urgency: Int { needsAction ? rawValue : Group.other.rawValue }
+
         public static func < (a: Group, b: Group) -> Bool { a.rawValue < b.rawValue }
     }
 
@@ -254,15 +258,16 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var deservesNotification: Bool { malicious || exploited || notChecked?.exploited == true || bigIssue != nil }
 
     /// The findings to notify about after a scan: those that deserve it and did not before, or have become more serious
-    /// since: a more urgent group, newly malicious or exploited, or a new "patch these first" item. A group that only
-    /// moved the other way, as when a report saved by 0.5.1 is followed by one that checks ranges, notifies nothing.
+    /// since: a more urgent group (`urgency`), newly malicious or exploited, or a new "patch these first" item. A group
+    /// that only moved the other way, as when a report saved by 0.5.1 is followed by one that checks ranges, or between
+    /// groups that call for no action (likely to Other), notifies nothing.
     public static func toNotify(_ findings: [Finding], after previous: [Finding]?) -> [Finding] {
         let before = Dictionary((previous ?? []).filter(\.deservesNotification).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return findings.filter { f in
             guard f.deservesNotification else { return false }
             guard let old = before[f.id] else { return true }
             func exploited(_ x: Finding) -> Bool { x.exploited || x.notChecked?.exploited == true }
-            return f.group < old.group || (f.malicious && !old.malicious) || (exploited(f) && !exploited(old))
+            return f.group.urgency < old.group.urgency || (f.malicious && !old.malicious) || (exploited(f) && !exploited(old))
                 || (f.bigIssue != nil && f.bigIssue != old.bigIssue)
         }
     }

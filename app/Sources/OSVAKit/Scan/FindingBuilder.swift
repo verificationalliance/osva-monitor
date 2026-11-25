@@ -145,11 +145,13 @@ public struct FindingBuilder: Sendable {
             let check = BatchCheck.read(verdict, installed: package.version)
             let state = Self.state(verdict, check, onThisMac: onThisMac)
             let malicious = state.malicious, onlyElsewhere = state.onlyElsewhere
-            // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck). One the
-            // core does not confirm leaves no version, and no command that would install it.
-            let upgrade = malicious || state.check == .reported ? nil : check.upgrade
-            let rejected = !malicious && check.target == .notAVersion
-            let unconfirmed = !malicious && state.check != .reported && check.target == .unconfirmed
+            // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck), and
+            // leaves a flaw the finding is shown for (`here`). One the core does not confirm leaves no version, and no
+            // command that would install it.
+            let target = onlyElsewhere ? check.target : check.target(for: state.here)
+            let upgrade = malicious || state.check == .reported ? nil : onlyElsewhere ? check.upgrade : check.upgrade(for: state.here)
+            let rejected = !malicious && target == .notAVersion
+            let unconfirmed = !malicious && state.check != .reported && target == .unconfirmed
             let unresolved = malicious
                 ? (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
                     let flaw = verdict.flaws.first { $0.id == r.id }
@@ -188,7 +190,7 @@ public struct FindingBuilder: Sendable {
                     let why: String?
                     if rejected { why = rejectedNote }
                     else if unconfirmed { why = noChecked }
-                    else if verdict.plan != nil && check.target == .none && unresolved.isEmpty { why = "No fixed release yet." }
+                    else if verdict.plan != nil && target == .none && unresolved.isEmpty { why = "No fixed release yet." }
                     else if unchecked { why = noChecked }
                     else { why = advice.note }
                     note = Self.sentences(why, more)
@@ -196,7 +198,7 @@ public struct FindingBuilder: Sendable {
                     let how = rejected ? rejectedNote : unconfirmed ? noChecked : advice.note
                     note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, more)
                 case .reported?:
-                    note = check.reportedNote(ecosystem: verdict.ecosystem)
+                    note = check.reportedNote(ecosystem: verdict.ecosystem, onThisMac: onThisMac)
                 }
                 return Finding(id: id, group: state.group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
                                component: component, installedVersion: package.version, upgrade: upgrade,

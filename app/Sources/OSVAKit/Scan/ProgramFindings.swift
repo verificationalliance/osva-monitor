@@ -47,7 +47,7 @@ extension FindingBuilder {
         var malicious: Bool
         /// How its flaws were checked against the site's ranges (nil: malicious).
         var check: Finding.Check?
-        /// The server's target, when the core confirms it fixes some of its affected or likely flaws (BatchCheck).
+        /// The server's target, when the core confirms it fixes some of the flaws the part is shown for (BatchCheck).
         var upgrade: CheckedUpgrade?
         /// Its affected and likely flaws on this Mac, which the program's sentence weighs the newest upgrade against.
         var flagged: [BatchResponse.Flaw]
@@ -95,7 +95,7 @@ extension FindingBuilder {
     func component(_ package: ApprovedPackage, _ verdict: BatchResponse.Result, name: String, own: Bool) -> Component {
         let check = BatchCheck.read(verdict, installed: package.version)
         let state = Self.state(verdict, check, onThisMac: true, program: true)
-        let upgrade = state.malicious || state.onlyElsewhere || state.check == .reported ? nil : check.upgrade
+        let upgrade = state.malicious || state.onlyElsewhere || state.check == .reported ? nil : check.upgrade(for: state.here)
         let unresolved = state.malicious
             ? (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
                 UnresolvedFlaw(id: r.id, severity: Severity(api: verdict.flaws.first { $0.id == r.id }?.severity), fixedIn: r.fixedIn,
