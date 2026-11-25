@@ -145,6 +145,69 @@ import Testing
         #expect(f.notChecked == Finding.NotChecked(id: "RQ", exploited: true, critical: true) && f.deservesNotification)
     }
 
+    /// The finding of one program or tool, each part answered from `answers` (an index lists every one).
+    func row(_ origin: Origin, _ answers: [BatchResponse.Result]) throws -> Finding {
+        let index = PublicIndex(generatedAt: "T", packages: answers.map { (Ecosystem($0.ecosystem), $0.name) }, projects: [])
+        let installed = answers.map { InstalledPackage(ecosystem: Ecosystem($0.ecosystem), name: $0.name, version: $0.version, origin: origin) }
+        let selection = PrivacyFilter(index: index).approve(installed)
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in answers.first { $0.name == a.name }.map { (a, $0) } })
+        let f = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: [])
+        #expect(f.count == 1)
+        return try #require(f.first)
+    }
+
+    /// P17: black's own target is one the core rejects (inside its published range). pipx's runpip pins black where it is,
+    /// never `--upgrade black` (pip would take its newest release, which nobody checked), and moves requests to the
+    /// version the core checked. uv's `uv tool upgrade` would bring black's newest release: no command, and the row says
+    /// why. Not knowing black's version, nothing pins it: no command.
+    @Test func aToolsOwnPackageWithoutACheckedVersionStaysWhereItIs() throws {
+        typealias B = BatchCheckTests
+        let answers = [try B.result("black", "24.1.0", flaws: [B.flaw("BL", ranges: #"[{"fixed":"26.0"}]"#, severity: "CRITICAL")], plan: B.plan("25.0")),
+                       try B.result("requests", "2.25.0", flaws: [B.flaw("RQ", ranges: #"[{"fixed":"2.33.0"}]"#)], plan: B.plan("2.33.0"))]
+        let pipx = try row(.pythonTool(Self.black), answers)
+        #expect(pipx.upgradeCommand == "pipx runpip black install --upgrade black==24.1.0 requests==2.33.0")
+        #expect(pipx.note?.hasSuffix(" pip keeps black at 24.1.0 and upgrades them within the versions it allows; if they conflict, pip changes nothing.")
+                == true, "\(pipx.note ?? "")")
+        var uv = Self.black; uv.manager = .uv; uv.venv = "/Users/ana/.local/share/uv/tools/black"
+        let u = try row(.pythonTool(uv), answers)
+        #expect(u.upgradeCommand == nil && u.note?.hasSuffix(" No checked fixed version of black yet; see the site.") == true, "\(u.note ?? "")")
+        var unknown = Self.black; unknown.version = nil
+        #expect(UpgradeCommand.pythonTool(unknown, upgrades: [("black", nil), ("requests", "2.33.0")], malicious: false).command == nil)
+    }
+
+    /// P18: `go install …@latest` and `cargo install --force` rebuild the program from its newest release. Offered when
+    /// only what it was built with is flagged (that release is its author's choice), or when the core checked an upgrade
+    /// for its own module too; never while its own module is flagged and the core rejects the server's version for it.
+    /// Homebrew's formula keeps `brew upgrade`: Homebrew picks.
+    @Test func aRebuildWaitsForTheProgramsOwnCheckedFix() throws {
+        typealias B = BatchCheckTests
+        let tool = BuiltProgram(language: .go, path: "/Users/ana/go/bin/tool", name: "tool", version: "v1.0.0", place: .goInstall, formula: nil,
+                                package: "example.com/tool/cmd/tool", module: "example.com/tool", toolchain: "1.22.3")
+        let net = try B.result("Go", "golang.org/x/net", "v0.23.0", flaws: [B.flaw("NET", ranges: #"[{"fixed":"0.33.0"}]"#)], plan: B.plan("v0.33.0"))
+        func own(_ target: String?, _ flaw: String = B.flaw("OWN", ranges: #"[{"fixed":"1.2.0"}]"#, severity: "CRITICAL")) throws -> BatchResponse.Result {
+            try B.result("Go", "example.com/tool", "v1.0.0", flaws: [flaw], plan: B.plan(target))
+        }
+        // its own module's target lies inside its range: no rebuild, and the row says why
+        let rejected = try row(.program(tool), [try own("v1.1.0"), net])
+        #expect(rejected.upgradeCommand == nil, "\(rejected.upgradeCommand ?? "")")
+        #expect(rejected.note?.hasSuffix(" No checked fixed version of tool yet; see the site.") == true, "\(rejected.note ?? "")")
+        // the core confirms its own module's target: the rebuild is offered
+        #expect(try row(.program(tool), [try own("v1.2.0"), net]).upgradeCommand == "go install example.com/tool/cmd/tool@latest")
+        // only what it was built with is flagged (its own module's flaw states nothing: reported, not checked): offered
+        #expect(try row(.program(tool), [try own(nil, B.flaw("OWN")), net]).upgradeCommand == "go install example.com/tool/cmd/tool@latest")
+        // Homebrew's formula: Homebrew picks
+        var brewed = tool; brewed.place = .homebrew; brewed.formula = "tool"
+        #expect(try row(.program(brewed), [try own("v1.1.0"), net]).upgradeCommand == "brew upgrade tool")
+        // cargo the same
+        let fd = BuiltProgram(language: .rust, path: "/Users/ana/.cargo/bin/fd", name: "fd", version: "10.5.2", place: .cargoInstall, formula: nil,
+                              package: "fd-find", module: "fd-find", toolchain: nil)
+        let time = try B.result("crates.io", "time", "0.1.43", flaws: [B.flaw("TM", ranges: #"[{"fixed":"0.2.23"}]"#)], plan: B.plan("0.2.23"))
+        let fdOwn = { (target: String) in try B.result("crates.io", "fd-find", "10.5.2", flaws: [B.flaw("FD", ranges: #"[{"fixed":"10.6.0"}]"#)], plan: B.plan(target)) }
+        let cargo = try row(.program(fd), [try fdOwn("10.5.3"), time])
+        #expect(cargo.upgradeCommand == nil && cargo.note?.hasSuffix(" No checked fixed version of fd yet; see the site.") == true, "\(cargo.note ?? "")")
+        #expect(try row(.program(fd), [try fdOwn("10.6.0"), time]).upgradeCommand == "cargo install --force fd-find")
+    }
+
     @Test func aToolsOwnPackageOnlyIsUpgradedWithPipx() {
         let a = UpgradeCommand.pythonTool(Self.black, upgrades: [("black", "26.10.1")], malicious: false)
         #expect(a.command == "pipx upgrade black" && a.note == nil)
@@ -205,9 +268,9 @@ import Testing
         #expect(UpgradeCommand.program(program(.cargoInstall, package: "evil$(curl x)"), rebuildOnly: true, malicious: false).command
                 == "cargo install --force 'evil$(curl x)'")
         #expect(UpgradeCommand.program(program(.homebrew, formula: "-rf"), rebuildOnly: true, malicious: false).command == "brew upgrade '-rf'")
-        let tool = PythonTool(manager: .pipx, name: "my tool", mainPackage: "my-tool", version: nil, venv: "/v", python: nil)
+        let tool = PythonTool(manager: .pipx, name: "my tool", mainPackage: "my-tool", version: "1.0", venv: "/v", python: nil)
         #expect(UpgradeCommand.pythonTool(tool, upgrades: [("it's", "2.0")], malicious: false).command
-                == "pipx runpip 'my tool' install --upgrade my-tool 'it'\\''s==2.0'")
+                == "pipx runpip 'my tool' install --upgrade my-tool==1.0 'it'\\''s==2.0'")
         #expect(UpgradeCommand.macports("a;b").command == "sudo port upgrade 'a;b'")
     }
 

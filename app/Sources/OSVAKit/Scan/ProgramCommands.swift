@@ -38,7 +38,10 @@ extension UpgradeCommand {
 
     /// A pipx or uv tool. uv upgrades everything in the tool's environment within the versions the tool allows. pipx
     /// upgrades the tool itself; for its dependencies, pip is asked for the fixed versions together with the tool, so
-    /// pip keeps within what the tool requires (and changes nothing if they conflict).
+    /// pip keeps within what the tool requires (and changes nothing if they conflict). `upgrades`: each package's version
+    /// as the core checked it, or nil. The tool's own package goes to its checked version, or stays where it is
+    /// (`t.version`): pip is never asked for a release of it the core did not check. Not knowing where it is, there is
+    /// no command, since leaving it out would let pip break what it requires.
     static func pythonTool(_ t: PythonTool, upgrades: [(name: String, target: String?)], malicious: Bool) -> Advice {
         let tool = quote(t.name)
         switch t.manager {
@@ -51,10 +54,13 @@ extension UpgradeCommand {
             let deps = upgrades.filter { !isMain($0.name) && $0.target != nil }
             guard !deps.isEmpty else { return Advice(command: "pipx upgrade \(tool)") }
             // exact pins (never ">=", which let pip take a newer release than the fix and break what needed an older one)
-            let main = upgrades.first { isMain($0.name) }?.target.map { "\(t.mainPackage)==\($0)" } ?? t.mainPackage
-            let requirements = [main] + deps.map { "\($0.name)==\($0.target!)" }
+            let checked = upgrades.first { isMain($0.name) }?.target
+            guard let main = checked ?? t.version else { return Advice(command: nil) }
+            let requirements = ["\(t.mainPackage)==\(main)"] + deps.map { "\($0.name)==\($0.target!)" }
             return Advice(command: "pipx runpip \(tool) install --upgrade " + requirements.map(quote).joined(separator: " "),
-                          note: "pip upgrades them together with \(t.mainPackage), within the versions it allows; if they conflict, pip changes nothing.")
+                          note: checked == nil
+                            ? "pip keeps \(t.mainPackage) at \(main) and upgrades them within the versions it allows; if they conflict, pip changes nothing."
+                            : "pip upgrades them together with \(t.mainPackage), within the versions it allows; if they conflict, pip changes nothing.")
         }
     }
 

@@ -30,7 +30,7 @@ import OSVACore
 /// fix paths: a partial fix's version is proposed only when `judge` confirms it (FixAdvisor), pip's version in an upgrade
 /// together must leave every advisory the fix leaves (PipSetGuard), and every command's version is a `CheckedUpgrade`
 /// (UpgradeCommand.Inputs). A command that names none is a removal, Homebrew's own upgrade, or a program's or tool's
-/// rebuild (ProgramFindings).
+/// rebuild, never while its own part is flagged with no checked upgrade (ProgramFindings).
 ///
 /// The rest is not the core's:
 ///   - Which version a package manager installs for a command that names none (`brew upgrade`, a rebuild), or within a
