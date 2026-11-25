@@ -196,6 +196,19 @@ public enum Surface {
     public static let edge = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.09, darkAlpha: 0.11, icAlpha: 0.30, darkICAlpha: 0.32)
 }
 
+/// The hero's quiet lines, which lie on the panel's bare glass: the system's `.secondary` and `.tertiary` measured
+/// 2.31-2.63:1 and 1.49-2.27:1 there over a mid-grey desktop. Black in light mode and white in dark, at the opacity
+/// that clears the contrast each needs from white (black) glass to mid-grey (128) in both appearances; ToneTests
+/// checks every one.
+public enum Ink {
+    /// The subline ("2 lower-severity findings · Scanned 4 minutes ago · …"), the breakdown under the count, and a
+    /// scan's problem: 3:1 or more on the bare glass.
+    public static let subline = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.66, darkAlpha: 0.80, icAlpha: 0.80, darkICAlpha: 0.90)
+    /// The caveat ("Not proof of safety: it is what has been reported."), on its `Surface.control` plate (HeroCaveat):
+    /// 4.5:1 or more there. No text colour reaches 4.5:1 on mid-grey dark glass alone (white on rgb 128 is 3.95:1).
+    public static let caveat = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.72, darkAlpha: 0.78, icAlpha: 0.85, darkICAlpha: 0.90)
+}
+
 /// Type, one place. Counts use SF Pro Rounded with tabular digits.
 public enum Typeface {
     public static let heroCount = Font.system(size: 26, weight: .bold, design: .rounded).monospacedDigit()
