@@ -24,6 +24,7 @@ extern lean_object *osva_lean_judge(lean_object *v, lean_object *u, lean_object 
                                     lean_object *bounds, lean_object *fixed);
 extern lean_object *osva_lean_select(lean_object *index, lean_object *inventory);
 extern lean_object *osva_lean_encode(lean_object *s);
+extern uint8_t osva_lean_version_uncertain(lean_object *v);
 extern lean_object *initialize_osvaCore_OSVACore(uint8_t builtin);
 extern void lean_initialize_runtime_module(void);      /* in libleanrt, not declared by lean.h in this Lean version */
 
@@ -181,6 +182,11 @@ int osva_judge(const uint8_t *v, size_t nv, const uint8_t *u, size_t nu, const o
     else { if (n > 0) memcpy(out, r + 1, n); ret = 1; }
     lean_dec(res);
     return ret;
+}
+
+int osva_version_uncertain(const uint8_t *v, size_t nv) {
+    if (osva_core_init() != 0 || !bytes_ok(v, nv)) return -2;
+    return (int)osva_lean_version_uncertain(mk_bytes(v, nv));
 }
 
 int osva_select(const uint8_t *const *index, const size_t *index_len, size_t n_index,

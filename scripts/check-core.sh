@@ -15,7 +15,7 @@ echo "2. axioms"
 out=$(lake env lean Audit.lean)
 n=$(grep -c "depends on axioms\|does not depend on any axioms" <<<"$out")
 bad=$(grep "depends on axioms" <<<"$out" | grep -v -E "axioms: \[((propext|Quot.sound|Classical.choice)(, )?)+\]$" || true)
-if [ -n "$bad" ] || [ "$n" -lt 47 ]; then echo "$out"; echo "FAILED: unexpected axioms or missing theorems"; exit 1; fi
+if [ -n "$bad" ] || [ "$n" -lt 50 ]; then echo "$out"; echo "FAILED: unexpected axioms or missing theorems"; exit 1; fi
 echo "   $n theorems, standard axioms only"
 
 echo "3. C shim"

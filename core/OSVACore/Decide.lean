@@ -224,5 +224,15 @@ theorem judge_spec {v u : Bytes} {as : List Advisory} {m : List Bool} (h : judge
 -- a pre-release is never suggested; a release named beside it is
 #guard upgradeFor (bytes "2.2.0") [⟨some [⟨none, some (bytes "2.7.1-rc1"), none⟩], []⟩] == none
 #guard upgradeFor (bytes "2.2.0") [⟨some [⟨none, some (bytes "2.7.1-rc1"), none⟩], [bytes "2.7.1"]⟩] == some (bytes "2.7.1")
+-- Composer, GHSA-2ff6-837j-hg5x's [2.4.7-beta1, 2.4.7-p2): 2.4.7-p1 is inside it, so it does not fix 2.4.6-p3
+#guard judge (bytes "2.4.6-p3") (bytes "2.4.7-p1") [⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩] == some [false]
+#guard judge (bytes "2.4.6-p3") (bytes "2.4.7-p2") [⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩] == some [true]
+#guard verdict (bytes "2.4.7-p1") ⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩ == .inRange
+#guard verdict (bytes "2.4.6-p3") ⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩ == .clear
+-- Maven, guava fixed in 33.7.2: the core reads "-jre" as semver does, below the release, so it does not call
+-- 33.7.2-jre a fix, where Maven would. Both versions are uncertain, so the app does not decide by the core's order.
+#guard judge (bytes "31.1-jre") (bytes "33.7.2-jre") [⟨some [⟨none, some (bytes "33.7.2"), none⟩], []⟩] == some [false]
+#guard versionUncertain (bytes "31.1-jre") && versionUncertain (bytes "33.7.2-jre")
+#guard judge (bytes "31.1") (bytes "33.7.2") [⟨some [⟨none, some (bytes "33.7.2"), none⟩], []⟩] == some [true]
 
 end OSVA

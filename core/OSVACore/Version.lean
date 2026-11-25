@@ -1,22 +1,32 @@
 /-
-  Version order (C: osva_vcmp).
+  The core's version order (C: osva_vcmp), and which versions it may order differently from their ecosystem (C:
+  osva_version_uncertain).
 
   A version is read as a list of tokens, each turned into a key (a list of naturals), and two versions are compared
   key by key; a version that has run out reads as the key of "end of version" from then on:
 
     word after a "-"   [0, 0, bytes…]   a pre-release of an unknown kind: "15.0.0-canary.12", "2.0.0-next.3"
     pre-release word   [0, rank]        dev 1 · a, alpha 2 · b, beta 3 · c, rc, pre, preview 4
-    end of version     [1]
+    end of version     [1]              also "ga", "final" and "release" after a "-": "5.3.0-RELEASE" = "5.3.0"
     other word         [2, bytes…]      lowercase
     number             [3, digit count, digits…]   leading zeros dropped, so any length compares numerically
 
-  so "1.0rc1" < "1.0" < "1.0.post1" < "1.0.1", "15.0.0-canary.12" < "15.0.0-rc.1" < "15.0.0", and "10.6" < "10.6p2".
-  A word right after a "-" is a pre-release, as semver and PEP 440 read it, unless it is a post-release word PEP 440
-  allows there ("1.0-post1", "-rev1", "-r1"); a number after a "-" is still a number ("7.1.1-41" > "7.1.1").
+  so "1.0rc1" < "1.0" < "1.0.post1" < "1.0.1", "15.0.0-canary.12" < "15.0.0-rc.1" < "15.0.0" < "15.0.0-p1", and
+  "10.6" < "10.6p2". A word right after a "-" is a pre-release, as semver reads it, unless it is a known pre-release
+  word, a release-equal word (ga, final, release, as Maven reads them) or a post-release word (p, patch, pl, sp, r,
+  post, rev, as Composer, Maven and PEP 440 read them), which stays after the release.
 
   The release numbers a version starts with lose the zeros that end them, keeping the first, so "1.0" = "1.0.0" = "1"
   and "1.0rc1" = "1.0.0rc1", as PEP 440 orders them. A leading "v" before a digit and everything from the first "+"
   (build metadata) are ignored; every byte that is not an ASCII letter or digit separates tokens.
+
+  Where it differs from an ecosystem's own order:
+    · a number after a "-" continues the version. That is right for ImageMagick's "7.1.1-41" (above "7.1.1"), but
+      semver puts a numeric pre-release ("1.0.0-0") and Go a pseudo-version ("v1.2.4-0.20191109021931-…") below the
+      release;
+    · any other word after a "-" ("-jre", "-android", "-incubating", "-rc1") is ordered as semver orders it, which
+      Maven and Composer may not: `versionUncertain` names such versions, so the app need not trust this order for
+      them.
 
   The theorems at the end say this is a total preorder for every pair (and triple) of byte strings: the order the
   rest of the app relies on can never call a version both older and newer than another.
@@ -50,12 +60,14 @@ def wordKey (w : Bytes) : List Nat :=
   let r := preRank w
   if r > 0 then [0, r] else 2 :: w.map (·.toNat)
 
-/-- The post-release words PEP 440 allows after a "-" ("1.0-post1", "1.0-rev1", "1.0-r1"). -/
-def isPostWord (w : Bytes) : Bool := w == bytes "post" || w == bytes "rev" || w == bytes "r"
+/-- Post-release words after a "-" (already lowercase), each optionally followed by a number: Composer's "-p3",
+  "-patch1", "-pl2", Maven's "-sp1", PEP 440's "-post1", "-rev1", "-r1". -/
+def isPostWord (w : Bytes) : Bool :=
+  w == bytes "p" || w == bytes "patch" || w == bytes "pl" || w == bytes "sp" || w == bytes "r" || w == bytes "post" ||
+    w == bytes "rev"
 
-/-- A word right after a "-": a pre-release, below every known kind unless it is one, or a post-release word. -/
-def hyphenKey (w : Bytes) : List Nat :=
-  if preRank w > 0 || isPostWord w then wordKey w else 0 :: 0 :: w.map (·.toNat)
+/-- Words that mean the release itself after a "-", as Maven reads them: "-GA", "-Final", "-RELEASE". -/
+def isReleaseWord (w : Bytes) : Bool := w == bytes "ga" || w == bytes "final" || w == bytes "release"
 
 def numKey (d : Bytes) : List Nat :=
   let s := stripZeros d
@@ -63,12 +75,19 @@ def numKey (d : Bytes) : List Nat :=
 
 def endKey : List Nat := [1]
 
+/-- A word right after a "-": the release itself for a release-equal word, after the release for a post-release word,
+  its rank for a known pre-release word, and otherwise a pre-release below every known kind. -/
+def hyphenKey (w : Bytes) : List Nat :=
+  if isReleaseWord w then endKey
+  else if preRank w > 0 || isPostWord w then wordKey w
+  else 0 :: 0 :: w.map (·.toNat)
+
 /-- Between tokens (`hyp`: right after a "-"), in a number, in a word (`pre`: one that began right after a "-"). -/
 inductive Mode where
   | sep | hyp | dig | alp | pre
   deriving DecidableEq
 
-/-- Close the token being read (its bytes are kept reversed while reading). -/
+/-- Close the token being read (its bytes are kept reversed while reading) into its key. -/
 def flush (m : Mode) (cur : Bytes) (acc : List (List Nat)) : List (List Nat) :=
   match m with
   | .sep | .hyp => acc
@@ -76,16 +95,22 @@ def flush (m : Mode) (cur : Bytes) (acc : List (List Nat)) : List (List Nat) :=
   | .alp => wordKey cur.reverse :: acc
   | .pre => hyphenKey cur.reverse :: acc
 
-/-- One pass over the bytes: runs of digits and runs of letters become keys, everything else separates them. -/
-def scan : Bytes → Mode → Bytes → List (List Nat) → List (List Nat)
-  | [], m, cur, acc => (flush m cur acc).reverse
+/-- Keep the token being read only if it is a word that began right after a "-". -/
+def flushHyphenWord (m : Mode) (cur : Bytes) (acc : List Bytes) : List Bytes :=
+  if m = .pre then cur.reverse :: acc else acc
+
+/-- One pass over the bytes: runs of digits and runs of letters are tokens, each closed by `fl`; everything else
+  separates them. The order and `hyphenWords` both read a version with it, so they agree on what a word after a "-"
+  is. -/
+def scanBy {α : Type} (fl : Mode → Bytes → List α → List α) : Bytes → Mode → Bytes → List α → List α
+  | [], m, cur, acc => (fl m cur acc).reverse
   | c :: t, m, cur, acc =>
     if isDigit c then
-      if m = .dig then scan t .dig (c :: cur) acc else scan t .dig [c] (flush m cur acc)
+      if m = .dig then scanBy fl t .dig (c :: cur) acc else scanBy fl t .dig [c] (fl m cur acc)
     else if isAlpha c then
-      if m = .alp ∨ m = .pre then scan t m (lower c :: cur) acc
-      else scan t (if m = .hyp then .pre else .alp) [lower c] (flush m cur acc)
-    else scan t (if c = 45 then .hyp else .sep) [] (flush m cur acc)
+      if m = .alp ∨ m = .pre then scanBy fl t m (lower c :: cur) acc
+      else scanBy fl t (if m = .hyp then .pre else .alp) [lower c] (fl m cur acc)
+    else scanBy fl t (if c = 45 then .hyp else .sep) [] (fl m cur acc)
 
 /-- Drop build metadata (from the first '+') and a leading 'v'/'V' before a digit. -/
 def trimVersion (s : Bytes) : Bytes :=
@@ -94,7 +119,57 @@ def trimVersion (s : Bytes) : Bytes :=
   | s' => s'
 
 /-- The keys of a version as written, one per token. -/
-def keys (s : Bytes) : List (List Nat) := scan (trimVersion s) .sep [] []
+def keys (s : Bytes) : List (List Nat) := scanBy flush (trimVersion s) .sep [] []
+
+/-- The words of a version that begin right after a "-", lowercase. -/
+def hyphenWords (s : Bytes) : List Bytes := scanBy flushHyphenWord (trimVersion s) .sep [] []
+
+/-- The core may order this version differently from its ecosystem: it has a word right after a "-" that is neither
+  a post-release word nor a release-equal one ("33.7.2-jre", "2.0.0-incubating", "1.0.0-rc.1"), which the core orders
+  as semver does, below the release, and Maven may not. -/
+def versionUncertain (s : Bytes) : Bool := (hyphenWords s).any fun w => !(isPostWord w || isReleaseWord w)
+
+/-- What `versionUncertain` says: some word after a "-" is in neither list. -/
+theorem versionUncertain_spec (s : Bytes) :
+    versionUncertain s = true ↔ ∃ w ∈ hyphenWords s, isPostWord w = false ∧ isReleaseWord w = false := by
+  simp [versionUncertain]
+
+theorem scanBy_hyphenWord_none (bs : Bytes) (m : Mode) (cur : Bytes) (hb : ∀ c ∈ bs, c ≠ 45) (hh : m ≠ .hyp)
+    (hp : m ≠ .pre) : scanBy flushHyphenWord bs m cur [] = [] := by
+  induction bs generalizing m cur with
+  | nil => simp [scanBy, flushHyphenWord, hp]
+  | cons c t ih =>
+    have hc : c ≠ 45 := hb c (List.mem_cons_self ..)
+    have ht : ∀ x ∈ t, x ≠ 45 := fun x hx => hb x (List.mem_cons_of_mem _ hx)
+    have hf : flushHyphenWord m cur [] = [] := by simp [flushHyphenWord, hp]
+    simp only [scanBy, hf, hh, hc, ite_false]
+    split
+    · split
+      · exact ih .dig _ ht (by simp) (by simp)
+      · exact ih .dig _ ht (by simp) (by simp)
+    · split
+      · split
+        · rename_i hm
+          exact ih m _ ht hh hp
+        · exact ih .alp _ ht (by simp) (by simp)
+      · exact ih .sep _ ht (by simp) (by simp)
+
+theorem mem_trimVersion {s : Bytes} {c : UInt8} (h : c ∈ trimVersion s) : c ∈ s := by
+  have hs : ∀ x ∈ s.takeWhile (· ≠ 43), x ∈ s := fun x hx => (List.takeWhile_sublist _).subset hx
+  unfold trimVersion at h
+  split at h
+  · rename_i a b t heq
+    rw [heq] at hs
+    split at h
+    · exact hs c (List.mem_cons_of_mem _ h)
+    · exact hs c h
+  · exact hs c h
+
+/-- A version without a "-" is never uncertain: "1.2.3", "10.6p2" and "1.0rc1" are ordered as their ecosystems do. -/
+theorem versionUncertain_without_hyphen {s : Bytes} (h : ∀ c ∈ s, c ≠ 45) : versionUncertain s = false := by
+  have hw : hyphenWords s = [] :=
+    scanBy_hyphenWord_none _ .sep [] (fun c hc => h c (mem_trimVersion hc)) (by simp) (by simp)
+  simp [versionUncertain, hw]
 
 def isNumKey (k : List Nat) : Bool := k.head? == some 3
 
@@ -108,8 +183,8 @@ def trimRelease (ks : List (List Nat)) : List (List Nat) :=
 /-- The keys the order compares. -/
 def tokens (s : Bytes) : List (List Nat) := trimRelease (keys s)
 
-/-- No pre-release token: "2.7.1" and "1.0.post1" are releases; "2.7.1-rc1", "1.0.dev1" and "15.0.0-canary.12" are
-  not. -/
+/-- No pre-release token: "2.7.1", "1.0.post1", "2.4.6-p3" and "5.3.0-RELEASE" are releases; "2.7.1-rc1",
+  "1.0.dev1" and "15.0.0-canary.12" are not. -/
 def isRelease (s : Bytes) : Bool := !(tokens s).any (·.head? == some 0)
 
 /-- Keys compared number by number; a shorter key is smaller than its extensions. -/
@@ -166,8 +241,29 @@ theorem vcmp_lt_trans {a b c : Bytes} (h1 : vcmp a b = .lt) (h2 : vcmp b c = .lt
 #guard vcmp (bytes "15.0.0-canary.12") (bytes "15.0.0-canary.3") == .gt
 #guard vcmp (bytes "15.0.0-canary.12") (bytes "14.2.3") == .gt
 #guard vcmp (bytes "1.0-SNAPSHOT") (bytes "1.0") == .lt
-#guard vcmp (bytes "1.0-post1") (bytes "1.0") == .gt              -- PEP 440's post-release spellings stay after it
+-- post-release words after a "-" stay after the release, both ways round (Composer, Maven, PEP 440)
+#guard vcmp (bytes "2.4.6-p3") (bytes "2.4.6") == .gt
+#guard vcmp (bytes "2.4.6") (bytes "2.4.6-p3") == .lt
+#guard vcmp (bytes "2.4.6-patch1") (bytes "2.4.6") == .gt
+#guard vcmp (bytes "2.4.6") (bytes "2.4.6-patch1") == .lt
+#guard vcmp (bytes "5.4-pl2") (bytes "5.4") == .gt
+#guard vcmp (bytes "5.4") (bytes "5.4-pl2") == .lt
+#guard vcmp (bytes "1.0-SP1") (bytes "1.0") == .gt
+#guard vcmp (bytes "1.0") (bytes "1.0-SP1") == .lt
+#guard vcmp (bytes "1.0-r1") (bytes "1.0") == .gt
+#guard vcmp (bytes "1.0-rev1") (bytes "1.0") == .gt
+#guard vcmp (bytes "1.0-post1") (bytes "1.0") == .gt
+#guard vcmp (bytes "1.0") (bytes "1.0-post1") == .lt
 #guard vcmp (bytes "1.0-post1") (bytes "1.0.post1") == .eq
+#guard vcmp (bytes "2.4.6-p3") (bytes "2.4.7-beta1") == .lt
+#guard vcmp (bytes "2.4.7-p1") (bytes "2.4.7-p2") == .lt
+-- release-equal words after a "-" are the release, both ways round (Maven)
+#guard vcmp (bytes "5.3.0-RELEASE") (bytes "5.3.0") == .eq
+#guard vcmp (bytes "5.3.0") (bytes "5.3.0-RELEASE") == .eq
+#guard vcmp (bytes "5.4.32-Final") (bytes "5.4.32") == .eq
+#guard vcmp (bytes "1.0-GA") (bytes "1.0") == .eq
+#guard vcmp (bytes "1.0-GA") (bytes "1.0-SP1") == .lt
+#guard vcmp (bytes "1.0-GA") (bytes "1.0.1") == .lt
 #guard vcmp (bytes "7.1.1-41") (bytes "7.1.1") == .gt             -- a number after a "-" is still a number
 #guard vcmp (bytes "1.1.1w") (bytes "1.1.1") == .gt               -- a word without a "-" is not a pre-release
 #guard isRelease (bytes "2.7.1")
@@ -178,5 +274,13 @@ theorem vcmp_lt_trans {a b c : Bytes} (h1 : vcmp a b = .lt) (h2 : vcmp b c = .lt
 #guard !isRelease (bytes "1.0.dev1")
 #guard !isRelease (bytes "15.0.0-canary.12")
 #guard !isRelease (bytes "1.0a1")
+#guard isRelease (bytes "2.4.6-p3") && isRelease (bytes "1.0-SP1") && isRelease (bytes "5.3.0-RELEASE")
+-- which versions the core may order differently from their ecosystem
+#guard versionUncertain (bytes "33.7.2-jre") && versionUncertain (bytes "31.1-android")
+#guard versionUncertain (bytes "2.0.0-incubating") && versionUncertain (bytes "15.0.0-canary.12")
+#guard versionUncertain (bytes "1.0.0-rc.1")                     -- a known pre-release word, but not on either list
+#guard !versionUncertain (bytes "2.4.6-p3") && !versionUncertain (bytes "1.0-SP1") && !versionUncertain (bytes "5.3.0-RELEASE")
+#guard !versionUncertain (bytes "1.2.3") && !versionUncertain (bytes "10.6p2") && !versionUncertain (bytes "1.0rc1")
+#guard !versionUncertain (bytes "7.1.1-41") && !versionUncertain (bytes "1.0+build-jre")
 
 end OSVA

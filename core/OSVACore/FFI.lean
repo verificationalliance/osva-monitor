@@ -104,6 +104,15 @@ def ffiSelect (index inventory : Array ByteArray) : ByteArray :=
 @[export osva_lean_encode]
 def ffiEncode (s : ByteArray) : ByteArray := ofBytes (pctEncode (toBytes s))
 
+/-- osva_version_uncertain: 1 when the core may order the version differently from its ecosystem, else 0. -/
+@[export osva_lean_version_uncertain]
+def ffiVersionUncertain (v : ByteArray) : UInt8 := if versionUncertain (toBytes v) then 1 else 0
+
+theorem ffiVersionUncertain_spec (v : ByteArray) :
+    ffiVersionUncertain v = 1 ↔ versionUncertain (toBytes v) = true := by
+  unfold ffiVersionUncertain
+  split <;> simp_all
+
 theorem ffiVcmp_spec (a b : ByteArray) : ffiVcmp a b = ordCode (vcmp (toBytes a) (toBytes b)) := rfl
 
 theorem ffiAffected_one_iff (v : ByteArray) (fixed : Array ByteArray) :
