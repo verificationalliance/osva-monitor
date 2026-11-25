@@ -2,7 +2,8 @@
 # Checks OSVA Monitor's verified core, on Linux or macOS, with only Lean (elan) and a C compiler installed:
 #   1. builds the Lean core: Lean re-checks every theorem (warnings are errors, so no `sorry` gets through);
 #   2. audits the axioms each published theorem rests on: Lean's standard three only;
-#   3. compiles the C shim against the Lean-compiled core and runs ffi/test/shim_test.c.
+#   3. compiles the C shim against the Lean-compiled core and runs ffi/test/shim_test.c (on Linux, also under ASan and
+#      UBSan).
 set -euo pipefail
 cd "$(dirname "$0")/../core"
 export PATH="$HOME/.elan/bin:$PATH"
@@ -14,7 +15,7 @@ echo "2. axioms"
 out=$(lake env lean Audit.lean)
 n=$(grep -c "depends on axioms\|does not depend on any axioms" <<<"$out")
 bad=$(grep "depends on axioms" <<<"$out" | grep -v -E "axioms: \[((propext|Quot.sound|Classical.choice)(, )?)+\]$" || true)
-if [ -n "$bad" ] || [ "$n" -lt 38 ]; then echo "$out"; echo "FAILED: unexpected axioms or missing theorems"; exit 1; fi
+if [ -n "$bad" ] || [ "$n" -lt 47 ]; then echo "$out"; echo "FAILED: unexpected axioms or missing theorems"; exit 1; fi
 echo "   $n theorems, standard axioms only"
 
 echo "3. C shim"
@@ -28,5 +29,13 @@ else
 fi
 tmp=$(mktemp -d)
 cc -O2 -Wall -Wextra -Werror -I include -I "$T/include" -o "$tmp/shim_test" ffi/test/shim_test.c ffi/osva_shim.c "$LIB" "${LINK[@]}"
-"$tmp/shim_test" | tail -1
+"$tmp/shim_test" | grep -v '^ok '
+if [ "$(uname)" != Darwin ]; then
+  # Again with AddressSanitizer and UndefinedBehaviorSanitizer, so a read or write out of bounds fails even where it
+  # would not crash. Leak checks are off: the Lean runtime keeps what it allocates at start-up for the process.
+  echo "   and with ASan and UBSan:"
+  cc -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Wall -Wextra -Werror \
+    -I include -I "$T/include" -o "$tmp/shim_test_san" ffi/test/shim_test.c ffi/osva_shim.c "$LIB" "${LINK[@]}"
+  ASAN_OPTIONS=detect_leaks=0 "$tmp/shim_test_san" | grep -v '^ok '
+fi
 rm -rf "$tmp"

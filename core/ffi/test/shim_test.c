@@ -2,6 +2,8 @@
  * theorems and examples promise. Run by scripts/check-core.sh on Linux and macOS. */
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "osva_core.h"
 
 static int fails = 0;
@@ -55,6 +57,110 @@ int main(void) {
     CHECK(osva_upgrade_ranges(S("16.10"), two, 2, up, sizeof up) == 5 && memcmp(up, "16.20", 5) == 0, "an upgrade inside another range is skipped");
     CHECK(osva_upgrade_ranges(S("16.10"), two, 2, up, 4) == -3, "upgrade refuses a small buffer");
     CHECK(osva_upgrade_ranges(S("16.10"), two, 2, NULL, 8) == -2, "upgrade refuses a NULL buffer");
+
+    /* advisories (Decide.lean's examples): ranges decide when there are any, else the first fixed versions, as "likely" */
+    const uint8_t *f1620[] = { (const uint8_t *)"16.20" };
+    size_t f1620l[] = { 5 };
+    const uint8_t *f99[] = { (const uint8_t *)"99" };
+    size_t f99l[] = { 2 };
+    const osva_advisory nginx = { 0, NULL, 0, fx, fl, 2 };
+    const osva_advisory pg_nginx[] = { { 1, pg, 5, NULL, NULL, 0 }, nginx };
+    const osva_advisory pg_ff1620[] = { { 1, pg, 5, NULL, NULL, 0 }, { 0, NULL, 0, f1620, f1620l, 1 } };
+    uint8_t vd[2] = { 9, 9 };
+    CHECK(osva_verdicts(S("16.14"), pg_nginx, 2, vd) == 0 && vd[0] == 1 && vd[1] == 0, "verdicts: postgresql 16.14 inside a range, nginx clear");
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("1.31.5"), &nginx, 1, vd) == 0 && vd[0] == 2, "verdicts: no ranges, nginx 1.31.5 likely");
+    CHECK(osva_verdicts(S("1.32.0"), &nginx, 1, vd) == 0 && vd[0] == 0, "verdicts: no ranges, nginx 1.32.0 clear");
+    const osva_advisory pg_99 = { 1, pg, 5, f99, f99l, 1 };
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("16.16"), &pg_99, 1, vd) == 0 && vd[0] == 0, "verdicts: ranges decide, first fixed versions not consulted");
+    const osva_advisory empty_ranges = { 1, NULL, 0, f1620, f1620l, 1 };
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("1.0"), &empty_ranges, 1, vd) == 0 && vd[0] == 2, "verdicts: an empty list of ranges is no answer, the fixed versions decide");
+    const osva_advisory states_nothing = { 1, NULL, 0, NULL, NULL, 0 };
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("1.0"), &states_nothing, 1, vd) == 0 && vd[0] == 0, "verdicts: an empty list and no fixed versions is clear");
+    const osva_advisory pg_256 = { 256, pg, 5, NULL, NULL, 0 };    /* any non-zero has_ranges, not only its low byte */
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("16.14"), &pg_256, 1, vd) == 0 && vd[0] == 1, "verdicts: has_ranges 256 has ranges");
+    CHECK(osva_upgrade_for(S("16.14"), pg_ff1620, 2, up, sizeof up) == 5 && memcmp(up, "16.20", 5) == 0, "upgrade for: 16.20 leaves both advisories");
+    CHECK(osva_upgrade_for(S("16.14"), pg_ff1620, 2, up, 4) == -3, "upgrade for refuses a small buffer");
+    const osva_advisory open_adv = { 1, open_end, 1, NULL, NULL, 0 };
+    CHECK(osva_upgrade_for(S("2.0"), &open_adv, 1, up, sizeof up) == -1, "upgrade for: no end, no upgrade");
+    uint8_t jd[2] = { 9, 9 };
+    CHECK(osva_judge(S("16.14"), S("16.15"), pg_ff1620, 2, jd) == 1 && jd[0] == 1 && jd[1] == 0, "judge: 16.15 leaves postgresql's ranges, not 16.20's fix");
+    jd[0] = jd[1] = 9;
+    CHECK(osva_judge(S("16.14"), S("16.14"), pg_ff1620, 2, jd) == 0 && jd[0] == 9 && jd[1] == 9, "judge: not above, out untouched");
+    const osva_range rc[] = { R(NULL, "2.7.1-rc1", NULL) };
+    const osva_range all[] = { R(NULL, NULL, NULL) };
+    const osva_advisory rc_all[] = { { 1, rc, 1, NULL, NULL, 0 }, { 1, all, 1, NULL, NULL, 0 } };
+    CHECK(osva_judge(S("2.2.0"), S("2.13.0"), rc_all, 2, jd) == 1 && jd[0] == 1 && jd[1] == 0, "judge: 2.13.0 leaves a fixed range, not an open one");
+    /* clear is no evidence: an advisory that states nothing is never fixed, and never lets an upgrade through */
+    const osva_advisory pg_nothing[] = { { 1, pg, 5, NULL, NULL, 0 }, { 0, NULL, 0, NULL, NULL, 0 } };
+    vd[0] = jd[0] = 9;
+    CHECK(osva_verdicts(S("1.1"), &pg_nothing[1], 1, vd) == 0 && vd[0] == 0 &&
+          osva_judge(S("1.0"), S("1.1"), &pg_nothing[1], 1, jd) == 1 && jd[0] == 0, "judge: clear of an advisory that states nothing is no fix");
+    jd[0] = 9;
+    CHECK(osva_judge(S("1.0"), S("1.1"), &states_nothing, 1, jd) == 1 && jd[0] == 0, "judge: nor of an empty list without fixed versions");
+    CHECK(osva_upgrade_for(S("16.14"), pg_nothing, 2, up, sizeof up) == -1, "upgrade for: none past an advisory that states nothing");
+    const osva_advisory pg_empty[] = { { 1, pg, 5, NULL, NULL, 0 }, states_nothing };
+    CHECK(osva_upgrade_for(S("16.14"), pg_empty, 2, up, sizeof up) == -1, "upgrade for: nor past an empty list without fixed versions");
+    jd[0] = 9;
+    CHECK(osva_judge(S("1.0"), S("16.20"), &empty_ranges, 1, jd) == 1 && jd[0] == 1, "judge: an empty list, fixed versions as evidence");
+    /* candidates are releases: a pre-release is never suggested, a release named beside it is */
+    const uint8_t *f271[] = { (const uint8_t *)"2.7.1" };
+    size_t f271l[] = { 5 };
+    const osva_advisory rc_only = { 1, rc, 1, NULL, NULL, 0 }, rc_and_release = { 1, rc, 1, f271, f271l, 1 };
+    CHECK(osva_upgrade_for(S("2.2.0"), &rc_only, 1, up, sizeof up) == -1, "upgrade for: never a pre-release");
+    CHECK(osva_upgrade_for(S("2.2.0"), &rc_and_release, 1, up, sizeof up) == 5 && memcmp(up, "2.7.1", 5) == 0, "upgrade for: the release named beside it");
+    CHECK(osva_verdicts(S("1.0"), NULL, 0, NULL) == 0, "verdicts: no advisories");
+    CHECK(osva_upgrade_for(S("1.0"), NULL, 0, up, sizeof up) == -1, "upgrade for: no advisories, no upgrade");
+    CHECK(osva_judge(S("1.0"), S("2.0"), NULL, 0, NULL) == 1, "judge: no advisories, above");
+
+    /* the ranges are not read when has_ranges is 0: here a stale pointer and count into a page that cannot be read */
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(guard != MAP_FAILED, "a page that cannot be read");
+    if (guard != MAP_FAILED) {
+        const osva_advisory stale = { 0, (const osva_range *)guard, 1, f1620, f1620l, 1 };
+        vd[0] = jd[0] = 9;
+        CHECK(osva_verdicts(S("16.14"), &stale, 1, vd) == 0 && vd[0] == 2 &&
+              osva_upgrade_for(S("16.14"), &stale, 1, up, sizeof up) == 5 && memcmp(up, "16.20", 5) == 0 &&
+              osva_judge(S("16.14"), S("16.20"), &stale, 1, jd) == 1 && jd[0] == 1, "ranges not read when has_ranges is 0");
+        munmap(guard, page);
+    }
+
+    /* bad arguments: -2 from all three, nothing written */
+    vd[0] = 9;
+    CHECK(osva_verdicts(S("1.0"), NULL, 1, vd) == -2 && osva_upgrade_for(S("1.0"), NULL, 1, up, sizeof up) == -2 &&
+          osva_judge(S("1.0"), S("2.0"), NULL, 1, vd) == -2 && vd[0] == 9, "advisories NULL refused");
+    const osva_advisory no_ranges_ptr = { 1, NULL, 1, NULL, NULL, 0 };
+    const osva_advisory no_fixed_ptr = { 0, NULL, 0, NULL, f1620l, 1 };
+    const osva_advisory no_fixed_len = { 0, NULL, 0, f1620, NULL, 1 };
+    const uint8_t *null_item[] = { NULL };
+    const osva_advisory null_fixed_item = { 0, NULL, 0, null_item, f1620l, 1 };
+    const osva_advisory too_many_ranges = { 1, pg, SIZE_MAX / 3 + 1, NULL, NULL, 0 };
+    const osva_advisory unused_ranges = { 0, NULL, 1, NULL, NULL, 0 };    /* read or not, a NULL with a count is refused */
+    const osva_advisory bad[] = { no_ranges_ptr, no_fixed_ptr, no_fixed_len, null_fixed_item, too_many_ranges, unused_ranges };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        const osva_advisory two_adv[] = { nginx, bad[i] };      /* the bad one second: every advisory is checked */
+        char what[64];
+        snprintf(what, sizeof what, "bad advisory %zu refused", i);
+        vd[0] = vd[1] = 9;
+        CHECK(osva_verdicts(S("1.0"), two_adv, 2, vd) == -2 && osva_upgrade_for(S("1.0"), two_adv, 2, up, sizeof up) == -2 &&
+              osva_judge(S("1.0"), S("2.0"), two_adv, 2, vd) == -2 && vd[0] == 9 && vd[1] == 9, what);
+    }
+    CHECK(osva_verdicts(S("1.0"), &nginx, SIZE_MAX / 3 + 1, vd) == -2, "verdicts refuse n above SIZE_MAX / 3");
+    CHECK(osva_verdicts(S("1.0"), &nginx, 1, NULL) == -2, "verdicts refuse a NULL out");
+    CHECK(osva_upgrade_for(S("1.0"), &nginx, 1, NULL, 8) == -2, "upgrade for refuses a NULL buffer");
+    CHECK(osva_judge(S("1.0"), S("2.0"), &nginx, 1, NULL) == -2, "judge refuses a NULL out");
+    CHECK(osva_verdicts(NULL, 3, &nginx, 1, vd) == -2 && osva_upgrade_for(NULL, 3, &nginx, 1, up, sizeof up) == -2 &&
+          osva_judge(S("1.0"), NULL, 3, &nginx, 1, vd) == -2, "a NULL version with a length refused");
+
+    /* many calls with nested arguments: no leaks or crashes across repeated use */
+    for (int i = 0; i < 20000; i++)
+        if (osva_judge(S("16.14"), S("16.15"), pg_ff1620, 2, jd) != 1 || osva_upgrade_for(S("16.14"), pg_ff1620, 2, up, sizeof up) != 5) { fails++; break; }
+    CHECK(1, "20000 advisory calls");
 
     const uint8_t *ix[] = { (const uint8_t *)"npm\x1f" "axios", (const uint8_t *)"PyPI\x1f" "requests" };
     size_t il[] = { 9, 13 };
