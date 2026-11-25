@@ -92,6 +92,60 @@ int osva_affected_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, 
 long osva_upgrade_ranges(const uint8_t *v, size_t nv, const osva_range *ranges, size_t n_ranges, uint8_t *out, size_t cap);
 
 /*
+ * One advisory as the site publishes it, for osva_verdicts, osva_upgrade_for and osva_judge: its affected ranges, and
+ * the first fixed versions its issuer names, one per release branch (as for osva_affected). The ranges are read only
+ * when has_ranges is not 0; n_ranges 0 then means the site publishes an empty list, inside which no version lies.
+ * Pointers are read only during the call.
+ *
+ * A bad argument, for all three: as NULL while n is not 0; an advisory's ranges NULL while its n_ranges is not 0 (even
+ * when has_ranges is 0), its fixed or fixed_len NULL while its n_fixed is not 0, or one of its fixed versions NULL
+ * with a length that is not 0; a version NULL with a length that is not 0; out NULL while n is not 0 (osva_upgrade_for:
+ * while cap is not 0); n or any n_ranges above SIZE_MAX / 3. Every argument is checked before any is used.
+ */
+typedef struct {
+    int has_ranges;                     /* 0: the site publishes none it can read; fixed then decides */
+    const osva_range *ranges;
+    size_t n_ranges;
+    const uint8_t *const *fixed;
+    const size_t *fixed_len;
+    size_t n_fixed;
+} osva_advisory;
+
+/*
+ * What each advisory says about an installed version. Ranges decide when an advisory has them; without them its first
+ * fixed versions decide, and only as "likely":
+ *   1 (inside a published range)  <=>  the advisory has ranges, and v lies in one of them (osva_affected_ranges);
+ *   2 (likely)                    <=>  it has none, and the first-fixed rule says v is affected (osva_affected);
+ *   0 (clear)                         otherwise.
+ * Writes one answer per advisory to out[0 .. n-1] and returns 0; returns -2 on a bad argument (above), writing nothing.
+ * Theorems (OSVACore/Decide.lean): 1 only when v lies in one of the advisory's published ranges, and always then; 2
+ * only for an advisory without ranges whose first fixed versions say v is affected.
+ */
+int osva_verdicts(const uint8_t *v, size_t nv, const osva_advisory *as, size_t n, uint8_t *out);
+
+/*
+ * The upgrade to suggest, given the advisories that concern an installed version: the lowest of the candidates (every
+ * fixed version their ranges name, and every first fixed version) that is above v and that every advisory calls clear
+ * (osva_verdicts would write 0 for each). Writes it to out and returns its length; returns -1 if there is none, -2 on
+ * a bad argument (above), -3 if cap is smaller than the version (cap at least the longest fixed version given is
+ * always enough).
+ * Theorems (OSVACore/Decide.lean): the version is above v, lies in none of the advisories' published ranges, is not
+ * flagged by the first fixed versions of any advisory without ranges, and no other candidate with those properties is
+ * below it.
+ */
+long osva_upgrade_for(const uint8_t *v, size_t nv, const osva_advisory *as, size_t n, uint8_t *out, size_t cap);
+
+/*
+ * Checks an upgrade u that the core did not pick (the server's target, a vendor's build, pip's choice). When u is
+ * above v, sets out[i] to 1 if advisory i calls u clear (osva_verdicts would write 0 for it), else to 0, and returns
+ * 1; when u is not above v, returns 0 and leaves out untouched. Returns -2 on a bad argument (above), writing nothing.
+ * Theorem (OSVACore/Decide.lean): it answers only for a u above v, one answer per advisory, and out[i] is 1 only if u
+ * lies in none of advisory i's published ranges (without ranges: only if its first fixed versions do not flag u).
+ */
+int osva_judge(const uint8_t *v, size_t nv, const uint8_t *u, size_t nu, const osva_advisory *as, size_t n,
+               uint8_t *out);
+
+/*
  * Privacy filter. Keys are "<ecosystem>\x1f<name>". mask[i] is set to 1 if inventory key i is in the public index
  * the app downloaded, else 0; only keys with mask 1 may be sent to the API. Returns 0, or -1 on a bad argument.
  * Theorem (OSVACore/Select.lean): mask[i] = 1 exactly when inventory key i equals some index key byte for byte.

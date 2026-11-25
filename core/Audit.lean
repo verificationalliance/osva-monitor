@@ -40,6 +40,10 @@ open OSVA
 #print axioms ffiAffected_one_iff
 #print axioms ffiAffectedRanges_one_iff
 #print axioms ffiUpgradeRanges_spec
+#print axioms ffiVerdicts_spec
+#print axioms ffiUpgradeFor_spec
+#print axioms ffiJudge_spec
 #print axioms decodeRanges_get
+#print axioms decodeAdvisories_get
 #print axioms ffiEncode_spec
 #print axioms ffiSelect_length
