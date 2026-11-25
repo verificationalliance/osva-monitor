@@ -196,17 +196,16 @@ public struct FindingBuilder: Sendable {
             }
             : state.check == .reported ? [] : Self.unresolved(check, upgrade: upgrade, python: package.python, onThisMac: onThisMac)
         // A command needs a version the core checked, unless Homebrew picks it (`brew upgrade`, whose versions the
-        // person already takes): never npm's @latest, `cargo install x` or `gem update x` on the server's word.
+        // person already takes): never npm's @latest, `cargo install x` or `gem update x` on the server's word. Without
+        // one, UpgradeCommand writes none and says so (`noCheckedVersion`).
         let withheld = !malicious && (rejected || unconfirmed || state.check == .reported || onlyElsewhere)
         let page = SiteURL.packagePage(package.ecosystem, package.name, version: package.version)
-        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: upgrade?.version,
-                                           malicious: malicious)
+        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: upgrade, malicious: malicious)
         let full = UpgradeCommand.advice(inputs)
-        let unchecked = !malicious && upgrade == nil && full.command.map { !UpgradeCommand.isHomebrewUpgrade($0) } == true
         // without a command, a note that does not depend on one stays ("Update GitLens in VS Code: …")
-        let advice = withheld || unchecked ? UpgradeCommand.Advice(command: nil, note: full.command == nil ? full.note : nil) : full
+        let advice = withheld ? UpgradeCommand.Advice(command: nil, note: full.command == nil ? full.note : nil) : full
         let rejectedNote = "The server named a fixed version the app does not accept as a version; see the site."
-        let noChecked = "No checked fixed version yet; see the site."
+        let noChecked = UpgradeCommand.noCheckedVersion
         let more = Self.sentences(BatchCheck.moreLikely(state.moreLikely, naming: state.likelyAlert),
                                   BatchCheck.moreReported(state.moreReported, naming: state.reportedAlert))
         let note: String?
@@ -220,11 +219,11 @@ public struct FindingBuilder: Sendable {
             if rejected { why = rejectedNote }
             else if unconfirmed { why = noChecked }
             else if verdict.plan != nil && target == .none && unresolved.isEmpty { why = "No fixed release yet." }
-            else if unchecked { why = noChecked }
             else { why = advice.note }
             note = Self.sentences(why, more)
         case .likely?:
-            let how = rejected ? rejectedNote : unconfirmed ? noChecked : advice.note
+            // with no target, the likely sentence already says no fixed version clears it
+            let how = rejected ? rejectedNote : unconfirmed ? noChecked : upgrade == nil && advice.note == noChecked ? nil : advice.note
             note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, more)
         case .reported?:
             note = check.reportedNote(ecosystem: verdict.ecosystem, onThisMac: onThisMac)
@@ -324,7 +323,7 @@ public struct FindingBuilder: Sendable {
         let upgrade = offLine ? nil : d.target?.displayed(Self.display(slug: slug))
         let note = d.note(showing: Self.shownVersion(slug: slug), offLine: offLine ? match.item.name : nil)
         // Homebrew picks its own version; still no command for a finding only reported, or whose upgrade the core withheld
-        let inputs = Self.inputs(match.item.origin, match.item.name, nil, upgrade?.display)
+        let inputs = Self.inputs(match.item.origin, match.item.name, nil, upgrade)
         let command = offLine ? nil : d.advice(UpgradeCommand.advice(inputs)).command
         return Finding(
             id: "brew|\(match.item.name)|\(match.item.version)", group: d.group,
@@ -374,9 +373,9 @@ public struct FindingBuilder: Sendable {
         return numbers.count == line.count && zip(numbers, line).allSatisfy { $0 == $1 }
     }
 
-    /// The inputs of an upgrade command, with a version from the server only if it reads as one.
-    static func inputs(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem?, _ target: String?) -> UpgradeCommand.Inputs {
-        UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: target.flatMap { FixSafety.isSafeVersion($0) ? $0 : nil },
+    /// The inputs of an upgrade command, with the core's version only if it reads as one.
+    static func inputs(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem?, _ target: CheckedUpgrade?) -> UpgradeCommand.Inputs {
+        UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: target.flatMap { FixSafety.isSafeVersion($0.version) ? $0 : nil },
                               malicious: false)
     }
 
@@ -465,7 +464,7 @@ public struct FindingBuilder: Sendable {
     /// A registry package's finding an item made (Electron's, in an app): by the item alone.
     static func itemPackageFinding(id: String, _ install: InstalledPackage, _ package: ApprovedPackage, project: ProjectResponse?, _ d: AdvisoryCheck) -> Finding {
         let isApp = install.origin.kind == .electron
-        let inputs = Self.inputs(install.origin, install.name, package.ecosystem, d.target?.version)
+        let inputs = Self.inputs(install.origin, install.name, package.ecosystem, d.target)
         // no version the core checked: only Homebrew's own upgrade; none at all for one the core withheld
         let command = d.withheld != nil ? nil
             : UpgradeCommand.advice(inputs).command.flatMap { d.target != nil || UpgradeCommand.isHomebrewUpgrade($0) ? $0 : nil }

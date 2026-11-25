@@ -455,7 +455,7 @@ extension FindingBuilder {
     /// checked: without a checked upgrade, no command, and no note about running one.
     static func managedAdvice(_ p: ManagedPackage, upgrade: CheckedUpgrade?) -> UpgradeCommand.Advice {
         guard let upgrade else { return UpgradeCommand.Advice(command: nil) }
-        return UpgradeCommand.advice(for: p.origin, name: p.name, ecosystem: nil, target: upgrade.version, malicious: false)
+        return UpgradeCommand.advice(for: p.origin, name: p.name, ecosystem: nil, target: upgrade, malicious: false)
     }
 
     static func managedID(_ p: ManagedPackage) -> String {

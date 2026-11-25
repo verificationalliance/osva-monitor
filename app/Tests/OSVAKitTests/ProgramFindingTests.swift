@@ -214,7 +214,7 @@ import Testing
     @Test func condaEnvironments() {
         func c(_ named: Bool, _ name: String, _ prefix: String, _ tool: CondaEnvironment.Tool, malicious: Bool = false) -> String? {
             UpgradeCommand.advice(for: .conda(env: CondaEnvironment(prefix: prefix, name: name, named: named, tool: tool, python: nil)), name: "requests",
-                                  ecosystem: .pypi, target: "2.33.0", malicious: malicious).command
+                                  ecosystem: .pypi, target: Fixture.fix("2.33.0"), malicious: malicious).command
         }
         #expect(c(true, "base", "/m", .conda) == "conda update -n base requests")
         #expect(c(true, "my env", "/m/envs/my env", .mamba) == "mamba update -n 'my env' requests")
@@ -364,8 +364,8 @@ private extension Finding {
                                                                                         target: nil, malicious: false))
         #expect(FixPlan.make(for: goInstall, tools: tools) == .failure(.noCommand))
         let env = CondaEnvironment(prefix: "/Users/ana/miniforge3", name: "base", named: true, tool: .conda, python: "3.11.5")
-        let conda = finding(.conda(env: env), inputs: UpgradeCommand.Inputs(origin: .conda(env: env), name: "pyyaml", ecosystem: .pypi, target: "5.4",
-                                                                            malicious: false))
+        let conda = finding(.conda(env: env), inputs: UpgradeCommand.Inputs(origin: .conda(env: env), name: "pyyaml", ecosystem: .pypi,
+                                                                            target: Fixture.fix("5.4", above: "5.3"), malicious: false))
         guard case let .failure(.sharedEnvironment(why)) = FixPlan.make(for: conda, tools: tools) else { Issue.record("conda ran"); return }
         #expect(why.hasPrefix("Not run for you"))
         for origin in [Origin.macports(port: "nginx"), .nix(profile: NixProfile(path: "/Users/ana/.nix-profile", style: .profile, shared: false), element: "nginx")] {

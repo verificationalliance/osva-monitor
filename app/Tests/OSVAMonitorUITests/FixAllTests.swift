@@ -117,7 +117,7 @@ import OSVAKit
     /// A Python 3.11 the pip source finds: it describes itself, lists its site, reads its sys.path, and its pip installs
     /// into `site/` (a package's requirements from `meta/<name>-<version>`), dry-runs with a report or a "Would install"
     /// line, drags in what `drags-<name>` names on a real install (and breaks httpx then), and puts versions back with
-    /// `--no-deps`.
+    /// `--no-deps`. Its report resolves `name>=v` or a bare name to the version `resolve-<name>` names, when there is one.
     static let pythonScript = #"""
     #!/bin/sh
     here="$(cd "$(dirname "$0")" && pwd)"
@@ -152,11 +152,16 @@ import OSVAKit
         case " $* " in
           *" --report "*)
             printf '{"version":"1","install":['; sep=""
-            for a in "$@"; do case "$a" in *==*)
-              n="${a%%==*}"; v="${a#*==}"; r=""
+            for a in "$@"; do
+              case "$a" in
+                *==*) n="${a%%==*}"; v="${a#*==}" ;;
+                -*) continue ;;
+                *) n="${a%%>=*}"; [ -f "$here/resolve-$n" ] || continue; v="$(cat "$here/resolve-$n")" ;;
+              esac
+              r=""
               if [ -f "$here/meta/$n-$v" ]; then r="$(sed 's/.*/"&"/' "$here/meta/$n-$v" | paste -sd, -)"; fi
-              printf '%s{"requested":true,"metadata":{"name":"%s","version":"%s","requires_dist":[%s]}}' "$sep" "$n" "$v" "$r"; sep="," ;;
-            esac; done
+              printf '%s{"requested":true,"metadata":{"name":"%s","version":"%s","requires_dist":[%s]}}' "$sep" "$n" "$v" "$r"; sep=","
+            done
             printf ']}\n' ;;
           *" --dry-run "*)
             out=""; for a in "$@"; do case "$a" in *==*) out="$out ${a%%==*}-${a#*==}" ;; esac; done
@@ -193,7 +198,8 @@ import OSVAKit
 
         var findings: [Finding] = [], inventory: [InstalledPackage] = []
         func add(_ origin: Origin, _ ecosystem: Ecosystem, _ p: Package, id: String? = nil) {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: p.name, ecosystem: ecosystem, target: p.malicious ? nil : p.fixed, malicious: p.malicious)
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: p.name, ecosystem: ecosystem,
+                                               target: p.malicious ? nil : PreviewData.fix(p.fixed, above: p.installed), malicious: p.malicious)
             findings.append(Finding(id: id ?? "pkg|\(ecosystem.rawValue)|\(p.name)|\(p.installed)", group: p.malicious ? .malicious : p.group,
                                     subject: .package(ecosystem: ecosystem, name: p.name), title: p.name, installedVersion: p.installed,
                                     fixedVersion: p.malicious ? nil : p.fixed, severity: p.malicious ? nil : p.severity, advisoryIDs: ["GHSA-x"],
@@ -349,7 +355,8 @@ import OSVAKit
         let tools = ToolEnvironment(base: [:], isExecutable: { _ in true })
         func f(_ name: String, _ group: Finding.Group, _ severity: Severity?, exploited: Bool = false, malicious: Bool = false,
                origin: Origin = .npmGlobal(npm: "/opt/homebrew/bin/npm"), eco: Ecosystem = .npm) -> Finding {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: malicious ? nil : "9.9.9", malicious: malicious)
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: malicious ? nil : PreviewData.fix("9.9.9", above: "1.0.0"),
+                                               malicious: malicious)
             return Finding(id: "pkg|npm|\(name)|1.0.0", group: group, subject: .package(ecosystem: eco, name: name), title: name, installedVersion: "1.0.0",
                            fixedVersion: malicious ? nil : "9.9.9", severity: severity, advisoryIDs: [], flawCount: 1, exploited: exploited,
                            malicious: malicious, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(eco, name, version: "1.0.0"),
@@ -682,15 +689,65 @@ import OSVAKit
         #expect(h.site["gamma"] == "3.1")
     }
 
-    /// The site, for the test above: gamma's plan within its constraint is `target`, which fixes one of its flaws.
+    /// The site, for the test above: gamma's answer within its constraint, at 3.0, plans `target`, which the core finds
+    /// leaves one of its two flaws (GHSA-x, fixed in it) and not the other (GHSA-y, fixed in 3.4).
     struct PartialServer: FixServer {
         let target: String
-        func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError> {
-            .success(try! JSONDecoder().decode(BatchResponse.Plan.self, from: Data(
-                #"{"target":"\#(target)","fixes":["GHSA-x"],"remaining":[{"id":"GHSA-y","reason":"blocked-by-constraint","constraint":"\#(constraints[0])"}]}"#.utf8)))
+        func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError> {
+            .success(try! JSONDecoder().decode(BatchResponse.Result.self, from: Data(
+                (#"{"ecosystem":"PyPI","name":"gamma","version":"3.0","distinct_flaws":2,"worst_severity":"HIGH","advisories":["GHSA-x","GHSA-y"],"#
+                 + #""flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(target)"],"ranges":[{"fixed":"\#(target)"}]},"#
+                 + #"{"id":"GHSA-y","severity":"HIGH","fixed_in":["3.4"],"ranges":[{"fixed":"3.4"}]}],"#
+                 + #""plan":{"target":"\#(target)","fixes":["GHSA-x"],"remaining":[{"id":"GHSA-y","reason":"blocked-by-constraint","constraint":"\#(constraints[0])"}]}}"#).utf8)))
         }
-        func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError> {
+        func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError> {
             .success([:])
+        }
+    }
+
+    /// An upgrade together runs in Fix all only if pip's version of its package, in the batch's own dry run, fixes what
+    /// its fix fixes, as the core judges it. starlette 0.48.0 has a flaw 1.3.1 leaves and that comes back from 1.3.2 to
+    /// 1.4. pip picks 1.3.5: the batch is skipped, says why, and pip changes nothing. pip picks no starlette at all: the
+    /// same. pip picks 1.4: it runs.
+    @Test func anUpgradeTogetherRunsOnlyIfPipsVersionFixesWhatTheFixFixes() async throws {
+        func run(pipPicks starlette: String?) async throws -> Home {
+            let h = try setUp([], pip: [Package(name: "starlette", installed: "0.48.0", fixed: "1.3.1", group: .exploited, exploited: true)])
+            try h.pipFile("meta/fastapi-0.120.0", "starlette<0.49.0,>=0.40.0\n")
+            try h.pipFile("meta/fastapi-0.135.2", "starlette<2.0.0,>=0.46.0\n")
+            let p = Process(); p.executableURL = h.python; p.arguments = ["--put", "fastapi", "0.120.0"]; try p.run(); p.waitUntilExit()
+            if let starlette { try h.pipFile("resolve-starlette", starlette) }
+            try h.pipFile("resolve-fastapi", "0.135.2")
+            h.model.fixServer = TogetherServer()
+            try await assessed(h)
+            h.model.openFixAll()
+            h.model.tickProposal(h.id("starlette"), true)
+            h.model.runFixAll()
+            try await waitUntil { done(h) }
+            return h
+        }
+        let refused = try await run(pipPicks: "1.3.5")
+        #expect(refused.pipChanges.isEmpty && refused.site["starlette"] == "0.48.0")
+        let why = "pip's set would install starlette 1.3.5, which the core does not confirm fixes what 1.3.1 fixes"
+        #expect(refused.model.fixAll?.batches.map(\.status) == [.skipped(why)])
+        #expect(refused.model.fixes[refused.id("starlette")]?.outcome == .blocked(why))
+        let none = try await run(pipPicks: nil)
+        #expect(none.pipChanges.isEmpty && none.model.fixAll?.batches.map(\.status) == [.skipped("pip's set would not update starlette to 1.3.1 or later")])
+        let ran = try await run(pipPicks: "1.4")
+        #expect(ran.pipChanges.map { $0.filter { $0.contains("==") } } == [["starlette==1.4", "fastapi==0.135.2"]])
+        #expect(ran.site["starlette"] == "1.4" && ran.site["fastapi"] == "0.135.2")
+    }
+
+    /// The site, for the test above: nothing to plan within constraints, and starlette's flaw at 0.48.0 and at what pip
+    /// picks, with its two ranges.
+    struct TogetherServer: FixServer {
+        func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError> { .success(nil) }
+        func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError> {
+            .success(Dictionary(uniqueKeysWithValues: versions.filter { $0.name == "starlette" && $0.version != "1.4" }.map { v in
+                (v, try! JSONDecoder().decode(BatchResponse.Result.self, from: Data(
+                    (#"{"ecosystem":"PyPI","name":"starlette","version":"\#(v.version)","distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"#
+                     + #""flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["1.3.1","1.4"],"#
+                     + #""ranges":[{"fixed":"1.3.1"},{"introduced":"1.3.2","fixed":"1.4"}]}]}"#).utf8)))
+            }))
         }
     }
 

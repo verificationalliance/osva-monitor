@@ -173,7 +173,7 @@ import Testing
         }
         // a package an extension bundles: updating the extension is the fix; malicious: remove the extension
         let ext = Origin.addOn(host: .vscode, id: "eamodio.gitlens", name: "GitLens", profile: nil, path: "/p")
-        #expect(UpgradeCommand.advice(for: ext, name: "lodash", ecosystem: .npm, target: "4.17.21", malicious: false)
+        #expect(UpgradeCommand.advice(for: ext, name: "lodash", ecosystem: .npm, target: Fixture.fix("4.17.21"), malicious: false)
                 == .init(command: nil, note: "Update GitLens in VS Code: it ships its own lodash."))
         #expect(UpgradeCommand.command(for: ext, name: "axios", ecosystem: .npm, fixed: nil, malicious: true) == "code --uninstall-extension eamodio.gitlens")
         // nothing here downloads an installer

@@ -69,7 +69,8 @@ extension PreviewData {
             programFinding("pkg|PyPI|pyyaml|5.3|py3.11.5", .criticalHigh, .package(ecosystem: .pypi, name: "pyyaml"), "pyyaml", "5.3", "5.4", .critical,
                     flaws: 2, note: "Needs pyyaml 5.4 or later in the environment's channels.", origins: [.conda(env: base)],
                     page: SiteURL.packagePage(.pypi, "pyyaml", version: "5.3"),
-                    inputs: UpgradeCommand.Inputs(origin: .conda(env: base), name: "pyyaml", ecosystem: .pypi, target: "5.4", malicious: false)),
+                    inputs: UpgradeCommand.Inputs(origin: .conda(env: base), name: "pyyaml", ecosystem: .pypi, target: fix("5.4", above: "5.3"),
+                                                  malicious: false)),
             programFinding("prog|" + gopls.path, .other, .package(ecosystem: .go, name: "stdlib"), "gopls", component: "Go", "1.23.0", "1.23.11", .moderate,
                     flaws: 3, note: "gopls 0.16.1 was built with Go 1.23.0, whose stdlib has 3 known flaws. "
                         + "Builds gopls again from its newest release, with the Go you have.",

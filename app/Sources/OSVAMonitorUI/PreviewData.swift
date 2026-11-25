@@ -18,14 +18,22 @@ public enum PreviewData {
         return box.value!
     }
 
+    /// A fixture's version to upgrade to, as the core checks one: `version` above `installed`, clear of an advisory
+    /// fixed in it. Asked off the main thread (`offMain`).
+    static func fix(_ version: String, above installed: String) -> CheckedUpgrade {
+        let answer = offMain { Core.shared.upgrade(from: installed, advisories: [CoreAdvisory(ranges: [AffectedRange(fixed: version)], fixed: [])]) }
+        guard case let .upgrade(u) = answer, u.version == version else { preconditionFailure("the core does not take \(version) above \(installed)") }
+        return u
+    }
+
     static func finding(_ id: String, _ group: Finding.Group, _ subject: Finding.Subject, _ title: String, component: String? = nil,
                         _ installed: String, _ fixed: String?, _ severity: Severity?, flaws: Int, exploited: Bool = false,
                         malicious: Bool = false, note: String? = nil, bigIssue: String? = nil, origins: [Origin], page: URL,
                         name: String? = nil, ecosystem: Ecosystem? = nil, runnable: Bool = true, mark: Verification = .none,
                         grade: String? = nil, fixes: Int? = nil, unresolved: [UnresolvedFlaw] = []) -> Finding {
         // The command is UpgradeCommand's, from the same inputs a scan would record.
-        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem, target: malicious ? nil : fixed,
-                                           malicious: malicious)
+        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem,
+                                           target: malicious ? nil : fixed.map { fix($0, above: installed) }, malicious: malicious)
         let command = runnable ? UpgradeCommand.advice(inputs).command : nil
         return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, fixedVersion: fixed,
                        severity: severity, advisoryIDs: [], flawCount: flaws, exploited: exploited, malicious: malicious, note: note,

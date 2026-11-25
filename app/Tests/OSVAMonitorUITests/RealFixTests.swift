@@ -62,7 +62,8 @@ import OSVAKit
         let version = try python(["-c", "import platform; print(platform.python_version())"], env: env).trimmingCharacters(in: .whitespacesAndNewlines)
         let brewPython = PythonEnvironment(executable: Self.python3, version: version, kind: .homebrew, externallyManaged: false, userSite: userSite,
                                            formula: "python@3.11")
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: brewPython, user: true, formula: nil), name: "six", ecosystem: .pypi, target: "1.17.0", malicious: false)
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: brewPython, user: true, formula: nil), name: "six", ecosystem: .pypi,
+                                           target: PreviewData.fix("1.17.0", above: "1.16.0"), malicious: false)
         let finding = Finding(id: "pkg|PyPI|six|1.16.0|py\(version)", group: .criticalHigh, subject: .package(ecosystem: .pypi, name: "six"), title: "six",
                               installedVersion: "1.16.0", fixedVersion: "1.17.0", severity: .high, advisoryIDs: ["TEST-1"], flawCount: 1, exploited: false,
                               malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(.pypi, "six", version: "1.16.0"),

@@ -471,9 +471,10 @@ struct CachedVerdict: Codable { var result: BatchResponse.Result? }
 // MARK: - What a fix asks the site
 
 extension Scanner: FixServer {
-    /// The plan for one Python package at its installed version, its target within `constraints`: a fresh answer (the
-    /// cache keeps the scan's own plans). Only a package the privacy filter passes is asked about, as in a scan.
-    public func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError> {
+    /// The answer for one Python package at its installed version, its plan's target within `constraints`: a fresh
+    /// answer (the cache keeps the scan's own plans), whole, so the core decides it as a scan's. Only a package the
+    /// privacy filter passes is asked about, as in a scan.
+    public func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError> {
         guard case .package(.pypi, _) = finding.subject, let inputs = finding.commandInputs, case .pip = inputs.origin else {
             return .failure(FixServerError("only a Python package's plan can be asked within constraints"))
         }
@@ -487,13 +488,14 @@ extension Scanner: FixServer {
         guard let approved = PrivacyFilter(index: index).approve([installed]).approved.keys.first else {
             return .failure(FixServerError("\(inputs.name) is not one the app asks about"))
         }
-        do { return .success(try await api.checkWithin(approved, constraints: constraints)?.plan) }
+        do { return .success(try await api.checkWithin(approved, constraints: constraints)) }
         catch { return .failure(FixServerError(error.localizedDescription)) }
     }
 
-    /// The flaws known at each version, asked as a scan asks (privacy filter, batches of 200), never from the cache. A
-    /// package the public index does not list has nothing reported; a version no registry would have cannot be asked.
-    public func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError> {
+    /// The answer at each version, asked as a scan asks (privacy filter, batches of 200), never from the cache. A version
+    /// the site has no answer for, or of a package the public index does not list, has nothing reported (no key); a
+    /// version no registry would have cannot be asked.
+    public func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError> {
         let index: PublicIndex
         do { index = try await indexStore.load(maxAge: Freshness.index).index }
         catch { return .failure(FixServerError("could not read the public index (\(error.localizedDescription))")) }
@@ -502,14 +504,14 @@ extension Scanner: FixServer {
             return .failure(FixServerError("\(odd.name) \(odd.version) cannot be checked"))
         }
         let selection = PrivacyFilter(index: index).approve(versions.map { InstalledPackage(ecosystem: .pypi, name: $0.name, version: $0.version, origin: origin) })
-        var out = Dictionary(uniqueKeysWithValues: Set(versions).map { ($0, Set<String>()) })
+        var out: [PackageVersion: BatchResponse.Result] = [:]
         for chunk in Self.batches(selection.approved.keys.sorted { $0.cacheKey < $1.cacheKey }) {
             do {
                 let results = try await api.checkBatch(chunk)
                 let byKey = Dictionary(results.map { ("\($0.ecosystem)\u{1F}\($0.name)\u{1F}\($0.version)", $0) }, uniquingKeysWith: { a, _ in a })
                 for p in chunk {
-                    let ids = Set((byKey[p.versionKey]?.flaws ?? []).flatMap { [$0.id] + $0.aliases })
-                    for installed in selection.approved[p] ?? [] { out[PackageVersion(name: installed.name, version: installed.version)] = ids }
+                    guard let answer = byKey[p.versionKey] else { continue }
+                    for installed in selection.approved[p] ?? [] { out[PackageVersion(name: installed.name, version: installed.version)] = answer }
                 }
             } catch {
                 return .failure(FixServerError(error.localizedDescription))

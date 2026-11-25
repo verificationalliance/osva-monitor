@@ -26,12 +26,15 @@ import OSVACore
 /// product's record (AdvisoryCheck: Homebrew, MacPorts, Nix and conda packages, apps and the libraries they bundle, Java
 /// runtimes) and the site's "patch these first" list (IssueCheck): an advisory is affected only inside its published
 /// ranges, likely affected by its first fixed versions without them, reported when they cannot be read, and the
-/// upgrade is `upgrade(from:advisories:)`'s; a Java vendor's own build is named only when `judge` confirms it. The fix
-/// paths do not ask them yet: until they do, they decide as said below.
+/// upgrade is `upgrade(from:advisories:)`'s; a Java vendor's own build is named only when `judge` confirms it. So do the
+/// fix paths: a partial fix's version is proposed only when `judge` confirms it (FixAdvisor), pip's version in an upgrade
+/// together must leave every advisory the fix leaves (PipSetGuard), and every command's version is a `CheckedUpgrade`
+/// (UpgradeCommand.Inputs). A command that names none is a removal, Homebrew's own upgrade, or a program's or tool's
+/// rebuild (ProgramFindings).
 ///
 /// The rest is not the core's:
-///   - FixAdvisor's partial fixes and pip's resolved versions are the server's plans, which the app checks only for
-///     reading as versions (FixSafety).
+///   - Which version a package manager installs for a command that names none (`brew upgrade`, a rebuild), or within a
+///     range it is given (`npm install x@^1.2.3`, `poetry add 'x>=1.2.3'`).
 ///   - The names in the body of `api/v1/check/batch` are written by JSONEncoder; the core encodes only URLs.
 ///   - Which Python or Homebrew folder is newest is read by `localizedStandardCompare` (PythonSource,
 ///     HomebrewReceipts), and the release tool orders its own versions (OSVARelease's Appcast).

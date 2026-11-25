@@ -467,7 +467,7 @@ public final class AppModel {
         currentPlan(finding, matching: offer.plan, target: offer.partialTarget)
     }
 
-    private func currentPlan(_ finding: Finding, matching plan: FixPlan, target: String? = nil) -> (finding: Finding, plan: FixPlan)? {
+    private func currentPlan(_ finding: Finding, matching plan: FixPlan, target: CheckedUpgrade? = nil) -> (finding: Finding, plan: FixPlan)? {
         guard let current = report?.findings.first(where: { $0.id == finding.id }),
               case let .success(now) = FixPlan.make(for: current, tools: advisor.tools, home: advisor.home, target: target), now == plan else {
             fixes[finding.id] = nil
@@ -1089,17 +1089,19 @@ public final class AppModel {
     /// A pip batch's dry run and gates: pip asked for every item at once (its exact pin and what moves with it, or an
     /// upgrade together's own request), with a report of exactly what it would install; each item's version must be
     /// the one reviewed; the end state must hold for everything installed (PipSetGuard); what an upgrade together moves
-    /// must bring no new flaw. The set, and every version pinned, the most urgent first.
+    /// must bring no new flaw, and its package's version must fix what its fix fixes, as the core judges it. The set,
+    /// and every version pinned, the most urgent first.
     private func prepareSet(_ items: [FixAllState.Item], python: String, user: Bool, advisor: FixAdvisor)
         async -> Result<([PythonDistribution], [String]), FixServerError> {
         var requirements: [String] = [], own: [String: String] = [:], first: [String] = [], checkFlaws = Set<String>()
-        var env: PythonEnvironment?
+        var env: PythonEnvironment?, together: [FixProposal.Together] = []
         for item in items {
             let offer = item.offers[0]
             if case let .together(t)? = offer.proposal {
                 requirements += t.requirements
                 first += [t.package] + t.blockers + t.others
                 env = env ?? t.python
+                together.append(t)
             } else if let pip = offer.plan.pip {
                 requirements += [pip.requirement] + offer.companions.filter(FixSafety.isSafeName)
                 own[PythonNames.normal(pip.name)] = pip.target
@@ -1123,7 +1125,7 @@ public final class AppModel {
         if let env {
             for d in installs where own[d.key] == nil { checkFlaws.insert(d.key) }
             guard let server = advisor.server else { return .failure(FixServerError("the app could not ask the site about what the set moves")) }
-            switch await PipSetGuard.newFlaw(site, installs: installs, only: checkFlaws, python: env, server: server) {
+            switch await PipSetGuard.review(site, installs: installs, only: checkFlaws, together: together, python: env, server: server) {
             case let .failure(e): return .failure(e)
             case let .success(flaw?): return .failure(FixServerError(flaw))
             case .success(nil): break

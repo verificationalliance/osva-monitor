@@ -99,7 +99,8 @@ import OSVAKit
         let tools = ToolEnvironment(home: home, base: ["PATH": "/usr/bin:/bin"], runner: ProcessRunner(),
                                     isExecutable: { $0.hasPrefix(home.path) && FileManager.default.isExecutableFile(atPath: $0) })
         func make(_ name: String, _ installed: String, _ fixed: String) -> (Finding, InstalledPackage) {
-            let inputs = UpgradeCommand.Inputs(origin: .npmGlobal(npm: npm.path), name: name, ecosystem: .npm, target: fixed, malicious: false)
+            let inputs = UpgradeCommand.Inputs(origin: .npmGlobal(npm: npm.path), name: name, ecosystem: .npm, target: PreviewData.fix(fixed, above: installed),
+                                               malicious: false)
             let f = Finding(id: "pkg|npm|\(name)|\(installed)", group: .criticalHigh, subject: .package(ecosystem: .npm, name: name), title: name,
                             installedVersion: installed, fixedVersion: fixed, severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 1,
                             exploited: false, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
@@ -340,7 +341,8 @@ import OSVAKit
         let tools = ToolEnvironment(home: home, base: ["PATH": "/usr/bin:/bin"], runner: ProcessRunner(),
                                     isExecutable: { $0.hasPrefix(home.path) && FileManager.default.isExecutableFile(atPath: $0) })
         let env = PythonEnvironment(executable: python.path, version: "3.11.14", kind: .virtualEnv, externallyManaged: false, userSite: nil, formula: nil)
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: env, user: false, formula: nil), name: "starlette", ecosystem: .pypi, target: "1.3.1", malicious: false)
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: env, user: false, formula: nil), name: "starlette", ecosystem: .pypi,
+                                           target: PreviewData.fix("1.3.1", above: "0.48.0"), malicious: false)
         let finding = Finding(id: "pkg|PyPI|starlette|0.48.0", group: .exploited, subject: .package(ecosystem: .pypi, name: "starlette"), title: "starlette",
                               installedVersion: "0.48.0", fixedVersion: "1.3.1", severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 6,
                               exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],

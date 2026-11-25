@@ -123,26 +123,67 @@ public enum PipSetGuard {
         }
     }
 
-    /// Whether what the set moves brings a flaw the version before did not have (or a new package any flaw), asked of
-    /// the site as a single fix's target is: the line that says so, or nil. `only` limits it to these packages (normal
-    /// names); nil checks every one.
-    public static func newFlaw(_ site: PythonSite, installs: [PythonDistribution], only: Set<String>? = nil, python: PythonEnvironment,
-                               server: any FixServer) async -> Result<String?, FixServerError> {
+    /// What the site says of the versions the set moves, asked once (`server.flaws`): the line that refuses the set,
+    /// or nil. It is refused when what it moves brings a flaw the version before did not have (or a new package any
+    /// flaw), asked of the site as a single fix's target is (`newFlaw`); and when it would install an upgrade together's
+    /// package at a version the core does not confirm fixes what its fix fixes (`keepsTheFix`). `only` limits the first
+    /// to these packages (normal names); nil checks every one.
+    public static func review(_ site: PythonSite, installs: [PythonDistribution], only: Set<String>? = nil, together: [FixProposal.Together] = [],
+                              python: PythonEnvironment, server: any FixServer) async -> Result<String?, FixServerError> {
         let moved = moves(site, installs: installs).filter { only?.contains(PythonNames.normal($0.name)) ?? true }
-        guard !moved.isEmpty else { return .success(nil) }
-        let asked = moved.flatMap { m in [PackageVersion(name: m.name, version: m.to)] + (m.from.map { [PackageVersion(name: m.name, version: $0)] } ?? []) }
+        var asked: [PackageVersion] = []
+        func ask(_ name: String, _ version: String?) {
+            guard let version else { return }
+            let v = PackageVersion(name: name, version: version)
+            if !asked.contains(v) { asked.append(v) }
+        }
+        for m in moved { ask(m.name, m.to); ask(m.name, m.from) }
+        for t in together {
+            let key = PythonNames.normal(t.package)
+            ask(t.package, site.live(key)?.version); ask(t.package, installs.first { $0.key == key }?.version)
+        }
+        guard !asked.isEmpty else { return .success(nil) }
         switch await server.flaws(asked, python: python) {
         case let .failure(e): return .failure(e)
         case let .success(known):
-            for m in moved {
-                let new = known[PackageVersion(name: m.name, version: m.to)] ?? []
-                let old = m.from.flatMap { known[PackageVersion(name: m.name, version: $0)] } ?? []
-                if let flaw = new.subtracting(old).sorted().first {
-                    return .success(m.from.map { "\(m.name) \(m.to) has \(flaw), which \($0) does not" } ?? "\(m.name) \(m.to) would come with \(flaw)")
-                }
+            if let line = newFlaw(moved, known: known) { return .success(line) }
+            for t in together {
+                if let line = keepsTheFix(t.package, fix: t.fix, site: site, installs: installs, known: known) { return .success(line) }
             }
             return .success(nil)
         }
+    }
+
+    /// The first of `moved` whose new version has a flaw (id or alias) its version before did not have: the line that
+    /// says so, or nil.
+    static func newFlaw(_ moved: [(name: String, from: String?, to: String)], known: [PackageVersion: BatchResponse.Result]) -> String? {
+        func ids(_ name: String, _ version: String?) -> Set<String> {
+            guard let version, let r = known[PackageVersion(name: name, version: version)] else { return [] }
+            return Set(r.flaws.flatMap { [$0.id] + $0.aliases })
+        }
+        for m in moved {
+            if let flaw = ids(m.name, m.to).subtracting(ids(m.name, m.from)).sorted().first {
+                return m.from.map { "\(m.name) \(m.to) has \(flaw), which \($0) does not" } ?? "\(m.name) \(m.to) would come with \(flaw)"
+            }
+        }
+        return nil
+    }
+
+    /// Whether pip's version of an upgrade together's `package` fixes what `fix` fixes. The core judges both against
+    /// the flaws the site reports at the installed version (BatchCheck: those it finds affected or likely affected): pip's
+    /// must leave every one `fix` leaves. The line that refuses it, or nil. Without an answer for the installed version,
+    /// the site knows no flaw there, and there is nothing to keep. Call it off the main thread.
+    static func keepsTheFix(_ package: String, fix: String, site: PythonSite, installs: [PythonDistribution],
+                            known: [PackageVersion: BatchResponse.Result]) -> String? {
+        let key = PythonNames.normal(package)
+        guard let installed = site.live(key)?.version, let own = installs.first(where: { $0.key == key })?.version, own != installed else {
+            return "pip's set would not update \(package) to \(fix) or later"
+        }
+        guard let answer = known[PackageVersion(name: package, version: installed)] else { return nil }
+        let check = BatchCheck.read(answer, installed: installed)
+        let byFix = check.judge(fix)?.leaves ?? [], byOwn = check.judge(own)?.leaves ?? []
+        let kept = byFix.indices.allSatisfy { !byFix[$0] || (byOwn.indices.contains($0) && byOwn[$0]) }
+        return kept ? nil : "pip's set would install \(package) \(own), which the core does not confirm fixes what \(fix) fixes"
     }
 }
 
@@ -155,15 +196,16 @@ public struct PackageVersion: Hashable, Sendable {
 }
 
 /// What a fix asks the site beyond the scan's own questions: a plan within constraints (a partial fix), and the flaws
-/// of exact versions (that an upgrade together brings none). The app's answers go through the privacy filter, and
-/// "What leaves your Mac" records what they named.
+/// of exact versions (that an upgrade together brings none, and fixes what its fix fixes). The answers are whole, their
+/// flaws with the ranges the site publishes, so the core decides them as a scan's (BatchCheck). The app's questions go
+/// through the privacy filter, and "What leaves your Mac" records what they named.
 public protocol FixServer: Sendable {
-    /// The plan for the finding's package at its installed version, its target within these specifier sets. Nil when
-    /// the site has nothing to plan.
-    func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError>
-    /// The flaws (ids and aliases) known at each of these versions of PyPI packages, in this Python. A package the public
-    /// index does not list has none known.
-    func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError>
+    /// The site's answer for the finding's package at its installed version, its plan's target within these specifier
+    /// sets. Nil when the site has nothing to say.
+    func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError>
+    /// The site's answer at each of these versions of PyPI packages, in this Python. A version without one (a missing
+    /// key) has no flaws known: so has a package the public index does not list.
+    func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError>
 }
 
 public struct PipDryRunError: Error, Equatable, Sendable {
