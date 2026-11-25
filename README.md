@@ -170,8 +170,10 @@ commands are built only from such versions: the types allow nothing else, and a 
 around them. Rebuilds, the exception above, may use the installed version. A report saved on disk is shown as it was
 saved until the app scans again. The type is `CheckedUpgrade` in `Core.swift`, the app's only caller of the core, and
 the test is `ClaimsTests`; `scripts/claims-mutants.sh` breaks the rules one at a time and checks that the test fails.
-`Core.swift` is the whole of its own module, `OSVAVerified`, so no other code of the app is in scope where it calls the
-core and none can stand in for a core function there. This part is held by types and tests, not proved in Lean.
+`Core.swift` is the whole of its own module, `OSVAVerified`, so no other Swift code of the app is in scope where it
+calls the core. `ClaimsTests` refuses app code that gives a function a symbol name of its own or declares a member of a
+`Core.swift` type again, and `build-app.sh` refuses a build in which other app code supplies anything `Core.swift` or
+the C bridge calls. This part is held by types and tests, not proved in Lean.
 
 **The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the app.
 `build-app.sh` reads the linker's map and stops unless every symbol in the app that the core's archive or the Lean

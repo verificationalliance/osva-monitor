@@ -489,6 +489,70 @@ import Testing
         #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])import\s+(?:[a-z]+\s+)?OSVACore(?![A-Za-z0-9_])/, except: { path, _ in path == bridge }) == [])
     }
 
+    /// Nothing outside OSVAVerified stands in for what Core.swift declares or calls. No `@_silgen_name`, `@_cdecl` or
+    /// `@c` (each gives a function a symbol name of its choosing, which the link would take in place of the one
+    /// Core.swift or the shim calls; scripts/build-app.sh refuses such a link too). No type named like one Core.swift
+    /// declares. And no extension of a Core.swift type declares a member whose name Core.swift already declares for that
+    /// type: OSVAKit's own calls would go to it (`extension Core { func compareVersions ... }` takes OSVAKit's calls of
+    /// compareVersions). OSVAKit's `display` is a name Core.swift does not declare.
+    @Test func nothingElseStandsInForTheBridge() throws {
+        let bridge = "OSVAVerified/Core.swift"
+        #expect(Self.lines(matching: /@(?:_silgen_name|_cdecl|c)(?![A-Za-z0-9_])/, except: { path, _ in path == bridge }) == [])
+        let core = try #require(Self.code(bridge))
+        // Core.swift's types, by the name an extension elsewhere would give them
+        let types = ["Core", "Core.Verdict", "Core.UpgradeAnswer", "AffectedRange", "AffectedRange.CodingKeys", "AffectedRange.AnyKey",
+                     "CoreAdvisory", "CheckedUpgrade", "CheckedUpgrade.Display", "Judgement", "AdvisoryList", "KeyList"]
+        let declared = Self.declarations(core).filter { $0.keyword != "extension" }
+        #expect(declared.map(\.name).sorted() == types.map { String($0.split(separator: ".").last!) }.sorted(), "the types Core.swift declares")
+        var members: [String: Set<String>] = [:]
+        for t in declared {
+            guard let type = types.first(where: { $0.split(separator: ".").last! == t.name }) else { continue }
+            members[type, default: []].formUnion(Self.memberNames(t.body))
+        }
+        #expect(members["Core"]?.contains("compareVersions") == true && members["CheckedUpgrade"]?.contains("version") == true
+                && members["Core.Verdict"]?.contains("inRange") == true, "Core.swift's members are read")
+        // no type named like one of Core.swift's own (its top-level ones, as the pattern lists them)
+        let typeNamed = /(?:^|[^A-Za-z0-9_])(?:struct|class|enum|actor|protocol|typealias)\s+(?:Core|AffectedRange|CoreAdvisory|CheckedUpgrade|Judgement|AdvisoryList|KeyList)(?![A-Za-z0-9_])/
+        #expect(types.filter { !$0.contains(".") } == ["Core", "AffectedRange", "CoreAdvisory", "CheckedUpgrade", "Judgement", "AdvisoryList", "KeyList"])
+        #expect(Self.lines(matching: typeNamed, except: { path, _ in path == bridge }) == [])
+        var clashes: [String] = []
+        for file in Self.sources where file.path != bridge {
+            let code = file.lines.joined(separator: "\n")
+            for m in code.matches(of: /(?:^|[^A-Za-z0-9_])extension\s+([A-Za-z0-9_.]+)[^{]*\{/) {
+                var name = String(m.output.1)
+                if name.hasPrefix("OSVAVerified.") { name.removeFirst("OSVAVerified.".count) }
+                guard let own = members[name] else { continue }
+                let shadowed = Self.memberNames(Self.body(of: code, from: m.range.upperBound)).intersection(own)
+                if !shadowed.isEmpty { clashes.append("\(file.path): extension \(name) declares \(shadowed.sorted())") }
+            }
+        }
+        #expect(clashes == [], "members Core.swift already declares")
+    }
+
+    /// The text from `start` (just after an opening brace) to its closing brace.
+    static func body(of code: String, from start: String.Index) -> Substring {
+        var depth = 1, i = start
+        while i < code.endIndex {
+            if code[i] == "{" { depth += 1 } else if code[i] == "}" { depth -= 1; if depth == 0 { break } }
+            i = code.index(after: i)
+        }
+        return code[start..<i]
+    }
+
+    /// The names a type's or an extension's body declares at its own level (what nested braces hold is left out): its
+    /// functions, properties, initialisers, subscripts, nested types and enum cases.
+    static func memberNames(_ body: Substring) -> Set<String> {
+        var depth = 0, top = ""
+        for c in body {
+            if c == "{" { depth += 1 } else if c == "}" { depth -= 1 } else if depth == 0 { top.append(c) }
+        }
+        var names = Set(top.matches(of: /(?:^|[^A-Za-z0-9_.])(?:func|var|let|case|struct|class|enum|actor|typealias)\s+`?([A-Za-z_][A-Za-z0-9_]*)/)
+            .map { String($0.output.1) })
+        if top.contains(/(?:^|[^A-Za-z0-9_.])init\s*[?!]?\s*[(<]/) { names.insert("init") }
+        if top.contains(/(?:^|[^A-Za-z0-9_.])subscript\s*[(<]/) { names.insert("subscript") }
+        return names
+    }
+
     /// Nothing writes a finding's version to upgrade to, its command, or a command's version, but from a `CheckedUpgrade`
     /// or an `UpgradeCommand.Advice`: they are `private(set)`; every line of Finding.swift that names `fixedVersion` or
     /// `upgradeCommand` is one of the known ones (so no assignment split over lines, tuple or inout gets through); and

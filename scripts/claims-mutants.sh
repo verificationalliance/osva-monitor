@@ -91,6 +91,17 @@ mutant core-name-declared \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; func osva_pct_encode(_ name: String) -> String { name }"
 mutant core-imported-elsewhere \
   $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; import OSVACore"
+# A symbol name of the app's choosing, outside OSVAVerified (build-app.sh refuses it at the link when it takes the place
+# of one Core.swift or the shim calls; ClaimsTests refuses any).
+mutant silgen-name-elsewhere \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; @_silgen_name(\"osva_mutant_silgen\") func forgedSilgen() {}"
+mutant cdecl-elsewhere \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; @_cdecl(\"osva_mutant_cdecl\") public func forgedCdecl() {}"
+# A member of a Core.swift type declared again outside it: OSVAKit's own calls would go to it.
+mutant core-member-shadowed \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; extension Core { public func compareVersions(_ a: String, _ b: String) -> Int { 0 } }"
+mutant core-type-named-elsewhere \
+  $K/Scan/BatchCheck.swift "import Foundation" "import Foundation; enum ForgedTypes { struct KeyList {} }"
 mutant fixed-version-from-text \
   $K/Model/Finding.swift "public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }" \
   "    public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }
