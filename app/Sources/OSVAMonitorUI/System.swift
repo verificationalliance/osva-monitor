@@ -42,12 +42,13 @@ public struct SystemNotifier: Notifier {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
-    /// One notification for any number of new findings, worst first.
+    /// One notification for any number of new findings, worst first. "Exploited flaw" only for one the core checked;
+    /// an exploited flaw it could not check against published ranges, on any finding, is "Exploited flaw, not checked".
     public static func text(for findings: [Finding]) -> (title: String, body: String) {
         let worst = findings.sorted { $0.group < $1.group }
         let first = worst[0]
-        let what = first.malicious ? (first.isExtension ? "Malicious extension" : "Malicious package") : first.exploited ? "Exploited flaw"
-            : first.notChecked?.exploited == true ? "Exploited flaw, not checked" : "On the “patch these first” list"
+        let what = first.malicious ? (first.isExtension ? "Malicious extension" : "Malicious package") : first.checkedExploited ? "Exploited flaw"
+            : first.notCheckedMark?.exploited == true ? "Exploited flaw, not checked" : "On the “patch these first” list"
         let title = findings.count == 1 ? "\(what): \(first.title)" : "\(findings.count) new findings, starting with \(first.title)"
         var body = "\(first.versionLine) · \(first.originSummary)"
         if findings.count > 1 { body += "\nAlso: " + worst.dropFirst().prefix(3).map(\.title).joined(separator: ", ") + (findings.count > 4 ? " …" : "") }

@@ -30,7 +30,7 @@ public enum PreviewData {
                         _ installed: String, _ fixed: String?, _ severity: Severity?, flaws: Int, exploited: Bool = false,
                         malicious: Bool = false, note: String? = nil, bigIssue: String? = nil, origins: [Origin], page: URL,
                         name: String? = nil, ecosystem: Ecosystem? = nil, runnable: Bool = true, mark: Verification = .none,
-                        grade: String? = nil, fixes: Int? = nil, unresolved: [UnresolvedFlaw] = []) -> Finding {
+                        grade: String? = nil, fixes: Int? = nil, unresolved: [UnresolvedFlaw] = [], notChecked: Finding.NotChecked? = nil) -> Finding {
         // The command is UpgradeCommand's, from the same inputs a scan would record, and the version one the core checked.
         let upgrade = malicious ? nil : fixed.map { fix($0, above: installed) }
         let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem, target: upgrade, malicious: malicious)
@@ -38,7 +38,7 @@ public enum PreviewData {
         return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, upgrade: upgrade,
                        severity: severity, advisoryIDs: [], flawCount: flaws, exploited: exploited, malicious: malicious, note: note,
                        bigIssue: bigIssue, origins: origins, pageURL: page, advice: advice, verification: mark, grade: grade,
-                       fixesCount: fixes, unresolved: unresolved, commandInputs: advice?.command == nil ? nil : inputs)
+                       fixesCount: fixes, unresolved: unresolved, commandInputs: advice?.command == nil ? nil : inputs, notChecked: notChecked)
     }
 
     public static let applePython = PythonEnvironment(executable: "/usr/bin/python3", version: "3.9.6", kind: .apple, externallyManaged: false,
@@ -77,9 +77,12 @@ public enum PreviewData {
             finding("pkg|RubyGems|nokogiri|1.13.8", .criticalHigh, .package(ecosystem: .rubygems, name: "nokogiri"), "nokogiri",
                     "1.13.8", "1.19.5", .critical, flaws: 23, origins: [.gem(gem: "/usr/bin/gem")],
                     page: SiteURL.packagePage(.rubygems, "nokogiri", version: "1.13.8"), ecosystem: .rubygems, grade: "C"),
+            // checked and affected, with critical advisories beside that state no affected versions: its row carries the mark
             finding("brew|python@3.12|3.12.16", .criticalHigh, .project(slug: "cpython", name: "CPython", installedAs: "python@3.12"), "CPython",
-                    "3.12.16", "3.14.11", .high, flaws: 1, note: affected("3.12.16", "3.14.11"), origins: [.homebrewFormula(name: "python@3.12")],
-                    page: SiteURL.projectPage(slug: "cpython"), name: "python@3.12", mark: .parts, grade: "C"),
+                    "3.12.16", "3.14.11", .high, flaws: 1,
+                    note: affected("3.12.16", "3.14.11") + " 4 more advisories state no affected versions; not checked, among them CVE-2026-38812, critical.",
+                    origins: [.homebrewFormula(name: "python@3.12")], page: SiteURL.projectPage(slug: "cpython"), name: "python@3.12", mark: .parts,
+                    grade: "C", notChecked: Finding.NotChecked(id: "CVE-2026-38812", exploited: false, critical: true)),
             finding("pkg|PyPI|urllib3|1.26.5", .criticalHigh, .package(ecosystem: .pypi, name: "urllib3"), "urllib3", "1.26.5", "2.8.0", .high,
                     flaws: 10, note: managedNote, origins: [.pip(python: homebrewPython, user: false, formula: nil)],
                     page: SiteURL.packagePage(.pypi, "urllib3", version: "1.26.5"), ecosystem: .pypi, runnable: false),
@@ -112,8 +115,29 @@ public enum PreviewData {
                     note: "No fixed release yet.",
                     origins: [.folder(root: home + "/code/tools", lockfile: home + "/code/tools/cli/Cargo.lock", direct: false)],
                     page: SiteURL.packagePage(.crates, "time", version: "0.1.43"), runnable: false),
-        ]
+        ] + notCheckedFindings
     }()
+
+    /// What the core could not check against published ranges: a formula the site reports an exploited, critical flaw
+    /// for, with no affected versions published (the amber mark, never counted), and one likely affected by the
+    /// issuer's first fixed version, with the version the core checked.
+    public static let notCheckedFindings: [Finding] = [
+        finding("brew|imagemagick|7.1.2-8", .reported, .project(slug: "imagemagick", name: "ImageMagick", installedAs: "imagemagick"), "ImageMagick",
+                "7.1.2-8", nil, .critical, flaws: 1, exploited: true,
+                note: "Reported by the site, not checked: it publishes no affected versions for CVE-2026-41730.",
+                origins: [.homebrewFormula(name: "imagemagick")], page: SiteURL.projectPage(slug: "imagemagick"), name: "imagemagick",
+                runnable: false, grade: "D", notChecked: Finding.NotChecked(id: "CVE-2026-41730", exploited: true, critical: true)),
+        finding("brew|redis|8.2.1", .likely, .project(slug: "redis", name: "Redis", installedAs: "redis"), "Redis", "8.2.1", "8.2.3", .high, flaws: 2,
+                note: "Likely affected: the site publishes no affected ranges, and the issuer names 8.2.3 as fixed.",
+                origins: [.homebrewFormula(name: "redis")], page: SiteURL.projectPage(slug: "redis"), name: "redis", grade: "B"),
+    ]
+
+    public enum NotCheckedID {
+        public static let imagemagick = "brew|imagemagick|7.1.2-8", redis = "brew|redis|8.2.1"
+    }
+
+    /// Only what was not checked: nothing the core checked needs action, and an exploited flaw is reported.
+    public static func notCheckedReport() -> ScanReport { report(findings: notCheckedFindings) }
 
     // MARK: Fixes (osva-render)
 

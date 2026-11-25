@@ -7,8 +7,8 @@ import SwiftUI
 // The panel is one sheet of system Liquid Glass (the MenuBarExtra window); everything inside it is content. Surfaces,
 // text and controls are the system's: `.primary`/`.secondary`/`.tertiary` text, `.quinary`/`.quaternary` fills, and
 // untinted controls that follow the person's accent colour. The site's colours (site/formalinformer/app.css) appear
-// only on status elements: severity marks, the exploited chip, the malicious section, grade tiles, verification marks,
-// the hero shield and a fixed row's check. Blue is for proof only, clay red for danger only.
+// only on status elements: severity marks, the exploited chip, the not-checked chip, the malicious section, grade
+// tiles, verification marks, the hero shield and a fixed row's check. Blue is for proof only, clay red for danger only.
 //
 // Each status colour has a value per role (fill, ring, glyph, text) and per appearance (light, dark, and their
 // Increase Contrast variants), from "OSVA Monitor colour palette" (reports/). Glyph values clear 3:1 and text values
@@ -127,6 +127,19 @@ public enum Tokens {
         public static let glyph = Tone(0xA12828, dark: 0xE7524E, lightIC: 0x990015, darkIC: 0xFFA8A0)
     }
 
+    /// Not checked against published ranges: the moderate amber, with no hex of its own. It marks an exploited or
+    /// critical flaw the core could not check (the chip, StatusChip's `.notChecked`), the section those findings are
+    /// listed in, and the hero when they are all that is urgent. Never the exploited chip's solid red, which says the
+    /// core checked the flaw.
+    public enum NotChecked {
+        /// On the glass: the hero's shield and the section heading's glyph.
+        public static let glyph = Tokens.moderate.glyph
+        /// The chip's shield, on the chip's tint: the darker shade, which clears 3:1 there.
+        public static let mark = Tokens.moderate.text
+        /// The chip's capsule: the summary chips' faint tint of the status colour (15% light, 25% dark).
+        public static let tint = Tokens.moderate.fill.opacity(light: 0.15, dark: 0.25)
+    }
+
     /// Nothing needs action: the site's grade-A green, on the hero shield and on the check of a row its fix resolved.
     public static let clean = Tone(0x1D5E3C, dark: 0x8CCDA5, lightIC: 0x195A39, darkIC: 0xA6E7BE)
 
@@ -174,7 +187,8 @@ public enum Surface {
     public static let hover = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.45, darkAlpha: 0.16, icAlpha: 0.55, darkICAlpha: 0.22)
     /// A command or a log, and the fix's review: set into the row.
     public static let well = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.62, darkAlpha: 0.24, icAlpha: 0.80, darkICAlpha: 0.36)
-    /// A small control drawn on whatever glass is there (the site link): its label clears 4.5:1 even on mid-grey glass.
+    /// A small control drawn on whatever glass is there (the site link), and the not-checked chip under its tint: its
+    /// label clears 4.5:1 even on mid-grey glass.
     public static let control = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.62, darkAlpha: 0.40, icAlpha: 0.80, darkICAlpha: 0.52)
     /// The hairline round a container, well or control.
     public static let edge = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.09, darkAlpha: 0.11, icAlpha: 0.30, darkICAlpha: 0.32)
@@ -191,6 +205,8 @@ public enum Typeface {
     public static let small = Font.system(size: 11.5)
     public static let caption = Font.system(size: 11)
     public static let chip = Font.system(size: 11, weight: .medium)
+    /// A row's status chip, exploited or not checked: the two are one size, so either sits in the other's place.
+    public static let statusChip = Font.system(size: 10, weight: .bold)
     public static let version = Font.system(size: 12, weight: .medium, design: .monospaced)
     public static let code = Font.system(size: 11, design: .monospaced)
     /// A fix's live log: small enough for a useful line, monospaced like the command.

@@ -35,12 +35,18 @@ public struct SeverityLabel: View {
 
 /// The small status labels. `.exploited` is the site's `.chip-kev` and the only solid red in the panel; `.malicious`
 /// is the clay word with its octagon; `.count` is a hero summary chip, a faint capsule of the status colour with a
-/// mark and a `.primary` label.
+/// mark and a `.primary` label. `.notChecked` is the amber mark of an exploited or critical flaw the core could not
+/// check against published ranges: the exploited chip's size, in the summary chips' form (a faint amber capsule, an
+/// amber shield, a `.primary` label), laid on `Surface.control` so it reads on grey glass, and the only way the panel
+/// draws that mark.
 public struct StatusChip: View {
     public enum Kind: Sendable, Hashable {
         case exploited
         case malicious
         case count(PopoverContent.Tally, Int)
+        /// The flaw, and whether the chip names it critical: not on a row whose own severity, beside it, already says
+        /// so (Finding.notCheckedChip decides).
+        case notChecked(Finding.NotChecked, namesCritical: Bool = true)
     }
 
     public var kind: Kind
@@ -51,7 +57,7 @@ public struct StatusChip: View {
         case .exploited:
             Label("Exploited", systemImage: "flame.fill")
                 .labelStyle(TightLabel())
-                .font(.system(size: 10, weight: .bold))
+                .font(Typeface.statusChip)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 2.5)
                 .background(Capsule().fill(Tokens.Exploited.chip.color))
@@ -72,6 +78,21 @@ public struct StatusChip: View {
             .padding(.horizontal, 5.5).padding(.vertical, 2.5)
             .background(Capsule().fill(tint(tally).opacity(light: 0.15, dark: 0.25).color))
             .accessibilityElement(children: .combine)
+        case let .notChecked(alert, namesCritical):
+            Label {
+                Text(alert.chipWords(namesCritical: namesCritical)).foregroundStyle(.primary)
+            } icon: {
+                Image(systemName: "exclamationmark.shield.fill").foregroundStyle(Tokens.NotChecked.mark.color)
+            }
+            .labelStyle(TightLabel())
+            .font(Typeface.statusChip)
+            .padding(.horizontal, 6).padding(.vertical, 2.5)
+            .background {
+                // the site link's surface under the tint, so the shield and the words read on grey glass too
+                Capsule().fill(Surface.control.color)
+                Capsule().fill(Tokens.NotChecked.tint.color)
+            }
+            .help(alert.chipHelp)
         }
     }
 
@@ -89,6 +110,19 @@ public struct StatusChip: View {
         case .exploited: return Tokens.Exploited.glyph
         case let .severity(s): return Tokens.severity(s).fill
         }
+    }
+}
+
+/// The amber chip's words (StatusChip's `.notChecked`).
+extension Finding.NotChecked {
+    /// "Exploited, not checked", "Critical, not checked", "Not checked".
+    public func chipWords(namesCritical: Bool = true) -> String {
+        exploited ? "Exploited, not checked" : critical && namesCritical ? "Critical, not checked" : "Not checked"
+    }
+
+    /// "CVE-2026-1: critical, exploited in the wild; reported by the site, not checked against published ranges".
+    public var chipHelp: String {
+        (id.map { "\($0): \(words)" } ?? words.prefix(1).uppercased() + words.dropFirst()) + "; reported by the site, not checked against published ranges"
     }
 }
 
@@ -217,7 +251,9 @@ public struct GroupContainer<Content: View>: View {
             Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.palette).foregroundStyle(.white, Tokens.critical.glyph.color)
         case .findings(.other):
             Image(systemName: "info.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
-        case .findings(.likely), .findings(.reported), .notChecked:      // their own section and mark come with the popover's redesign
+        case .findings(.likely), .findings(.reported):
+            Image(systemName: "exclamationmark.shield").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.NotChecked.glyph.color)
+        case .notChecked:
             Image(systemName: "questionmark.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         }
     }
@@ -509,6 +545,8 @@ public struct MenuBarLabel: View {
         /// The first-launch card waits for Start (Consent): nothing has run.
         case waiting
         case clean
+        /// Nothing the core checked needs action, but an exploited or critical flaw was not checked.
+        case notChecked
         case action(Int)
         case malicious(Int)
     }
@@ -533,6 +571,7 @@ public struct MenuBarLabel: View {
         switch state {
         case .notScanned, .waiting: return "shield"
         case .clean: return "checkmark.shield"
+        case .notChecked: return "exclamationmark.shield"
         case .action: return "exclamationmark.shield.fill"
         case .malicious: return "xmark.shield.fill"
         }
@@ -547,6 +586,7 @@ public struct MenuBarLabel: View {
         case .notScanned: return "OSVA Monitor: not scanned yet"
         case .waiting: return "OSVA Monitor: waiting for you to press Start"
         case .clean: return "OSVA Monitor: nothing needs action"
+        case .notChecked: return "OSVA Monitor: nothing checked needs action; an exploited or critical flaw is not checked against published ranges"
         case let .action(n): return "OSVA Monitor: \(n) findings need action"
         case let .malicious(n): return "OSVA Monitor: malicious package found; \(n) findings need action"
         }

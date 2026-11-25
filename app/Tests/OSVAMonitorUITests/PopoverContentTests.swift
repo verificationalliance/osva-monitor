@@ -9,8 +9,103 @@ import SwiftUI
 
     @Test func groupsInTheirOrder() {
         let c = PopoverContent(report: PreviewData.report(), isScanning: false, now: now)
-        #expect(c.sections.map(\.group) == [.malicious, .exploited, .criticalHigh, .other])
-        #expect(c.actionCount == 9)                                   // everything but "Other"
+        #expect(c.sections.map(\.group) == [.malicious, .exploited, .criticalHigh, .likely, .other])
+        #expect(c.actionCount == 9)                                   // everything but "Other" and what was not checked
+    }
+
+    /// Likely and reported findings share one section, "Not checked against published ranges", between what needs
+    /// action and Other, and are never counted.
+    @Test func notCheckedFindingsShareASectionAndAreNotCounted() throws {
+        let c = PopoverContent(report: PreviewData.notCheckedReport(), isScanning: false, now: now)
+        #expect(c.sections.count == 1)
+        let section = try #require(c.sections.first)
+        #expect(section.group == .likely && section.group.heading == "Not checked against published ranges")
+        #expect(Finding.Group.likely.title == Finding.Group.reported.title)
+        #expect(section.findings.map(\.id) == [PreviewData.NotCheckedID.redis, PreviewData.NotCheckedID.imagemagick] && section.count == 2)
+        #expect(c.actionCount == 0 && c.heroCount == nil && c.tallies.isEmpty)
+    }
+
+    /// An exploited or critical flaw the core could not check against published ranges never leaves the green
+    /// "Nothing needs action": the hero says nothing checked needs action, under a hollow amber shield.
+    @Test func anExploitedReportIsNeverClean() {
+        func content(_ findings: [Finding]) -> PopoverContent { PopoverContent(report: PreviewData.report(findings: findings), isScanning: false, now: now) }
+        let c = PopoverContent(report: PreviewData.notCheckedReport(), isScanning: false, now: now)
+        #expect(c.hero == .notChecked && c.hero.symbol == "exclamationmark.shield" && c.heroCount == nil)
+        #expect(c.sentence == "Nothing checked needs action" && c.headline == "Nothing checked needs action")
+        #expect(c.subline.hasPrefix(PopoverContent.unbroken("2 not checked against published ranges") + " · 8\u{00A0}not\u{00A0}checked · Scanned"))
+        #expect(c.menuBarState == .notChecked)
+        // a report saved before `notChecked`: the reported finding's own exploited flaw keeps the hero amber
+        let saved = PreviewData.notCheckedFindings.map { f in var x = f; x.notChecked = nil; return x }
+        #expect(content(saved).hero == .notChecked)
+        // a checked low finding in Other, with an exploited flaw beside it that the core could not check
+        let other = PreviewData.findings.filter { $0.group == .other }
+        var marked = other
+        marked[0].notChecked = Finding.NotChecked(id: "CVE-X", exploited: true, critical: false)
+        #expect(content(marked).hero == .notChecked && content(marked).subline.hasPrefix(PopoverContent.unbroken("4 lower-severity findings")))
+        // only a likely high finding: nothing urgent, so the green hero, which says what it did not check; Other alone
+        // counts as lower-severity
+        let likely = PreviewData.notCheckedFindings.filter { $0.group == .likely }
+        let clean = content(other + likely)
+        #expect(clean.hero == .clean && clean.sentence == "Nothing needs action" && clean.menuBarState == .clean)
+        #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("4 lower-severity findings"),
+                                         PopoverContent.unbroken("8 not checked"), "Scanned"].joined(separator: " · ")))
+        // anything the core checked that needs action comes first
+        #expect(content(PreviewData.findings).hero == .malicious)
+    }
+
+    /// The red "Exploited" chip and "Exploited flaw" are for a flaw the core checked. The amber chip marks an exploited
+    /// or critical flaw it did not: on a likely or reported row, in the red chip's place, naming critical only when the
+    /// row's severity beside it does not; on a checked row, the flaw beside it.
+    @Test func theAmberMarkSaysWhatTheCoreDidNotCheck() {
+        func words(_ f: Finding) -> String? {
+            guard case let .notChecked(alert, namesCritical)? = f.notCheckedChip else { return nil }
+            return alert.chipWords(namesCritical: namesCritical)
+        }
+        let imagemagick = PreviewData.notCheckedFindings.first { $0.id == PreviewData.NotCheckedID.imagemagick }!
+        let alert = Finding.NotChecked(id: "CVE-2026-41730", exploited: true, critical: true)
+        #expect(imagemagick.exploited && !imagemagick.checkedExploited)
+        #expect(imagemagick.notCheckedChip == .notChecked(alert, namesCritical: false) && words(imagemagick) == "Exploited, not checked")
+        #expect(alert.chipHelp == "CVE-2026-41730: critical, exploited in the wild; reported by the site, not checked against published ranges")
+        // reported, critical, not exploited: its severity says critical beside the chip
+        var critical = imagemagick
+        critical.exploited = false
+        critical.notChecked = Finding.NotChecked(id: "CVE-C", exploited: false, critical: true)
+        #expect(words(critical) == "Not checked")
+        // likely, high, with a critical reported flaw: the chip names what the row does not
+        var likely = PreviewData.notCheckedFindings.first { $0.id == PreviewData.NotCheckedID.redis }!
+        #expect(likely.notCheckedChip == nil)
+        likely.notChecked = Finding.NotChecked(id: "CVE-R", exploited: false, critical: true)
+        #expect(words(likely) == "Critical, not checked")
+        // checked and affected, with a critical flaw beside it that states no affected versions
+        let cpython = PreviewData.findings.first { $0.id == PreviewData.FixID.cpython }!
+        #expect(cpython.group == .criticalHigh && words(cpython) == "Critical, not checked")
+        var cpythonExploited = cpython
+        cpythonExploited.notChecked = Finding.NotChecked(id: "CVE-E", exploited: true, critical: false)
+        #expect(words(cpythonExploited) == "Exploited, not checked")
+        let openssh = PreviewData.findings.first { $0.id == PreviewData.FixID.openssh }!
+        #expect(openssh.checkedExploited && openssh.notCheckedChip == nil)
+        // a report saved before `notChecked`: the finding's own flaws
+        var saved = imagemagick
+        saved.notChecked = nil
+        #expect(saved.notCheckedMark == Finding.NotChecked(id: nil, exploited: true, critical: true))
+        #expect(saved.notCheckedMark!.chipHelp.hasPrefix("Critical, exploited in the wild; reported by the site"))
+        let axios = PreviewData.findings[0]
+        #expect(axios.malicious && axios.notCheckedMark == nil && !axios.checkedExploited)
+        // without a version, a row the core could not check names no fix
+        let time = PreviewData.findings.first { $0.title == "time" }!
+        #expect(imagemagick.withoutVersion == "no checked fixed version" && time.withoutVersion == "no fixed release known")
+    }
+
+    /// A finding the core did not check never says "Exploited flaw": its exploited flaw is "not checked", whether the
+    /// report carries the mark or was saved before it.
+    @Test func aNotCheckedNotificationSaysSo() {
+        let imagemagick = PreviewData.notCheckedFindings.first { $0.id == PreviewData.NotCheckedID.imagemagick }!
+        #expect(imagemagick.deservesNotification && SystemNotifier.text(for: [imagemagick]).title == "Exploited flaw, not checked: ImageMagick")
+        var saved = imagemagick
+        saved.notChecked = nil
+        #expect(saved.deservesNotification && SystemNotifier.text(for: [saved]).title == "Exploited flaw, not checked: ImageMagick")
+        let redis = PreviewData.notCheckedFindings.first { $0.id == PreviewData.NotCheckedID.redis }!
+        #expect(!redis.deservesNotification)
     }
 
     @Test func theHeroSaysTheWorstThing() {
@@ -64,7 +159,7 @@ import SwiftUI
     @Test func whileScanningTheLastFindingsStay() {
         let c = PopoverContent(report: PreviewData.report(), isScanning: true, progress: "Checking 27 package versions…", now: now)
         #expect(c.subline == "Checking 27 package versions…")
-        #expect(c.sections.count == 4 && c.hero == .malicious)
+        #expect(c.sections.count == 5 && c.hero == .malicious)
     }
 
     @Test func versionLines() {
@@ -77,6 +172,7 @@ import SwiftUI
     @MainActor @Test func menuBarSymbolsAreTemplateShields() {
         #expect(MenuBarLabel(.notScanned).symbol == "shield")
         #expect(MenuBarLabel(.clean).symbol == "checkmark.shield")
+        #expect(MenuBarLabel(.notChecked).symbol == "exclamationmark.shield")            // hollow: nothing checked needs action
         #expect(MenuBarLabel(.action(3)).symbol == "exclamationmark.shield.fill")
         #expect(MenuBarLabel(.malicious(1)).symbol == "xmark.shield.fill")
     }
@@ -94,10 +190,10 @@ import SwiftUI
 
     @Test func oneNotificationForManyFindings() {
         let fresh = PreviewData.findings.filter(\.deservesNotification)
-        #expect(fresh.map(\.title) == ["axios", "OpenSSH", "OpenMTP", "nginx"])
+        #expect(fresh.map(\.title) == ["axios", "OpenSSH", "OpenMTP", "nginx", "ImageMagick"])
         let (title, body) = SystemNotifier.text(for: fresh)
-        #expect(title == "4 new findings, starting with axios")
-        #expect(body == "1.14.1 · ~/code/storefront/package-lock.json\nAlso: OpenSSH, OpenMTP, nginx")
+        #expect(title == "5 new findings, starting with axios")
+        #expect(body == "1.14.1 · ~/code/storefront/package-lock.json\nAlso: OpenSSH, OpenMTP, nginx …")
         #expect(SystemNotifier.text(for: [fresh[1]]).title == "Exploited flaw: OpenSSH")
     }
 

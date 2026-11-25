@@ -106,10 +106,16 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
             case .exploited: return "Exploited in the wild"
             case .criticalHigh: return "Critical and high"
             case .other: return "Other"
-            case .likely: return "Likely affected"
-            case .reported: return "Reported, not checked"
+            case .likely, .reported: return "Not checked against published ranges"
             }
         }
+
+        /// The popover's sections, in the order they are shown: what needs action, what the core could not check
+        /// against published ranges, then Other. Likely and reported share one section, keyed `.likely` (`section`).
+        public static let sections: [Group] = [.malicious, .exploited, .criticalHigh, .likely, .other]
+
+        /// The section a finding of this group is shown in.
+        public var section: Group { isNotChecked ? .likely : self }
 
         /// Groups that call for action now; they decide the menu-bar icon and the count beside it. Only what the core
         /// checked is counted: never `likely` or `reported`.
