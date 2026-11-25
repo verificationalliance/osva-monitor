@@ -40,7 +40,7 @@
 
   <rect class="plain" x="596" y="56" width="140" height="112" rx="10"/>
   <text class="t ink" x="614" y="86">C bridge</text>
-  <text class="s muted" x="614" y="109">~80 lines,</text>
+  <text class="s muted" x="614" y="109">~130 lines,</text>
   <text class="s muted" x="614" y="128">bytes in and out</text>
 
   <path class="arrow" d="M736 112 H 772"/><path class="head" d="M772 106 l10 6 l-10 6 z"/>
