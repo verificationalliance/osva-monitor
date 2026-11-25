@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   verify:
-    uses: verificationalliance/verify/.github/workflows/lean.yml@6512d67903dd322b2d3ff7b9563fb740f2518243 # workflow-6
+    uses: verificationalliance/verify/.github/workflows/lean.yml@6fdf9a0870d09204e776d2fc357d96acb3258eb8 # workflow-10
     permissions:
       contents: read
       id-token: write
