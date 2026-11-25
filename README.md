@@ -175,10 +175,11 @@ core and none can stand in for a core function there. This part is held by types
 
 **The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the app.
 `build-app.sh` reads the linker's map and stops unless every symbol in the app that the core's archive or the Lean
-libraries define was taken from them, and every name they take from the system (`getenv`, `memcpy`) is still the
-system's, not other code's (its header lists exactly what is checked, and what is not). There is no hand-written Swift
-copy that could drift away from what was proved. About 190 lines of C pass bytes between Swift and Lean. That bridge is
-the only unproved code on the path, and it has its own tests.
+libraries define was taken from them, and every name they, `Core.swift` or the C bridge take from the system
+(`getenv`, `memcpy`, `DispatchQueue.sync`) is still the system's, not other code's (its header lists exactly what is
+checked, and what is not). There is no hand-written Swift copy that could drift away from what was proved. About 190
+lines of C pass bytes between Swift and Lean. That bridge is the only unproved code on the path, and it has its own
+tests.
 
 **Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 47 proofs again. It
 then confirms that they rest only on Lean's three standard axioms (no `sorry`, nothing assumed without proof) and runs

@@ -44,24 +44,41 @@
 #     toolchain archive imports or defines (SIGN_APP relies on both);
 #   - of what the executable takes from a library at run time (nm -m: "(undefined) external name (from library)"),
 #     nothing is a name a Lean archive defines or with the core's prefixes, and every name a Lean archive imports is
-#     from a system library: one whose install name (otool -L) starts with /usr/lib/ or /System/Library/, matched to
-#     nm's short name for it (a framework's name, or a dylib's file name up to its first dot);
+#     from a system library: one whose install name (otool -L) starts with /usr/lib/ or /System/Library/ (the Swift
+#     runtime's included), matched to nm's short name for it (a framework's name, or a dylib's file name up to its first
+#     dot);
+#   - the bridge is Core.swift's object, OSVAVerified.o, and the shim's, OSVACore.o, each named once in "# Object
+#     files:", beside the executable ("# Path:"'s folder). Step 2 appends to the map a section of build-app.sh's own,
+#     "# Names the bridge imports:", every name the two objects leave undefined (nm -u). Each such name is, in "#
+#     Symbols:", defined only by a bridge object (the shim's functions, which Core.swift calls), by a Lean archive's
+#     member as above, or by the linker itself (not as a thread-local); and where the executable imports it, it is from
+#     a system library as above. So no other app code takes the place of what Core.swift or the shim calls: not a
+#     Swift @_silgen_name of Dispatch's DispatchQueue.sync or of Swift's String.append, nor an @_cdecl of osva_vcmp;
 #   - these are present: _lp_osvaCore_OSVA_verdict, _lp_osvaCore_OSVA_upgradeFor, _lp_osvaCore_OSVA_judge and
 #     _lp_osvaCore_OSVA_pctEncode (the compiled OSVA.verdict, upgradeFor, judge and pctEncode, which the claims in
 #     .verificationalliance.json are about), _osva_lean_<name> for every @[export osva_lean_<name>] in
 #     core/OSVACore/FFI.lean (what the C shim calls), and _initialize_osvaCore_OSVACore (the core's initializer); the
 #     map is this executable's: its "# Path:" names an OSVAMonitor, and nm finds each of these in the executable,
 #     external and in __TEXT (T), at the address the map gives.
-# So no app object (a Swift @_cdecl, say), other object, archive or dylib given to the link supplies a symbol the
-# executable keeps under a name a Lean archive defines, or under the core's prefixes, or under a name the Lean code
-# imports from the system. Not checked: that the archives hold what they should (step 1 builds the core's from the
-# .lean files in the same run; the toolchain's are whatever elan installed under that toolchain's name); which of two
-# members with the same name gave a symbol (libInit.a has several called Basic.c.o.export: "its member defines that
-# name" means one of that name does); which system library an import comes from, beyond its being one; the system's
-# libraries themselves (libc++, libSystem, the Swift runtime); the shim's own functions; and Swift's own names: a
-# function of the app's named like a core function would be called instead of the core's by Swift code in the same
-# module, which no link map shows. app/Package.swift keeps the one caller, Core.swift, alone in its module
-# (OSVAVerified), and ClaimsTests holds it there.
+# So no app object (a Swift @_cdecl or @_silgen_name, say), other object, archive or dylib given to the link supplies a
+# symbol the executable keeps under a name a Lean archive defines, under the core's prefixes, or under a name the Lean
+# code or the bridge imports. Not checked:
+#   - that the archives hold what they should (step 1 builds the core's from the .lean files in the same run; the
+#     toolchain's are whatever elan installed under that toolchain's name), and which of two members with the same name
+#     gave a symbol (libInit.a has several called Basic.c.o.export: "its member defines that name" means one does);
+#   - which system library an import comes from, beyond its being one, and the system's libraries themselves (libc++,
+#     libSystem, the Swift runtime, Foundation), including their code that the compiler inlined into Core.swift's
+#     object;
+#   - the shim's own code, beyond its tests;
+#   - Swift's own names: a function of the app's named like one Core.swift calls would be called instead by Swift code
+#     in the same module, which no link map shows. app/Package.swift keeps Core.swift alone in its module
+#     (OSVAVerified), and ClaimsTests holds it there and refuses @_silgen_name, @_cdecl and @c elsewhere, and an
+#     extension elsewhere that declares a member Core.swift already declares for that type;
+#   - anything at run time. A dylib loaded at launch could interpose on what the app calls (__interpose): the system's,
+#     and Sparkle, the only other one, pinned by Package.resolved and signed inside the app. DYLD_INSERT_LIBRARIES works
+#     on an ad-hoc build; a Developer ID build's hardened runtime ignores it. And the app's own code runs in the same
+#     process: it could rebind imports, patch memory or swizzle Objective-C methods (ClaimsTests refuses the memory
+#     reinterpretation it can find in the source, not all of it).
 #
 # SIGN_APP=<path to OSVA Monitor.app>, with DEVELOPER_ID: skip steps 1-3 and sign and notarize an app another Mac
 # built with this script (the Mac server builds and tests; the signing keys stay on the signing Mac). It is signed only
@@ -77,11 +94,12 @@
 # one); the toolchain archives' members, globals and imports are this Mac's copy of the same toolchain; the core's
 # members must be named after its modules (core/OSVACore/<Name>.lean is <Name>.c.o.export), its globals and imports
 # are unknown, so its prefixed symbols are checked by prefix only, a name the toolchain archives define may not come
-# from it, and its imports are covered by the toolchain archives' (which the build checked); and no file can be looked
-# for at an entry's literal path. The map is required, rather than trusting that the build checked
-# it, so that this Mac refuses an app whose build did not check its code (an older script, or no map), and nm ties the
-# map to this executable. The map is the build Mac's word, not signed: it guards against a mistake on the build Mac,
-# not against a build Mac that lies.
+# from it, and its imports are covered by the toolchain archives' (which the build checked); what the bridge imports is
+# the map's own section, written by the build Mac; and no file can be looked for at an entry's literal path. The map is
+# required, rather than trusting that the build checked it, so that this Mac refuses an app whose build did not check
+# its code (an older script, or no map, or a map without the bridge's section), and nm ties the map to this executable.
+# The map is the build Mac's word, not signed: it guards against a mistake on the build Mac, not against a build Mac
+# that lies.
 #
 # For testing updates only, and refused together with DEVELOPER_ID:
 #   SPARKLE_PUBLIC_KEY=<base64>  trust this update key instead of the real one (a throwaway key's public half)
@@ -167,10 +185,24 @@ map_prefix() {
     || die "$1 names no single folder for ...$t (found: ${found:-none})"
   echo "$found"
 }
+# The bridge: Core.swift's object and the shim's, as SwiftPM names them beside the executable (the map's "# Path:").
+bridge_objects="OSVAVerified.o OSVACore.o"
+bridge_header="# Names the bridge imports:"
+# record_bridge_imports <link map>: appends to the map, after ld's own sections, a section of build-app.sh's: every name
+# the bridge's objects import (nm -u), one per line. check_core_origin reads it, here and with SIGN_APP.
+record_bridge_imports() {
+  local dir names="" f
+  dir="$(sed -n 's/^# Path: //p' "$1" | head -1)"; dir="${dir%/*}"
+  for f in $bridge_objects; do
+    [ -f "$dir/$f" ] || die "no $f beside the executable in $dir: the bridge's objects are not where the link took them from"
+    names+="$(nm -u "$dir/$f")"$'\n' || die "nm cannot read $dir/$f"
+  done
+  { echo "$bridge_header"; grep . <<<"$names" | sort -u; } >> "$1"
+}
 # check_core_origin <link map> <executable> build|sign
 check_core_origin() {
   local map="$1" exe="$2" mode="$3" path arch tables tdir core_dir result rel f required name addr member n line
-  local problems="" listing="" core_imports imports
+  local problems="" listing="" core_imports imports bridge_dir bridge_count
   [ -s "$map" ] || die "no link map at $map (build-app.sh writes it beside the app it builds)"
   path="$(sed -n 's/^# Path: //p' "$map" | head -1)"
   arch="$(sed -n 's/^# Arch: //p' "$map" | head -1)"
@@ -207,14 +239,26 @@ check_core_origin() {
       | head -3 | tr '\n' ' ' || true)"
     [ -z "$line" ] || die "the core's archive imports names no toolchain archive imports or defines, which SIGN_APP relies on: $line"
   fi
+  # B: what the bridge imports, from the map's own section (record_bridge_imports); the bridge's objects must be in the
+  # map, each once, beside the executable.
+  grep -q -x -F "$bridge_header" "$map" || die "$map has no \"$bridge_header\" section: it was not made by this build-app.sh"
+  awk -v h="$bridge_header" 'f && NF { print "B\t" $0 } $0 == h { f = 1 }' "$map" >> "$tables"
+  bridge_count="$(grep -c '^B' "$tables" || true)"
+  bridge_dir="${path%/*}"
+  for f in $bridge_objects; do
+    n="$(awk -v p="$bridge_dir/$f" 'sub(/^\[ *[0-9]+\] /, "") && $0 == p' "$map" | wc -l | tr -d ' ')"
+    [ "$n" = 1 ] || die "$map names $bridge_dir/$f $n times, not once"
+  done
   # P: a problem; F: an entry taken as an archive member (in a build, no file may have its literal path); S: a symbol
   # with the core's prefixes (name, address, member); C: how many checked symbols each archive gave.
-  result="$(awk -F '\t' -v re="$core_prefixes" -v tdir="$tdir" '
+  result="$(awk -F '\t' -v re="$core_prefixes" -v tdir="$tdir" -v bdir="$bridge_dir/" -v bobj="$bridge_objects" '
+    BEGIN { nb = split(bobj, bo, " "); for (k = 1; k <= nb; k++) bpath[bdir bo[k]] = 1 }
     FNR == NR {
       if ($1 == "A") { path[$2] = $3; lab[++nl] = $2 }
       else if ($1 == "M") member[$2 SUBSEP $3] = 1
       else if ($1 == "D") { def[$2 SUBSEP $3 SUBSEP $4] = 1; lean[$4] = 1; hasdef[$2] = 1 }
       else if ($1 == "U") imp[$4] = 1
+      else if ($1 == "B") bridge[$2] = 1
       next
     }
     /^# Object files:$/ { s = "o"; next }
@@ -223,6 +267,7 @@ check_core_origin() {
     /^#/ { next }
     s == "o" && match($0, /^\[ *[0-9]+\] /) {
       i = substr($0, 2, RLENGTH - 3) + 0; p = substr($0, RLENGTH + 1); file[i] = p
+      if (p in bpath) isbridge[i] = 1
       for (k = 1; k <= nl; k++) {
         l = lab[k]; a = path[l] "("
         if (substr(p, 1, length(a)) != a) continue
@@ -237,14 +282,16 @@ check_core_origin() {
     }
     s == "s" && NF >= 3 && match($3, /^\[ *[0-9]+\] /) {
       i = substr($3, 2, RLENGTH - 3) + 0; n = substr($3, RLENGTH + 1); c = (n ~ re); g = (n in lean)
-      u = !c && !g && (n in imp)
+      u = !c && !g && (n in imp); b = !c && !g && (n in bridge)
       if (n ~ /\$tlv\$init$/) {
         tlvany[substr(n, 1, length(n) - 9)] = file[i]
         if (i in from) tlvinit[substr(n, 1, length(n) - 9)] = from[i] SUBSEP mem[i]
       }
-      if (!c && !g && !u) next
-      if (file[i] == "linker synthesized") { if (u) made[n] = 1; else tlv[n] = 1; next }
+      if (!c && !g && !u && !b) next
+      if (file[i] == "linker synthesized") { if (u || b) made[n] = 1; else tlv[n] = 1; next }
       if (u) { print "P\t" n ", which the Lean archives import, is defined by " file[i] ", not left to the system"; next }
+      if (b && (i in isbridge)) { count["bridge"]++; next }       # what Core.swift calls in the shim (osva_vcmp, ...)
+      if (b) { print "P\t" n ", which Core.swift or the shim imports, is defined by " file[i] ", not by the shim or the system"; next }
       l = from[i]
       if (l == "") print "P\t" n " is defined by " file[i] ", not by a member of a Lean archive"
       else if (c && l != "core") print "P\t" n " is defined by " file[i] ", not by a member of the core'"'"'s archive"
@@ -258,8 +305,10 @@ check_core_origin() {
         if ((n in tlvinit) && ((tlvinit[n] SUBSEP n) in def)) { split(tlvinit[n], q, SUBSEP); count[q[1]]++ }
         else print "P\t" n " is a thread-local whose initial value is not from a member of a Lean archive that defines it"
       }
-      # A name the Lean archives import may be the linker'"'"'s own (___dso_handle), but not a thread-local of other code.
-      for (n in made) if (n in tlvany) print "P\t" n ", which the Lean archives import, is a thread-local of " tlvany[n]
+      # A name the Lean archives or the bridge import may be the linker'"'"'s own (___dso_handle), but not a thread-local of
+      # other code.
+      for (n in made) if (n in tlvany) print "P\t" n ", which the Lean archives or the bridge import, is a thread-local of " tlvany[n]
+      print "J\t" count["bridge"] + 0
       for (k = 1; k <= nl; k++) print "C\t" lab[k] "\t" count[lab[k]] + 0
     }' "$tables" "$map")"
   problems="$(awk -F '\t' '$1 == "P" { print "   " $2 }' <<<"$result")"
@@ -278,7 +327,7 @@ check_core_origin() {
     f = ""; if (match($0, /\(from [^()]*\)$/)) f = substr($0, RSTART + 6, RLENGTH - 7); print "I\t" $(k + 1) "\t" f }' <<<"$line" \
     >> "$tables.imports"
   imports="$(awk -F '\t' -v re="$core_prefixes" '
-    FNR == NR { if ($1 == "D") g[$4] = 1; else if ($1 == "U") u[$4] = 1; next }
+    FNR == NR { if ($1 == "D") g[$4] = 1; else if ($1 == "U") u[$4] = 1; else if ($1 == "B") br[$2] = 1; next }
     $1 == "L" {
       p = $2; sn = p
       if (match(p, /[^\/]+\.framework\//)) sn = substr(p, RSTART, RLENGTH - 11); else { sub(/^.*\//, "", sn); sub(/\..*$/, "", sn) }
@@ -290,7 +339,13 @@ check_core_origin() {
     $1 == "I" && ($2 in u) {
       if (onsys[$3]) { kept++; by[$3]++ } else print "P\tthe executable takes " $2 ", which the Lean archives import, from " from ", not a system library"
     }
-    END { for (l in by) list = list (list == "" ? "" : ", ") l " " by[l]; print "K\t" kept + 0 "\t" list }' "$tables" "$tables.imports")"
+    $1 == "I" && ($2 in br) {
+      if (onsys[$3]) { bkept++; bby[$3]++ } else print "P\tthe executable takes " $2 ", which Core.swift or the shim imports, from " from ", not a system library"
+    }
+    END {
+      for (l in by) list = list (list == "" ? "" : ", ") l " " by[l]; print "K\t" kept + 0 "\t" list
+      for (l in bby) blist = blist (blist == "" ? "" : ", ") l " " bby[l]; print "Q\t" bkept + 0 "\t" blist
+    }' "$tables" "$tables.imports")"
   problems+=$'\n'"$(awk -F '\t' '$1 == "P" { print "   " $2 }' <<<"$imports")"
   line="$(nm -g -U -arch "$arch" "$exe")" || die "nm cannot read $exe"
   required="$(core_required)"
@@ -308,12 +363,15 @@ check_core_origin() {
   done
   rm -f "$tables" "$tables.imports"; trap - EXIT
   problems="$(grep . <<<"$problems" || true)"
-  [ -z "$problems" ] || { echo "$problems" >&2; die "the executable has code in place of the Lean archives' (above; map: $map)"; }
+  [ -z "$problems" ] || { echo "$problems" >&2; die "the executable has other code in place of the Lean archives' or the bridge's (above; map: $map)"; }
   printf '%s' "$listing"
   echo "   symbols in the executable that a Lean archive defines, or with the core's prefixes, all from its members:"
   awk -F '\t' '$1 == "C" { printf "%s%s %s", (n++ ? ", " : "   "), ($2 == "core" ? "the core" : $2), $3 } END { print "" }' <<<"$result"
   awk -F '\t' '$1 == "K" { print "   names the Lean archives import: none defined by other code; " $2 " taken from system libraries (" $3 ")" }' \
     <<<"$imports"
+  awk -F '\t' -v total="$bridge_count" -v shim="$(awk -F '\t' '$1 == "J" { print $2 }' <<<"$result")" '$1 == "Q" {
+    print "   names Core.swift and the shim import (" total "): none defined by other app code; " shim " from the shim, " $2 \
+      " taken from system libraries (" $3 "), the rest from the Lean archives" }' <<<"$imports"
 }
 
 if [ -z "${SIGN_APP:-}" ]; then
@@ -343,6 +401,7 @@ if [ "${UPDATE_TESTING:-}" != 1 ] && grep -q -a OSVA_UPDATE_FEED "$bin_dir/OSVAM
   die "this build has the test-only feed override compiled in; remove .build and build again"
 fi
 check_core_inside "$bin_dir/OSVAMonitor"
+record_bridge_imports "$link_map"
 check_core_origin "$link_map" "$bin_dir/OSVAMonitor" build
 
 echo "3. bundle"
