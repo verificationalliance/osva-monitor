@@ -60,6 +60,10 @@ public struct PopoverContent: Sendable {
     public var sentence: String
     /// What to do first, when one thing comes before the rest ("Remove the malicious package first.").
     public var advice: String?
+    /// Under a hero that says nothing (checked) needs action: what it rests on.
+    public var caveat: String? {
+        hero == .clean || hero == .notChecked ? "Not proof of safety: it is what has been reported." : nil
+    }
     /// "Scanned 4 minutes ago · Homebrew, 15 Electron apps, pip, RubyGems, 2 folders".
     public var subline: String
     public struct TallyCount: Identifiable, Hashable, Sendable {
@@ -106,6 +110,7 @@ public struct PopoverContent: Sendable {
         let notChecked = findings.filter(\.group.isNotChecked).count
         // an exploited or critical flaw the core could not check, on any finding
         let alerting = findings.contains { $0.notCheckedMark != nil }
+        let notAgainstRanges = notChecked == 0 ? nil : Self.unbroken("\(notChecked) not checked against published ranges")
         let scanned = report.map { Self.unbroken("Scanned \(Self.relative($0.finishedAt, now: now))") }
         let looked = report.map { Self.sourcesSummary($0.inventory.reports) } ?? ""
         let when = [scanned, looked.isEmpty ? nil : looked].compactMap { $0 }.joined(separator: " · ")
@@ -121,7 +126,6 @@ public struct PopoverContent: Sendable {
             hero = alerting ? .notChecked : .clean
             heroCount = nil
             sentence = alerting ? "Nothing checked needs action" : "Nothing needs action"
-            let notAgainstRanges = notChecked == 0 ? nil : Self.unbroken("\(notChecked) not checked against published ranges")
             let others = lower == 0 ? nil : Self.unbroken(lower == 1 ? "1 lower-severity finding" : "\(lower) lower-severity findings")
             let noRecord = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) with no record")
             subline = [notAgainstRanges, others, noRecord, when].compactMap { $0 }.joined(separator: " · ")
@@ -134,7 +138,7 @@ public struct PopoverContent: Sendable {
                 advice = Self.removeFirst(urgent.filter(\.malicious))
             default: sentence = n == 1 ? "needs action" : "need action"
             }
-            subline = when
+            subline = [notAgainstRanges, when.isEmpty ? nil : when].compactMap { $0 }.joined(separator: " · ")
         }
         if isScanning && report != nil, !progress.isEmpty { subline = progress }
     }

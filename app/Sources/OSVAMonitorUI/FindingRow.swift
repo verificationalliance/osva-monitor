@@ -56,22 +56,15 @@ public struct FindingRow: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// Malicious; or exploited (checked), severity, how many flaws, with the amber chip of a flaw not checked against
-    /// published ranges: first on a likely or reported row, in the red chip's place; last on a checked row, after what
-    /// was checked.
+    /// The status line, `Finding.statusChips` in order: a chip that has no room on the line moves whole to the next.
     private var statusChips: some View {
-        HStack(spacing: 8) {
-            if finding.malicious {
-                StatusChip(.malicious)
-            } else {
-                let leads = finding.group.isNotChecked, amber = finding.notCheckedChip.map(StatusChip.init)
-                if finding.checkedExploited { StatusChip(.exploited) }
-                if leads, let amber { amber }
-                if let s = finding.severity { SeverityLabel(s) }
-                if finding.flawCount > 1 {
-                    Text("\(finding.flawCount) flaws").font(Typeface.count(11.5, weight: .medium)).foregroundStyle(.secondary)
+        WrapAtSpaces(spacing: 8, lineSpacing: 4) {
+            ForEach(finding.statusChips, id: \.self) { item in
+                switch item {
+                case let .chip(kind): StatusChip(kind)
+                case let .severity(s): SeverityLabel(s).fixedSize()
+                case let .flaws(n): Text("\(n) flaws").font(Typeface.count(11.5, weight: .medium)).foregroundStyle(.secondary).fixedSize()
                 }
-                if !leads, let amber { amber }
             }
         }
     }
@@ -268,15 +261,36 @@ public struct FindingRow: View {
     }
 }
 
+/// One item of a row's status line.
+public enum StatusLineItem: Hashable, Sendable {
+    case chip(StatusChip.Kind)
+    case severity(Severity)
+    case flaws(Int)
+}
+
 /// What a row says about a finding, beyond its fields.
 extension Finding {
+    /// The row's status line, in order: malicious alone; else the red chip of an exploited flaw the core checked, the
+    /// severity, how many flaws, and the amber chip of a flaw it did not check, first on a likely or reported row (in
+    /// the red chip's place), last on a checked row (after what was checked).
+    public var statusChips: [StatusLineItem] {
+        if malicious { return [.chip(.malicious)] }
+        let leads = group.isNotChecked, amber = notCheckedChip.map(StatusLineItem.chip)
+        var items: [StatusLineItem] = checkedExploited ? [.chip(.exploited)] : []
+        if leads, let amber { items.append(amber) }
+        if let severity { items.append(.severity(severity)) }
+        if flawCount > 1 { items.append(.flaws(flawCount)) }
+        if !leads, let amber { items.append(amber) }
+        return items
+    }
+
     /// The most urgent flaw of this finding the core did not check against published ranges, when it is exploited in
-    /// the wild or critical: `notChecked`, or, for a finding that is itself likely or reported, its own flaws (a report
-    /// saved before `notChecked` keeps its mark). Nil for a malicious finding, which says only that.
+    /// the wild or critical: `notChecked`, or, for a likely or reported finding, its own exploited flag (a report saved
+    /// before `notChecked` keeps its mark). Never its severity alone, which may come from a flaw whose published ranges
+    /// the core checked and found the version outside. Nil for a malicious finding, which says only that.
     public var notCheckedMark: NotChecked? {
         guard !malicious else { return nil }
-        let own = group.isNotChecked && (exploited || severity == .critical)
-            ? NotChecked(id: nil, exploited: exploited, critical: severity == .critical) : nil
+        let own = group.isNotChecked && exploited ? NotChecked(id: nil, exploited: true, critical: false) : nil
         return .worse(notChecked, own)
     }
 

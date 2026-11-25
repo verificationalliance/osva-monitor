@@ -146,6 +146,26 @@ import Testing
         #expect(f.notChecked == Finding.NotChecked(id: "RQ", exploited: true, critical: true) && f.deservesNotification)
     }
 
+    /// A part's flaw whose published ranges leave its version out was checked by the core: the sentence says it apart,
+    /// never "reported, not checked", and it is never the program's alert.
+    @Test func aProgramSaysFlawsOutsideTheirRangesApart() throws {
+        typealias B = BatchCheckTests
+        let black = try B.result("black", "24.1.0", flaws: [B.flaw("BL-A", ranges: #"[{"fixed":"26.0"}]"#),
+                                                            B.flaw("BL-O", ranges: #"[{"introduced":"25.0","fixed":"26.0"}]"#, severity: "CRITICAL")],
+                                 plan: B.plan("26.0"))
+        let click = try B.result("click", "8.1.3", flaws: [B.flaw("CL", ranges: #"[{"fixed":"8.0"}]"#, severity: "CRITICAL", exploited: true)])
+        let installed = [("black", "24.1.0"), ("click", "8.1.3")].map {
+            InstalledPackage(ecosystem: .pypi, name: $0.0, version: $0.1, origin: .pythonTool(Self.black))
+        }
+        let selection = PrivacyFilter(index: Self.index).approve(installed)
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in [black, click].first { $0.name == a.name }.map { (a, $0) } })
+        let f = try #require(FindingBuilder(index: Self.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:],
+                                                                        bigIssues: []).first)
+        #expect(f.note?.hasPrefix("black 24.1.0 has 1 known flaw — fixed in 26.0, and 1 more reported outside its published ranges"
+                                  + " · uses click 8.1.3 — reported outside its published ranges.") == true, "\(f.note ?? "")")
+        #expect(f.notChecked == nil && !f.exploited && !f.deservesNotification)
+    }
+
     /// The finding of one program or tool, each part answered from `answers` (an index lists every one).
     func row(_ origin: Origin, _ answers: [BatchResponse.Result]) throws -> Finding {
         let index = PublicIndex(generatedAt: "T", packages: answers.map { (Ecosystem($0.ecosystem), $0.name) }, projects: [])

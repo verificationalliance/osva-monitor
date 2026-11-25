@@ -52,7 +52,6 @@ public struct PopoverView: View {
     @State private var listHeight: CGFloat = 0
     @State private var cardHeight: CGFloat = 0
     @State private var gearFrame: CGRect = .zero
-    @Environment(\.drawsOffScreen) private var drawsOffScreen
 
     /// Lists opened from the start (`coverageOpen`: bucket titles, and "notInIndex" or "updatedElsewhere" for the quiet
     /// sections), for renders.
@@ -75,14 +74,7 @@ public struct PopoverView: View {
             }
             HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open).padding(.leading, 4)
             if content.isScanning {
-                if drawsOffScreen {
-                    // the system bar's frame, with a still accent bar in it: off-screen, the bar itself is a placeholder
-                    Capsule().fill(.tertiary).frame(height: 5)
-                        .overlay(alignment: .leading) { Capsule().fill(Color.accentColor).frame(width: 110, height: 5) }
-                        .frame(height: 20).padding(.horizontal, 4)
-                } else {
-                    ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
-                }
+                ScanProgress().padding(.horizontal, 4)
             }
             if fixAll.batch != nil {
                 FixAllCard(panel: fixAll, actions: actions.fixAll)
@@ -185,14 +177,15 @@ public struct PopoverView: View {
     }
 
     /// A quiet symbol button, `.plain` like the rows' own: `.borderless` is an AppKit button on macOS, which anything
-    /// that draws the panel as SwiftUI (osva-render's ImageRenderer) leaves as a placeholder.
+    /// that draws the panel as SwiftUI (osva-render's ImageRenderer) leaves as a placeholder. `.primary`: `.secondary`
+    /// measured under 3:1 on grey glass.
     private func quiet(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 15)).frame(width: 30, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .symbolRenderingMode(.hierarchical)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.primary)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -221,7 +214,8 @@ struct QuietCoverageSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: symbol).foregroundStyle(.secondary)
+                // the headings' plate width, so this line's words start where theirs do
+                Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).foregroundStyle(.secondary)
                     Text(caption).font(Typeface.caption).foregroundStyle(.secondary)
@@ -270,12 +264,13 @@ struct HeroView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            shield
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.breathe, isActive: content.isScanning)
-                .symbolEffect(.bounce, value: content.heroCount ?? 0)
-                .frame(width: 36, height: 38)
-                .accessibilityHidden(true)
+            GlyphPlate(size: 38, disc: 46) {
+                shield
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.breathe, isActive: content.isScanning)
+                    .symbolEffect(.bounce, value: content.heroCount ?? 0)
+            }
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     if let n = content.heroCount {
@@ -317,8 +312,8 @@ struct HeroView: View {
                         .font(Typeface.heroSubline).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if content.hero == .clean {
-                    Text("Not proof of safety: it is what has been reported.").font(Typeface.heroSubline).foregroundStyle(.tertiary)
+                if let caveat = content.caveat {
+                    Text(caveat).font(Typeface.heroSubline).foregroundStyle(.tertiary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -357,7 +352,7 @@ struct HeroView: View {
         case .malicious: return AnyShapeStyle(Tokens.Malicious.glyph.color)
         case .critical: return AnyShapeStyle(Tokens.critical.glyph.color)
         case .high: return AnyShapeStyle(Tokens.high.glyph.color)
-        case .notChecked: return AnyShapeStyle(Tokens.NotChecked.glyph.color)
+        case .notChecked: return AnyShapeStyle(Tokens.NotChecked.mark.color)
         case .clean: return AnyShapeStyle(Tokens.clean.color)
         }
     }

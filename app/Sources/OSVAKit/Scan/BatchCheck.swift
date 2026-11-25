@@ -5,8 +5,9 @@ import Foundation
 ///   - **affected**: the installed version lies inside one of the ranges the site publishes for the flaw (`.inRange`);
 ///   - **likely affected**: the site publishes no ranges for it, and its first fixed versions say the version is
 ///     affected (`.likely`);
-///   - **reported, not checked**: every other flaw the server matched. Its ranges leave the version out (the core and
-///     the ecosystem may order a boundary differently), it has no ranges and its first fixed versions do not flag the
+///   - **reported**: every other flaw the server matched. Its ranges leave the version out (the core checked it and
+///     found the version clear, though the ecosystem may order a boundary differently: never "not checked", never an
+///     alert, said in the note only), or, not checked: it has no ranges and its first fixed versions do not flag the
 ///     version, its ranges or fixed versions could not be read, it is a Maven or Packagist flaw whose versions the core
 ///     may order otherwise (`Core.versionUncertain`), or it is past the flaws the server lists (`unlisted`).
 /// Malicious flaws are none of these: the malware record flags the package itself (FindingBuilder).
@@ -191,12 +192,20 @@ extension BatchCheck {
     }
 
     /// The note of a finding whose every flaw is reported: why the worst of the flaws it is shown for is not checked,
-    /// and how many more it counts (those and the ones past the list, as its flaw count does).
+    /// and how many more it counts (those and the ones past the list, as its flaw count does); then the flaws whose
+    /// published ranges leave the version out, which the core did check.
     /// "Reported by the site, not checked: it publishes no affected ranges for CVE-X (and 2 more)."
+    /// "Reported by the site; its published ranges for CVE-Y do not include 1.2.3."
     func reportedNote(ecosystem: String, onThisMac: Bool) -> String {
         let here = reported(onThisMac: onThisMac)
-        guard let worst = Self.worst(here) else {
-            return "Reported by the site, not checked: " + (unlisted == 1 ? "1 flaw is not listed." : "\(unlisted) flaws are not listed.")
+        let unchecked = here.filter { $0.reason != .outsideRanges }, outside = here.filter { $0.reason == .outsideRanges }
+        guard let worst = Self.worst(unchecked) else {
+            if unlisted == 0, let first = Self.worst(outside) {
+                return "Reported by the site; its published ranges for \(first.flaw.id) do not include \(installed)"
+                    + (outside.count > 1 ? " (and \(outside.count - 1) more)." : ".")
+            }
+            return FindingBuilder.sentences("Reported by the site, not checked: " + (unlisted == 1 ? "1 flaw is not listed." : "\(unlisted) flaws are not listed."),
+                                            Self.moreOutside(outside.count))!
         }
         let id = worst.flaw.id
         let why: String
@@ -206,8 +215,19 @@ extension BatchCheck {
         case .unreadable: why = "the app could not read its affected ranges for \(id)"
         case .uncertainOrder: why = "\(ecosystem) may order \(installed) and the versions it names for \(id) otherwise than the app does"
         }
-        let more = here.count + unlisted - 1
-        return "Reported by the site, not checked: \(why)" + (more > 0 ? " (and \(more) more)." : ".")
+        let more = unchecked.count + unlisted - 1
+        return FindingBuilder.sentences("Reported by the site, not checked: \(why)" + (more > 0 ? " (and \(more) more)." : "."),
+                                        Self.moreOutside(outside.count))!
+    }
+
+    /// Appended to a finding's note: the reported flaws whose published ranges leave the installed version out. The core
+    /// checked them and found the version clear, so they are never "not checked" and never an alert. Nil when none.
+    static func moreOutside(_ count: Int) -> String? {
+        switch count {
+        case 0: return nil
+        case 1: return "1 more flaw is reported by the site; its published ranges do not include this version."
+        case let n: return "\(n) more flaws are reported by the site; their published ranges do not include this version."
+        }
     }
 
     /// For a finding shown as likely affected: what decided it. With the upgrade's version as shown; without one, why:
