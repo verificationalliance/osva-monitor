@@ -34,7 +34,7 @@ import SwiftUI
         let c = PopoverContent(report: PreviewData.notCheckedReport(), isScanning: false, now: now)
         #expect(c.hero == .notChecked && c.hero.symbol == "exclamationmark.shield" && c.heroCount == nil)
         #expect(c.sentence == "Nothing checked needs action" && c.headline == "Nothing checked needs action")
-        #expect(c.subline.hasPrefix(PopoverContent.unbroken("2 not checked against published ranges") + " · " + PopoverContent.unbroken("8 with no record") + " · Scanned"))
+        #expect(c.subline.hasPrefix(PopoverContent.unbroken("2 not checked against published ranges") + " ·\u{00A0}" + PopoverContent.unbroken("8 with no record") + " ·\u{00A0}Scanned"))
         #expect(c.menuBarState == .notChecked && c.caveat == "Not proof of safety: it is what has been reported.")
         // a report saved before `notChecked`: the reported finding's own exploited flaw keeps the hero amber
         let saved = PreviewData.notCheckedFindings.map { f in var x = f; x.notChecked = nil; return x }
@@ -58,18 +58,49 @@ import SwiftUI
         let clean = content(other + likely)
         #expect(clean.hero == .clean && clean.sentence == "Nothing needs action" && clean.menuBarState == .clean)
         #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("4 lower-severity findings"),
-                                         PopoverContent.unbroken("8 with no record"), "Scanned"].joined(separator: " · ")))
+                                         PopoverContent.unbroken("8 with no record"), "Scanned"].joined(separator: " ·\u{00A0}")))
         // anything the core checked that needs action comes first
         #expect(content(PreviewData.findings).hero == .malicious && content(PreviewData.findings).caveat == nil && clean.caveat != nil)
     }
 
     /// What nothing here checks is "No record", never a second "Not checked" beside "Not checked against published
     /// ranges"; the hero's subline says it in the same words.
+    /// The subline's dots go with the part after them: a wrapped line breaks before a dot, so no line ends with "·".
+    @Test func noSublineLineEndsWithADot() {
+        func content(_ findings: [Finding]) -> PopoverContent { PopoverContent(report: PreviewData.report(findings: findings), isScanning: false, now: now) }
+        for c in [content(PreviewData.findings), content(PreviewData.notCheckedFindings), content(PreviewData.crowdedFindings),
+                  content(PreviewData.findings.filter { $0.group == .other }), content([])] {
+            #expect(c.subline.contains("·") && !c.subline.contains("· ") && !c.subline.contains("·\n"), "\(c.subline)")
+            #expect(c.subline.components(separatedBy: "·").dropFirst().allSatisfy { $0.hasPrefix("\u{00A0}") })
+        }
+        #expect(String.whole("Fixed 6 · 2 need you") == "Fixed\u{00A0}6 ·\u{00A0}2\u{00A0}need\u{00A0}you")
+    }
+
+    /// Only the glyphs drawn in one colour lie on a plate: the flame and the hollow shield in the headings, and the
+    /// hollow shield in the hero, on its own filled shape. Filled glyphs with a white mark, and quiet ones, have none.
+    @MainActor @Test func onlyOneColourGlyphsLieOnPlates() {
+        typealias H = GroupContainer<EmptyView>.Heading
+        #expect([H.findings(.exploited), .findings(.likely), .findings(.reported)].allSatisfy { $0.plate == .disc })
+        #expect([H.findings(.malicious), .findings(.criticalHigh), .findings(.other), .noRecord].allSatisfy { $0.plate == PlateShape.none })
+        #expect(PopoverContent.Hero.notChecked.plate == .symbol("shield.fill"))
+        #expect([PopoverContent.Hero.notScanned, .firstScan, .malicious, .critical, .high, .clean].allSatisfy { $0.plate == PlateShape.none })
+    }
+
+    /// A finding whose only flaw lies outside its published ranges is checked: in Other, not among what was not checked.
+    @Test func aFindingCheckedOutsideItsRangesIsOther() {
+        let c = PopoverContent(report: PreviewData.crowdedReport(), isScanning: false, now: now)
+        let numeric = PreviewData.crowdedFindings.first { $0.title == "numeric" }!
+        #expect(numeric.group == .other && numeric.severity == nil && numeric.statusChips.isEmpty)
+        #expect(numeric.withoutVersion == "outside its published ranges")
+        #expect(c.sections.first { $0.group == .other }?.findings.map(\.id) == [numeric.id])
+        #expect(c.subline.hasPrefix(PopoverContent.unbroken("1 not checked against published ranges") + PopoverContent.dot))
+    }
+
     @MainActor @Test func whatNothingChecksIsNoRecord() {
         #expect(GroupContainer<EmptyView>.Heading.noRecord.title == "No record")
         #expect(GroupContainer<EmptyView>.Heading.findings(.likely).title == "Not checked against published ranges")
         let clean = PopoverContent(report: PreviewData.report(findings: []), isScanning: false, now: now)
-        #expect(clean.subline.hasPrefix(PopoverContent.unbroken("8 with no record") + " · Scanned") && !clean.subline.contains("not\u{00A0}checked"))
+        #expect(clean.subline.hasPrefix(PopoverContent.unbroken("8 with no record") + " ·\u{00A0}Scanned") && !clean.subline.contains("not\u{00A0}checked"))
     }
 
     /// The panel is drawn by SwiftUI alone, as osva-render draws it: nothing in it is an AppKit control, which an
@@ -184,7 +215,7 @@ import SwiftUI
         #expect(c.sentence == "need action" && c.advice == "Remove the malicious package first.")
         #expect(c.headline == "9 need action")
         #expect(c.subline == PopoverContent.unbroken("2 not checked against published ranges")
-                + " · Scanned\u{00A0}4\u{00A0}minutes\u{00A0}ago · Homebrew, 15\u{00A0}Electron\u{00A0}apps, npm, pip, RubyGems, 2\u{00A0}folders")
+                + " ·\u{00A0}Scanned\u{00A0}4\u{00A0}minutes\u{00A0}ago ·\u{00A0}Homebrew, 15\u{00A0}Electron\u{00A0}apps, npm, pip, RubyGems, 2\u{00A0}folders")
         #expect(c.tallies.map { "\($0.count) \($0.tally.word($0.count))" } == ["1 Malicious", "2 Exploited", "2 Critical", "4 High"])
         #expect(c.menuBarState == .malicious(9))
     }
@@ -199,7 +230,7 @@ import SwiftUI
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
-        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings · 8\u{00A0}with\u{00A0}no\u{00A0}record · Scanned"))   // never "clean" without saying so
+        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}8\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))   // never "clean" without saying so
         #expect(clean.menuBarState == .clean && clean.hero.symbol == "checkmark.shield.fill")
         let none = PopoverContent(report: nil, isScanning: false, now: now)
         #expect(none.hero == .notScanned && none.sentence == "Not scanned yet" && none.menuBarState == .notScanned)

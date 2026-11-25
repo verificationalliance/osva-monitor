@@ -72,7 +72,7 @@ public struct PopoverView: View {
             if let whatsNew {
                 WhatsNewCard(entry: whatsNew, close: actions.closeWhatsNew)
             }
-            HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open).padding(.leading, 4)
+            HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open)
             if content.isScanning {
                 ScanProgress().padding(.horizontal, 4)
             }
@@ -264,12 +264,15 @@ struct HeroView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            GlyphPlate(size: 38, disc: 46) {
+            // from the panel's edge: the symbol's own 4 pt side bearing puts the shield's left edge where the headings'
+            // plates start (18 pt), and the words where they were. The hollow shield lies on a plate of its own shape.
+            GlyphPlate(size: 38, width: 42, plate: content.isScanning ? .none : content.hero.plate, alignment: .leading) {
                 shield
                     .contentTransition(.symbolEffect(.replace))
                     .symbolEffect(.breathe, isActive: content.isScanning)
                     .symbolEffect(.bounce, value: content.heroCount ?? 0)
             }
+            .font(.system(size: 32))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

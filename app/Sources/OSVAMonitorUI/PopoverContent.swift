@@ -35,6 +35,10 @@ public struct PopoverContent: Sendable {
             case .clean: return "checkmark.shield.fill"
             }
         }
+
+        /// The hollow not-checked shield lies on its own shape, filled (GlyphPlate), so its outline and mark read on grey
+        /// glass; the filled shields carry a white mark and need none.
+        public var plate: PlateShape { self == .notChecked ? .symbol("shield.fill") : .none }
     }
 
     /// What the hero's summary chips count.
@@ -113,7 +117,7 @@ public struct PopoverContent: Sendable {
         let notAgainstRanges = notChecked == 0 ? nil : Self.unbroken("\(notChecked) not checked against published ranges")
         let scanned = report.map { Self.unbroken("Scanned \(Self.relative($0.finishedAt, now: now))") }
         let looked = report.map { Self.sourcesSummary($0.inventory.reports) } ?? ""
-        let when = [scanned, looked.isEmpty ? nil : looked].compactMap { $0 }.joined(separator: " · ")
+        let when = [scanned, looked.isEmpty ? nil : looked].compactMap { $0 }.joined(separator: Self.dot)
 
         switch (report, actionCount) {
         case (nil, _):
@@ -128,7 +132,7 @@ public struct PopoverContent: Sendable {
             sentence = alerting ? "Nothing checked needs action" : "Nothing needs action"
             let others = lower == 0 ? nil : Self.unbroken(lower == 1 ? "1 lower-severity finding" : "\(lower) lower-severity findings")
             let noRecord = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) with no record")
-            subline = [notAgainstRanges, others, noRecord, when].compactMap { $0 }.joined(separator: " · ")
+            subline = [notAgainstRanges, others, noRecord, when].compactMap { $0 }.joined(separator: Self.dot)
         case let (_, n):
             hero = malicious > 0 ? .malicious : (exploited + critical > 0 ? .critical : .high)
             heroCount = n
@@ -138,7 +142,7 @@ public struct PopoverContent: Sendable {
                 advice = Self.removeFirst(urgent.filter(\.malicious))
             default: sentence = n == 1 ? "needs action" : "need action"
             }
-            subline = [notAgainstRanges, when.isEmpty ? nil : when].compactMap { $0 }.joined(separator: " · ")
+            subline = [notAgainstRanges, when.isEmpty ? nil : when].compactMap { $0 }.joined(separator: Self.dot)
         }
         if isScanning && report != nil, !progress.isEmpty { subline = progress }
     }
@@ -178,6 +182,10 @@ public struct PopoverContent: Sendable {
             }
         }.map(unbroken).joined(separator: ", ")
     }
+
+    /// Between the subline's parts: the dot goes with the next part (a no-break space after it), so a wrapped line
+    /// breaks before a dot, never after one, and no line ends with "·".
+    static let dot = " ·\u{00A0}"
 
     /// The phrase with no-break spaces: a wrapped subline breaks between its parts, never inside "4 minutes ago".
     static func unbroken(_ phrase: String) -> String { phrase.replacingOccurrences(of: " ", with: "\u{00A0}") }

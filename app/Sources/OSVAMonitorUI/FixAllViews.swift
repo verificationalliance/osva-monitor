@@ -385,8 +385,9 @@ extension String {
     /// "Updating starlette" as "updating starlette".
     var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
 
-    /// "Fixed 6 · 2 need you" with each part kept whole on a line: a line breaks only between parts.
+    /// "Fixed 6 · 2 need you" with each part kept whole on a line: a line breaks only between parts, before a dot
+    /// (PopoverContent.dot), so no line ends with "·".
     static func whole(_ line: String) -> String {
-        line.components(separatedBy: " · ").map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: " · ")
+        line.components(separatedBy: " · ").map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: PopoverContent.dot)
     }
 }

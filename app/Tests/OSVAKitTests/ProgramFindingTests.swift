@@ -164,6 +164,8 @@ import Testing
         #expect(f.note?.hasPrefix("black 24.1.0 has 1 known flaw — fixed in 26.0, and 1 more reported outside its published ranges"
                                   + " · uses click 8.1.3 — reported outside its published ranges.") == true, "\(f.note ?? "")")
         #expect(f.notChecked == nil && !f.exploited && !f.deservesNotification)
+        // click, only outside its ranges, decides nothing: black's checked flaw makes the program's group and count
+        #expect(f.group == .criticalHigh && f.flawCount == 1 && f.severity == .high)
     }
 
     /// The finding of one program or tool, each part answered from `answers` (an index lists every one).

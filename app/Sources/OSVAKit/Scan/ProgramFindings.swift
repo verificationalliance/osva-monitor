@@ -61,6 +61,12 @@ extension FindingBuilder {
         /// Its reported flaws on this Mac whose published ranges leave the version out: checked and found clear, so said
         /// apart, never "not checked" (a reported part counts them in `flawCount`, any other part beyond it).
         var outside = 0
+        /// Every flaw it has on this Mac lies outside its published ranges: checked, nothing to do. Like a part with flaws
+        /// only elsewhere, it never decides how serious its program is.
+        var outsideOnly = false
+
+        /// Nothing to do on this Mac: its flaws are of another platform, or outside their published ranges.
+        var decidesNothing: Bool { onlyElsewhere || outsideOnly }
         /// Its most urgent flaw not checked against published ranges, when exploited or critical.
         var notChecked: Finding.NotChecked?
         var advisories: [String]
@@ -121,6 +127,7 @@ extension FindingBuilder {
                          fixes: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), own: own, onlyElsewhere: state.onlyElsewhere)
         c.unconfirmed = decided && upgrade == nil && (target == .unconfirmed || target == .notAVersion)
         c.outside = state.outside
+        c.outsideOnly = state.outsideOnly
         return c
     }
 
@@ -128,7 +135,7 @@ extension FindingBuilder {
     /// (and malicious ones), else the likely ones, else the reported ones, as for a package's finding. Only when every
     /// part's flaws are of another platform, those.
     static func countedParts(_ parts: [Component]) -> [Component] {
-        let here = parts.filter { !$0.onlyElsewhere }
+        let here = parts.filter { !$0.decidesNothing }
         guard !here.isEmpty else { return parts }
         let checked = here.filter { !$0.group.isNotChecked }
         if !checked.isEmpty { return checked }
@@ -136,8 +143,9 @@ extension FindingBuilder {
         return likely.isEmpty ? here : likely
     }
 
-    /// The parts that decide a program's group and weigh in a finding it is folded into: those with flaws on this Mac.
-    static func partsHere(_ parts: [Component]) -> [Component] { parts.filter { !$0.onlyElsewhere } }
+    /// The parts that decide a program's group and weigh in a finding it is folded into: those with flaws on this Mac
+    /// that are something to do (not outside their published ranges).
+    static func partsHere(_ parts: [Component]) -> [Component] { parts.filter { !$0.decidesNothing } }
 
     /// Flaws counted once per package: versions of one package share most of their flaws, so the most any of them has
     /// stands for all.
@@ -301,11 +309,11 @@ extension FindingBuilder {
     }
 
     /// Worst first: malicious, exploited, critical and high, by severity, then by how many flaws; the standard
-    /// library after modules of the same weight (a module is what an update most often changes); a part whose flaws
-    /// are all of another platform after every part with flaws on this Mac.
+    /// library after modules of the same weight (a module is what an update most often changes); a part with nothing to
+    /// do here (its flaws all of another platform, or outside their published ranges) after every other part.
     static func worseFirst(_ a: Component, _ b: Component) -> Bool {
-        let ra = (a.onlyElsewhere ? 1 : 0, a.group.rawValue, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.isStdlib ? 1 : 0, -a.flawCount, a.name)
-        let rb = (b.onlyElsewhere ? 1 : 0, b.group.rawValue, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.isStdlib ? 1 : 0, -b.flawCount, b.name)
+        let ra = (a.decidesNothing ? 1 : 0, a.group.rawValue, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.isStdlib ? 1 : 0, -a.flawCount, a.name)
+        let rb = (b.decidesNothing ? 1 : 0, b.group.rawValue, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.isStdlib ? 1 : 0, -b.flawCount, b.name)
         return ra < rb
     }
 

@@ -164,6 +164,14 @@ public enum PreviewData {
                     "3.1022.0-beta.17", "3.1022.1", .high, flaws: 12, origins: [storefront],
                     page: SiteURL.packagePage(.npm, "@aws-sdk/client-secrets-manager", version: "3.1022.0-beta.17"), ecosystem: .npm, mark: .whole,
                     grade: "A", notChecked: Finding.NotChecked(id: "CVE-2026-50114", exploited: false, critical: true)),
+            // checked: its only flaw's published ranges leave 2.0.0-1 out. In Other, with no severity and nothing counted
+            { () -> Finding in
+                var f = finding("crowded|numeric", .other, .package(ecosystem: .npm, name: "numeric"), "numeric", "2.0.0-1", nil, nil, flaws: 1,
+                                note: "Reported by the site; its published ranges for CVE-2026-50115 do not include 2.0.0-1.", origins: [storefront],
+                                page: SiteURL.packagePage(.npm, "numeric", version: "2.0.0-1"), ecosystem: .npm, runnable: false)
+                f.outsideItsRanges = true
+                return f
+            }(),
         ]
     }()
 
