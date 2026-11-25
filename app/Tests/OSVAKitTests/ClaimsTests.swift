@@ -8,6 +8,7 @@ import Testing
 ///     ranges of every flaw it says that version fixes;
 ///   - only Core.swift makes a `CheckedUpgrade`, and nothing writes a version to upgrade to, or a command's version,
 ///     from anything else.
+/// And what the README and the proof report (.verificationalliance.json) say: the same sentences, and theorems that exist.
 /// scripts/claims-mutants.sh breaks each in turn and expects this suite to fail.
 @Suite struct ClaimsTests {
     let core = Core.shared
@@ -410,6 +411,37 @@ import Testing
         #expect(Self.lines(matching: /\[\s*"target"\s*\]\s*=(?!=)|"target"\s*:/, except: { path, _ in homes.contains(path) }) == [])
     }
 
+    /// Each type declared or extended in `code`: its keyword, its name, what follows the colon after it, and its body,
+    /// braces matched (a brace inside a string counts too).
+    static func declarations(_ code: String) -> [(keyword: Substring, name: String, inherits: Substring, body: Substring)] {
+        code.matches(of: /(?:^|[^A-Za-z0-9_])(struct|class|enum|actor|extension)\s+([A-Za-z0-9_.]+)(?:<[^>{]*>)?\s*(?::([^{]*))?\{/).map { m in
+            var depth = 0, i = code.index(before: m.range.upperBound)
+            while i < code.endIndex {
+                if code[i] == "{" { depth += 1 } else if code[i] == "}" { depth -= 1; if depth == 0 { break } }
+                i = code.index(after: i)
+            }
+            return (m.output.1, String(m.output.2.split(separator: ".").last ?? m.output.2), m.output.3 ?? "", code[m.range.upperBound..<i])
+        }
+    }
+
+    /// A version, a command and what a command is made from live in a `Finding`, and are saved only in a report's
+    /// findings: no other property or enum case is named `fixedVersion`, `upgradeCommand` or `commandInputs`, and no
+    /// `Codable` type but `Finding` and `ScanReport` names a `Finding` or an `UpgradeCommand.Inputs` in its body (one would
+    /// bring them back from text past `onlyTheSavedReportIsDecoded`), wherever it is made `Codable`.
+    @Test func versionsAndCommandsLiveOnlyInAFinding() throws {
+        let finding = "OSVAKit/Model/Finding.swift"
+        #expect(Self.lines(matching: /(?:^|[{;])\h*(?:@[A-Za-z0-9_]+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|package|open|static|class|final|lazy|weak|unowned|nonisolated|override|dynamic|required|convenience|mutating)(?:\([a-z]+\))?\h+)*(?:(?:var|let)\h+|(?:indirect\h+)?case\h+(?:`?[A-Za-z0-9_]+`?(?:\([^)]*\))?(?:\h*=\h*[^,]+)?\h*,\h*)*)`?(?:fixedVersion|upgradeCommand|commandInputs)`?(?![A-Za-z0-9_])/,
+                           except: { path, _ in path == finding }) == [])
+        let types = Self.sources.map { (path: $0.path, declared: Self.declarations($0.lines.joined(separator: "\n"))) }
+        let codable = Set(types.flatMap { $0.declared.filter { $0.inherits.contains(/(?:^|[^A-Za-z0-9_])(?:Codable|Decodable)(?![A-Za-z0-9_])/) }.map { $0.name } })
+        try #require(codable.isSuperset(of: ["Finding", "ScanReport", "Inputs", "Coverage"]), "the scan finds the Codable types")
+        let carriers = types.flatMap { file in
+            file.declared.filter { $0.keyword != "extension" && codable.contains($0.name) && $0.body.contains(/(?:^|[^A-Za-z0-9_])(?:Finding|Inputs)(?![A-Za-z0-9_.])/) }
+                .map { "\(file.path): \($0.name)" }
+        }
+        #expect(carriers.sorted() == ["OSVAKit/Model/Finding.swift: Finding", "OSVAKit/Model/ScanReport.swift: ScanReport"])
+    }
+
     /// Only the command builders write a command: UpgradeCommand, its extensions for programs and tools and for Java
     /// runtimes, and BundleAdvice. Elsewhere an advice is withheld (`command: nil`) or passed on whole.
     @Test func onlyTheBuildersWriteACommand() {
@@ -436,5 +468,62 @@ import Testing
         ])
         let memory = /(?:^|[^A-Za-z0-9_])(?:unsafeBitCast|unsafeDowncast|Unsafe(?:Mutable)?Raw(?:Buffer)?Pointer|withMemoryRebound|assumingMemoryBound|bindMemory|loadUnaligned|storeBytes)(?![A-Za-z0-9_])|\.load\s*\(\s*(?:fromByteOffset\s*:[^)]*,\s*)?as\s*:/
         #expect(Self.lines(matching: memory, except: readers) == [])
+    }
+
+    // MARK: What the proof report and the README say
+
+    /// The proof report's claims, about the core, each with the theorem that states it.
+    static let proofClaims: [(says: String, theorem: String)] = [
+        ("The core's advisory check flags a version as in range only if it lies inside one of the advisory's published ranges, in the core's version order.",
+         "OSVA.verdict_inRange_sound"),
+        ("Every upgrade the core suggests lies outside the published ranges of every advisory it was given that publishes them, in the core's version order.",
+         "OSVA.upgradeFor_leaves"),
+        ("The core says an upgrade fixes an advisory with published ranges only if the upgrade lies outside them, in the core's version order.",
+         "OSVA.judge_spec"),
+        ("The core's URL encoding never outputs /, ?, #, @ or :.", "OSVA.encode_no_delimiters"),
+    ]
+
+    /// What the README says of the app: the claims this suite checks, and how the routing is held.
+    static let readmeSentences = [
+        "A version is flagged as affected only if it lies inside an affected range the site publishes for that vulnerability.",
+        "Every version it suggests upgrading to is newer than yours and lies outside the published ranges of every advisory it says that version fixes.",
+        "Names in request URLs never contain /, ?, #, @ or :.",
+        "Malicious packages are flagged from the malware record itself.",
+        "In the app's code, only the verified core can make a version to upgrade to, and the commands are built only from such versions: "
+            + "the types allow nothing else, and a guard test scans the source for ways around them.",
+        "A report saved on disk is shown as it was saved until the app scans again.",
+    ]
+
+    static let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    static func text(_ path: String) throws -> String { try String(contentsOf: repository.appendingPathComponent(path), encoding: .utf8) }
+
+    /// The manifest claims exactly these sentences, each with its theorem, about the code; each theorem is proved in
+    /// core/OSVACore and audited in core/Audit.lean. The README says its sentences and the section's title, and every
+    /// count of theorems in it and in its figure is the one scripts/check-core.sh requires, which is Audit.lean's.
+    @Test func theManifestClaimsTheProvedTheorems() throws {
+        struct Manifest: Decodable { struct Claim: Decodable { var says, theorem, about: String }; var claims: [Claim] }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(try Self.text(".verificationalliance.json").utf8))
+        #expect(manifest.claims.map(\.says) == Self.proofClaims.map { $0.says })
+        #expect(manifest.claims.map(\.theorem) == Self.proofClaims.map { $0.theorem })
+        #expect(manifest.claims.allSatisfy { $0.about == "code" })
+
+        let folder = Self.repository.appendingPathComponent("core/OSVACore")
+        let lean = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".lean") }
+            .flatMap { try Self.text("core/OSVACore/" + $0).split(separator: "\n") }
+        let audit = try Self.text("core/Audit.lean").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        for claim in Self.proofClaims {
+            let name = claim.theorem.dropFirst("OSVA.".count)
+            #expect(lean.contains { $0.hasPrefix("theorem \(name) ") }, "\(name) is a theorem in core/OSVACore")
+            #expect(audit.contains("#print axioms \(name)"), "\(name) is in core/Audit.lean")
+        }
+
+        let readme = try Self.text("README.md"), prose = readme.replacing(/\s+/, with: " ")
+        #expect((Self.readmeSentences + [Finding.Group.likely.title]).filter { !prose.contains($0) } == [], "what README.md does not say")
+        let required = try #require(try Self.text("scripts/check-core.sh").firstMatch(of: /\[ "\$n" -lt (\d+) \]/).flatMap { Int($0.output.1) })
+        #expect(audit.filter { $0.hasPrefix("#print axioms ") }.count == required)
+        let counts = try (readme + Self.text("docs/how-it-is-proved.svg")).matches(of: /(\d+) (?:theorems|proofs)/).map { Int($0.output.1)! }
+        #expect(counts.count >= 3 && counts.allSatisfy { $0 == required }, "theorem counts \(counts), check-core.sh's \(required)")
     }
 }

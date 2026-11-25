@@ -121,6 +121,12 @@ mutant version-key-elsewhere \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let commandKey = \"upgradeCommand\""
 mutant target-key-written \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func retarget(_ inputs: inout [String: Any]) { inputs[\"target\"] = \"9.9\" }"
+mutant version-property-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct Shown { var fixedVersion: String? }"
+mutant finding-kept-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct Kept: Codable { var finding: Finding }"
+mutant inputs-kept-by-an-extension \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct Kept { var inputs: UpgradeCommand.Inputs }; extension Kept: Codable {}"
 mutant nearest-version-back \
   $K/Core.swift "    /// The versions, oldest first." \
   "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"
