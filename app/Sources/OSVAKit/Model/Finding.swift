@@ -209,9 +209,12 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var provenance: [Provenance]? = nil
     /// An exploited or critical flaw the app did not check against published ranges (nil in reports saved before).
     public var notChecked: NotChecked? = nil
-    /// A program's finding whose every flaw is of another platform: listed, nothing to do on this Mac (nil otherwise,
-    /// and in reports saved before). It never weighs in the app's finding it is folded into.
+    /// A program's finding with nothing to do on this Mac, every flaw of another platform or outside its published ranges:
+    /// listed (nil otherwise, and in reports saved before). It never weighs in the app's finding it is folded into.
     public var onlyElsewhere: Bool? = nil
+    /// Every flaw the site reports for it lies outside its published ranges, in the core's order: checked, the version
+    /// clear, listed in Other with nothing to do (nil otherwise, and in reports saved before).
+    public var outsideItsRanges: Bool? = nil
 
     /// A finding whose version to upgrade to is one the core checked (`upgrade.display`), or none, and whose command is
     /// UpgradeCommand's (`advice.command`), or none.

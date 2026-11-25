@@ -69,6 +69,9 @@ public struct FindingBuilder: Sendable {
         /// The reported flaws on this Mac whose published ranges leave the version out: the core checked them, so they
         /// are said in the note only, never alerts (a reported finding counts them in its flaws).
         var outside = 0
+        /// Every flaw on this Mac lies outside its published ranges: checked, with nothing to do. Listed in Other, never
+        /// counted, never "not checked"; a program's part like it never decides how serious its program is.
+        var outsideOnly = false
         /// Its most urgent flaw on this Mac not checked against published ranges, when exploited or critical.
         var notChecked: Finding.NotChecked? = nil
     }
@@ -113,12 +116,14 @@ public struct FindingBuilder: Sendable {
                                 outside: outside, notChecked: .worse(likelyAlert, reportedAlert))
         }
         if !reported.isEmpty || check.unlisted > 0 || flaws.isEmpty {
-            // Never counted and never fixed by a version; how serious it would be stays visible, past the list too.
-            let severity = [worst(reported), check.unlistedWorst].compactMap { $0 }.max() ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)
+            // Never counted and never fixed by a version; how serious it would be stays visible, past the list too, from
+            // the flaws the core could not check only: one outside its published ranges was checked and found clear.
+            let severity = [worst(unchecked), check.unlistedWorst].compactMap { $0 }.max() ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)
+            let outsideOnly = unchecked.isEmpty && check.unlisted == 0 && !flaws.isEmpty
             let isExploited = exploited(unchecked) || !check.unlistedExploited.isEmpty || (flaws.isEmpty && !verdict.exploited.isEmpty)
-            return PackageState(check: .reported, group: .reported, severity: severity, exploited: isExploited, malicious: false,
+            return PackageState(check: .reported, group: outsideOnly ? .other : .reported, severity: severity, exploited: isExploited, malicious: false,
                                 flawCount: max(moreReported + outside, 1), onlyElsewhere: false, here: ids(reported), outside: outside,
-                                notChecked: reportedAlert)
+                                outsideOnly: outsideOnly, notChecked: reportedAlert)
         }
         let shown = check.check == .affected ? check.affected : check.check == .likely ? check.likely : check.reported.map(\.flaw)
         return PackageState(check: check.check, group: .other, severity: worst(shown), exploited: false, malicious: false, flawCount: shown.count,
@@ -243,13 +248,15 @@ public struct FindingBuilder: Sendable {
         case .reported?:
             note = check.reportedNote(ecosystem: verdict.ecosystem, onThisMac: onThisMac)
         }
-        return Finding(id: id, group: state.group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
-                       component: component, installedVersion: package.version, upgrade: upgrade,
-                       severity: state.severity, advisoryIDs: verdict.advisories, flawCount: state.flawCount,
-                       exploited: state.exploited, malicious: malicious, note: note, bigIssue: nil, origins: origins, pageURL: page,
-                       advice: advice, verification: .none, grade: nil,
-                       fixesCount: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), unresolved: unresolved,
-                       commandInputs: advice.command == nil ? nil : inputs, notChecked: state.notChecked)
+        var finding = Finding(id: id, group: state.group, subject: .package(ecosystem: package.ecosystem, name: package.name), title: title,
+                              component: component, installedVersion: package.version, upgrade: upgrade,
+                              severity: state.severity, advisoryIDs: verdict.advisories, flawCount: state.flawCount,
+                              exploited: state.exploited, malicious: malicious, note: note, bigIssue: nil, origins: origins, pageURL: page,
+                              advice: advice, verification: .none, grade: nil,
+                              fixesCount: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), unresolved: unresolved,
+                              commandInputs: advice.command == nil ? nil : inputs, notChecked: state.notChecked)
+        if state.outsideOnly { finding.outsideItsRanges = true }
+        return finding
     }
 
     /// Sentences joined into one note; nil when there are none.

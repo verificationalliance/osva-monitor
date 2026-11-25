@@ -233,11 +233,11 @@ import OSVAKit
         #expect(row.contains("WrapAtSpaces(spacing: 8, lineSpacing: 4) {\n            ForEach(finding.statusChips"))
         // headings and the hero draw their glyphs on one plate
         let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
-        #expect(views.contains("GlyphPlate(size: 38, disc: 46) {"))
+        #expect(views.contains("GlyphPlate(size: 38, width: 42, plate: content.isScanning ? .none : content.hero.plate, alignment: .leading) {"))
         // and the quiet coverage lines keep the plates' width, so every heading's words start at one x
         #expect(views.contains("Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)"))
         let plates = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
-        #expect(plates.contains("GlyphPlate(size: 20) { glyph.font(.system(size: 12, weight: .semibold)) }"))
+        #expect(plates.contains("GlyphPlate(size: 20, plate: heading.plate) { glyph.font(.system(size: 12, weight: .semibold)) }"))
         #expect(plates.contains("        chip.lineLimit(1).fixedSize()"))
         // the tinted chips lie on the site link's surface, which the contrast tests model under their tints: one capsule
         let components = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
@@ -266,7 +266,7 @@ import OSVAKit
             var inProperty = 0
             for line in text.split(separator: "\n", omittingEmptySubsequences: false) where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
                 if line.contains("var symbol") { inProperty = 12 }
-                if inProperty > 0 || ["systemName:", "systemImage:", "symbol:", "quiet("].contains(where: { line.contains($0) }) {
+                if inProperty > 0 || ["systemName:", "systemImage:", "symbol:", "symbol(", "quiet("].contains(where: { line.contains($0) }) {
                     for m in line.matches(of: /"([a-z0-9]+(?:\.[a-z0-9]+)*)"/) { names.insert(String(m.1)) }
                 }
                 inProperty -= 1

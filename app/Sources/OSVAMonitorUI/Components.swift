@@ -140,22 +140,41 @@ extension Finding.NotChecked {
     }
 }
 
-/// A status glyph on the panel's bare glass, the section headings' and the hero's: on a `Surface.control` disc, which
-/// keeps its colour at 3:1 or more on grey glass (ToneTests), in a frame of one size, so what follows lines up.
+/// What a GlyphPlate lays under its glyph.
+public enum PlateShape: Equatable, Sendable {
+    case none
+    /// A disc the size of the frame (a heading's).
+    case disc
+    /// The glyph's own shape, filled (`shield.fill` under the hollow shield): no disc around it.
+    case symbol(String)
+}
+
+/// A status glyph on the panel's bare glass, the section headings' and the hero's, in a frame of one size, so what
+/// follows lines up. A glyph drawn in one colour whose own shape would vanish on grey glass (the flame, the hollow
+/// not-checked shield) lies on a `Surface.control` plate, which keeps it at 3:1 or more there (ToneTests); a filled
+/// glyph with a white mark reads without one.
 public struct GlyphPlate<Glyph: View>: View {
     let size: CGFloat
-    /// The disc's diameter, when larger than the frame (the hero's shield): drawn behind it, the layout unchanged.
-    let disc: CGFloat?
+    /// The frame's width, when not `size` (the hero's, which starts at the panel's edge).
+    let width: CGFloat?
+    let plate: PlateShape
+    let alignment: Alignment
     let glyph: Glyph
 
-    public init(size: CGFloat, disc: CGFloat? = nil, @ViewBuilder glyph: () -> Glyph) {
-        self.size = size; self.disc = disc; self.glyph = glyph()
+    public init(size: CGFloat, width: CGFloat? = nil, plate: PlateShape, alignment: Alignment = .center, @ViewBuilder glyph: () -> Glyph) {
+        self.size = size; self.width = width; self.plate = plate; self.alignment = alignment; self.glyph = glyph()
     }
 
     public var body: some View {
         glyph
-            .frame(width: size, height: size)
-            .background { Circle().fill(Surface.control.color).frame(width: disc ?? size, height: disc ?? size) }
+            .frame(width: width ?? size, height: size, alignment: alignment)
+            .background(alignment: alignment) {
+                switch plate {
+                case .none: EmptyView()
+                case .disc: Circle().fill(Surface.control.color).frame(width: size, height: size)
+                case let .symbol(name): Image(systemName: name).foregroundStyle(Surface.control.color)
+                }
+            }
     }
 }
 
@@ -258,6 +277,15 @@ public struct GroupContainer<Content: View>: View {
         public var title: String {
             switch self { case let .findings(g): return g.heading; case .noRecord: return "No record" }
         }
+
+        /// The glyphs drawn in one colour, the flame and the hollow shield, lie on a plate; the others, filled with a
+        /// white mark or quiet, keep only the frame.
+        public var plate: PlateShape {
+            switch self {
+            case .findings(.exploited), .findings(.likely), .findings(.reported): return .disc
+            default: return .none
+            }
+        }
     }
 
     public var heading: Heading
@@ -275,7 +303,7 @@ public struct GroupContainer<Content: View>: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                GlyphPlate(size: 20) { glyph.font(.system(size: 12, weight: .semibold)) }
+                GlyphPlate(size: 20, plate: heading.plate) { glyph.font(.system(size: 12, weight: .semibold)) }
                 Text(heading.title).font(Typeface.groupTitle).foregroundStyle(.primary)
                 if let n = Self.countText(count) { Text(n).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary) }
             }

@@ -37,7 +37,7 @@ public struct FindingRow: View {
                 .accessibilityLabel(expanded ? "Hide what to do" : "Show what to do")
             }
             versionLine
-            if !fix.isResolved { statusChips }
+            if !fix.isResolved && !finding.statusChips.isEmpty { statusChips }   // none: no empty line and its spacing
             Text(finding.originSummary).font(Typeface.small).foregroundStyle(.secondary)
                 .lineLimit(expanded ? 3 : 1).truncationMode(.middle)
             if let progress = fix.progress, !(expanded && showsCard) { FixStatusLine(progress, run: fix.run).padding(.top, 2) }
@@ -304,8 +304,10 @@ extension Finding {
         notCheckedMark.map { .notChecked($0, namesCritical: !(group.isNotChecked && severity == .critical)) }
     }
 
-    /// The version line without a version to upgrade to: what the core could not check has no checked fix to name.
+    /// The version line without a version to upgrade to: what the core could not check has no checked fix to name, and
+    /// a version the core found outside every published range has none to need.
     public var withoutVersion: String {
+        if outsideItsRanges == true { return "outside its published ranges" }
         if !unresolved.isEmpty && unresolved.allSatisfy({ !$0.affectsThisMac }) { return "does not affect this Mac" }
         return group.isNotChecked ? "no checked fixed version" : "no fixed release known"
     }

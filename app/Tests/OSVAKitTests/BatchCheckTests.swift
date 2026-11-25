@@ -82,7 +82,7 @@ import Testing
         let c = BatchCheck.read(npm, installed: npm.version)
         #expect(c.check == .reported && c.reported.map(\.reason) == [.outsideRanges])
         let f = Self.findings([npm])
-        #expect(f.count == 1 && f.allSatisfy { $0.group == .reported && $0.flawCount == 1 })
+        #expect(f.count == 1 && f.allSatisfy { $0.group == .other && $0.flawCount == 1 })        // checked, outside its ranges: listed in Other
         #expect(f.first?.note == "Reported by the site; its published ranges for CVE-Z do not include 2.0.0-1.")
         // The plan's first examples are ordered as their ecosystems order them since #12: PyPI's 1.0 is 1.0.0, and npm's
         // canary is below its release. Since #17 so are semver's "-0" and Go's pseudo-versions on a "-0." base, below
@@ -97,13 +97,14 @@ import Testing
 
     /// A flaw whose published ranges leave the installed version out was checked by the core, which found the version
     /// clear: it is never "not checked", never an alert (`notChecked`, so no amber chip or hero), never makes a finding
-    /// exploited or notify, and is said in the note only. A finding with nothing else stays listed, never dropped.
+    /// exploited or notify, never gives it its severity, and is said in the note only. A finding with nothing else stays
+    /// listed, never dropped: in Other, never counted, with no severity of its own.
     @Test func aFlawOutsideItsPublishedRangesIsCheckedNotFlagged() throws {
         let outside = Self.flaw("CVE-Z", ranges: #"[{"fixed":"2.0.0"}]"#, fixedIn: #"["2.0.0"]"#, severity: "CRITICAL", exploited: true)
         let alone = try Self.result("npm", "numeric", "2.0.0-1", flaws: [outside])
         #expect(BatchCheck.read(alone, installed: alone.version).reported.map(\.reason) == [.outsideRanges])
         let f = try #require(Self.findings([alone]).first)
-        #expect(f.group == .reported && f.flawCount == 1 && f.severity == .critical)
+        #expect(f.group == .other && !f.group.needsAction && f.flawCount == 1 && f.severity == nil && f.outsideItsRanges == true)
         #expect(f.notChecked == nil && !f.exploited && !f.deservesNotification)
         #expect(f.note == "Reported by the site; its published ranges for CVE-Z do not include 2.0.0-1.")
         // beside an affected flaw: said apart from what was not checked, never its alert
@@ -116,6 +117,7 @@ import Testing
         let mixed = try Self.result("npm", "numeric", "2.0.0-1", flaws: [Self.flaw("CVE-N", severity: "MODERATE", exploited: true), outside])
         let h = try #require(Self.findings([mixed]).first)
         #expect(h.group == .reported && h.flawCount == 2 && h.exploited && h.notChecked == Finding.NotChecked(id: "CVE-N", exploited: true, critical: false))
+        #expect(h.severity == .moderate && h.outsideItsRanges == nil)                               // CVE-N's, never CVE-Z's critical
         #expect(h.note == "Reported by the site, not checked: it publishes no affected ranges for CVE-N. "
                 + "1 more flaw is reported by the site; its published ranges do not include this version.")
     }
@@ -359,10 +361,11 @@ import Testing
                                                                                Self.flaw("EXPL", ranges: #"[{"fixed":"1.0"}]"#, severity: "MODERATE", exploited: true)])
         let o = try #require(Self.findings([outside]).first)
         #expect(o.note == "Reported by the site, not checked: 1 flaw is not listed. 3 more flaws are reported by the site; their published ranges do not include this version.")
-        #expect(o.flawCount == 4 && o.severity == .critical && !o.exploited && o.notChecked == nil)
+        #expect(o.group == .reported && o.flawCount == 4 && o.severity == nil && !o.exploited && o.notChecked == nil)
         let listed = try Self.result("npm", "n", "3.0", flaws: [Self.flaw("LOW", ranges: #"[{"fixed":"2.0"}]"#, severity: "LOW"),
                                                                 Self.flaw("EXPL", ranges: #"[{"fixed":"1.0"}]"#, severity: "MODERATE", exploited: true)])
-        #expect(Self.findings([listed]).first?.note == "Reported by the site; its published ranges for EXPL do not include 3.0 (and 1 more).")
+        let l = try #require(Self.findings([listed]).first)
+        #expect(l.group == .other && l.severity == nil && l.note == "Reported by the site; its published ranges for EXPL do not include 3.0 (and 1 more).")
     }
 }
 
