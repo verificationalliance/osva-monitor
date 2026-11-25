@@ -30,6 +30,16 @@ int main(void) {
     CHECK(osva_vcmp(S("5.3.0-RELEASE"), S("5.3.0")) == 0 && osva_vcmp(S("5.3.0"), S("5.3.0-RELEASE")) == 0,
           "5.3.0-RELEASE = 5.3.0");
 
+    CHECK(osva_vcmp(S("1.24.0-0"), S("1.24.0-rc.2")) == -1 && osva_vcmp(S("1.24.0-rc.2"), S("1.24.0-0")) == 1,
+          "1.24.0-0 < 1.24.0-rc.2");
+    CHECK(osva_vcmp(S("1.24.0-rc.2"), S("1.24.0")) == -1 && osva_vcmp(S("1.24.0"), S("1.24.0-rc.2")) == 1,
+          "1.24.0-rc.2 < 1.24.0");
+    CHECK(osva_vcmp(S("1.24.0-0"), S("1.24.0")) == -1 && osva_vcmp(S("1.24.0"), S("1.24.0-0")) == 1, "1.24.0-0 < 1.24.0");
+    CHECK(osva_vcmp(S("v1.2.4-0.20190101-abcdef"), S("v1.2.4")) == -1 &&
+          osva_vcmp(S("v1.2.3"), S("v1.2.4-0.20190101-abcdef")) == -1, "v1.2.3 < v1.2.4-0.20190101-abcdef < v1.2.4");
+    CHECK(osva_vcmp(S("7.1.1-41"), S("7.1.1")) == 1, "7.1.1-41 > 7.1.1");
+    CHECK(osva_version_uncertain(S("1.24.0-0")) == 0 && osva_version_uncertain(S("v1.2.4-0.20190101-abcdef")) == 0,
+          "certain: semver's -0");
     CHECK(osva_version_uncertain(S("33.7.2-jre")) == 1, "uncertain: 33.7.2-jre");
     CHECK(osva_version_uncertain(S("2.0.0-incubating")) == 1, "uncertain: 2.0.0-incubating");
     CHECK(osva_version_uncertain(S("1.0.0-rc.1")) == 1, "uncertain: 1.0.0-rc.1, a pre-release word on neither list");
@@ -54,6 +64,9 @@ int main(void) {
 #define R(i, f, l) { (const uint8_t *)(i), len_or_0(i), (const uint8_t *)(f), len_or_0(f), (const uint8_t *)(l), len_or_0(l) }
     const osva_range pg[] = { R(NULL, "14.24", NULL), R("15", "15.19", NULL), R("16", "16.15", NULL), R("17", "17.11", NULL), R("18", "18.6", NULL) };
     const osva_range py[] = { R("3.14.10", "3.14.11", NULL) };
+    const osva_range go_stdlib[] = { R(NULL, "1.22.11", NULL), R("1.23.0-0", "1.23.5", NULL), R("1.24.0-0", "1.24.0-rc.2", NULL) };
+    CHECK(osva_affected_ranges(S("1.24.0-rc.1"), go_stdlib, 3) == 1 && osva_affected_ranges(S("1.24.0"), go_stdlib, 3) == 0,
+          "go stdlib: 1.24.0-rc.1 inside [1.24.0-0, 1.24.0-rc.2), 1.24.0 not");
     uint8_t up[32];
     CHECK(osva_affected_ranges(S("16.16"), pg, 5) == 0, "postgresql 16.16 not affected (outside every branch's range)");
     CHECK(osva_affected_ranges(S("16.14"), pg, 5) == 1, "postgresql 16.14 affected");

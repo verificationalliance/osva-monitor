@@ -34,14 +34,17 @@ int osva_core_init(void);
  *   - a word right after a '-' is: the release itself if it is ga, final or release (Maven's "5.3.0-RELEASE" =
  *     "5.3.0"); after the release if it is p, patch, pl, sp, r, post or rev (Composer's "2.4.6-p3" > "2.4.6"); a
  *     pre-release word below if it is one; otherwise a pre-release below every known kind ("15.0.0-canary.12");
+ *   - a zero right after a '-' that ends the version or is followed by a '.' is semver's lowest pre-release, below
+ *     every other ("1.24.0-0" < "1.24.0-rc.2" < "1.24.0"; Go's "v1.2.4-0.20190101-abcdef" < "v1.2.4"); any other
+ *     number after a '-' is still a number ("7.1.1-41" > "7.1.1");
  *   - the release numbers a version starts with lose the zeros that end them, keeping the first ("1.0" = "1.0.0");
  *   - tokens are compared in turn: word after a '-' < pre-release word < end of version < other word < number;
  *     numbers numerically; pre-release words by rank (dev < a = alpha < b = beta < c = rc = pre = preview); other
  *     words, and words after a '-', bytewise.
  * So "1.0rc1" < "1.0" < "1.0.post1" < "1.0.1", "15.0.0-canary.12" < "15.0.0-rc.1" < "15.0.0", and "10.6" < "10.6p2".
- * This is the core's version order. Where it differs from an ecosystem's: a number after a '-' continues the version
- * (right for ImageMagick's "7.1.1-41", but semver puts "1.0.0-0" and Go a pseudo-version "v1.2.4-0.2019…" below the
- * release), and a word after a '-' on neither list above ("-jre", "-android", "-rc1") is ordered as semver orders it,
+ * This is the core's version order. Where it differs from an ecosystem's: a number after a '-' other than that zero
+ * continues the version (semver reads "1.0.0-1" as a pre-release, and Go puts "v0.0.0-20191109021931-…" below
+ * v0.0.0), and a word after a '-' on neither list above ("-jre", "-android", "-rc1") is ordered as semver orders it,
  * which Maven and Composer may not; osva_version_uncertain names those versions.
  * Returns -1, 0 or 1.
  * Theorems (OSVACore/Version.lean): reflexive, antisymmetric, transitive, for all inputs.
@@ -51,10 +54,13 @@ int osva_vcmp(const uint8_t *a, size_t na, const uint8_t *b, size_t nb);
 /*
  * Whether the core's version order may not be v's ecosystem's: 1 when v has a word right after a '-' that is neither
  * release-equal (ga, final, release) nor post-release (p, patch, pl, sp, r, post, rev), such as Maven's "33.7.2-jre",
- * which the core orders below 33.7.2 and Maven above it, or "1.0.0-rc.1"; else 0, and always 0 for a version without a
- * '-' ("1.2.3", "10.6p2", "1.0rc1"). The words are read as osva_vcmp reads them (case-insensitive, after dropping a
- * leading 'v' and everything from the first '+'). -2 on a bad argument: v NULL while nv is not 0.
- * Theorems (OSVACore/Version.lean, FFI.lean): 1 exactly when such a word exists; never 1 for a version without a '-'.
+ * which the core orders below 33.7.2 and Maven above it, or "1.0.0-rc.1"; else 0. Always 0 for a version without a
+ * '-' ("1.2.3", "10.6p2", "1.0rc1"), and for one semver's "-0" makes a pre-release ("1.24.0-0",
+ * "v1.2.4-0.20190101-abcdef"), which is ordered with certainty. The words are read as osva_vcmp reads them
+ * (case-insensitive, after dropping a leading 'v' and everything from the first '+'). -2 on a bad argument: v NULL
+ * while nv is not 0.
+ * Theorems (OSVACore/Version.lean, FFI.lean): 1 exactly when there is no "-0" and such a word exists; never 1 for a
+ * version without a '-'.
  */
 int osva_version_uncertain(const uint8_t *v, size_t nv);
 
