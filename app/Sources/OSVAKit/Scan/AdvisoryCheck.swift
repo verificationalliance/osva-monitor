@@ -13,9 +13,11 @@ import Foundation
 ///   - `.unreadable`: its ranges could not be read, and its first fixed versions say the version is affected:
 ///     **reported, not checked**;
 ///   - `.unstated`: nothing the core can decide by can be read of it, neither ranges nor first fixed versions: **not
-///     checked**, whatever the version. One exploited in the wild or critical (`urgent`) is never dropped: it is said
-///     and marked, and makes a reported finding when nothing else does. The others are counted in a finding's note,
-///     and make none of their own, so that records with no data do not fill the panel.
+///     checked**, whatever the version, and evidence about no version in particular. One exploited in the wild is never
+///     dropped: it is said and marked, and makes a reported finding when nothing else does, so that a re-check is never
+///     "fixed" over it. A critical one beside a finding made for other reasons is named in its note and marked
+///     (`urgent`); the others there are counted. On their own they make none: records that state no versions for most
+///     of their advisories (OpenJDK's, nginx's, CPython's) would otherwise put a finding on every version.
 /// The finding is affected when any advisory is, else likely, else reported (`check`), and is shown for those hits
 /// only (`shown`); the others are said in its note, and the most urgent of them kept as `notChecked`.
 ///
@@ -50,7 +52,7 @@ public struct AdvisoryCheck: Sendable {
     /// line, never the fix). Nil when one of them has no end: then nothing is fixed yet.
     public var lastAffected: String? = nil
 
-    /// Exploited in the wild, or critical.
+    /// Exploited in the wild, or critical: named and marked beside a finding.
     static func urgent(_ a: ProjectResponse.Advisory) -> Bool { a.kev || Severity(api: a.severity) == .critical }
 
     /// The advisories the finding names: every one that affects the version, likely affects it or is reported, and
@@ -63,12 +65,12 @@ public struct AdvisoryCheck: Sendable {
     }
 
     /// The hits the finding is shown for: its affected ones, else its likely ones, else its reported ones and the
-    /// urgent ones that state nothing.
+    /// exploited ones that state nothing.
     public var shown: [Hit] {
         switch check {
         case .affected: return hits.filter { $0.basis == .ranges }
         case .likely: return hits.filter { $0.basis == .firstFixed }
-        case .reported: return hits.filter { $0.basis == .unreadable || ($0.basis == .unstated && Self.urgent($0.advisory)) }
+        case .reported: return hits.filter { $0.basis == .unreadable || ($0.basis == .unstated && $0.advisory.kev) }
         }
     }
 
@@ -140,7 +142,7 @@ public struct AdvisoryCheck: Sendable {
             }
             let more = reported.count - 1
             return FindingBuilder.sentences("Reported by the site, not checked: \(why)" + (more > 0 ? " (and \(more) more)." : "."),
-                                            moreUnstated(unstated.filter { !Self.urgent($0.advisory) }))
+                                            moreUnstated(unstated.filter { !$0.advisory.kev }))
         }
     }
 
@@ -210,7 +212,7 @@ public struct AdvisoryCheck: Sendable {
     }
 
     /// Nil when no weighed advisory affects `installed`, likely affects it, or is reported for it, and none that states
-    /// nothing is urgent. Call it off the main thread: it asks the core for the upgrade.
+    /// nothing is exploited in the wild. Call it off the main thread: it asks the core for the upgrade.
     public static func decide(_ installed: String, _ recent: [ProjectResponse.Advisory]) -> AdvisoryCheck? {
         let core = Core.shared
         let weighed = recent.filter(FindingBuilder.weighed)
@@ -224,7 +226,7 @@ public struct AdvisoryCheck: Sendable {
             case .clear: break
             }
         }
-        guard hits.contains(where: { $0.basis != .unstated || urgent($0.advisory) }) else { return nil }
+        guard hits.contains(where: { $0.basis != .unstated || $0.advisory.kev }) else { return nil }
         var d = AdvisoryCheck(installed: installed, hits: hits, target: nil)
         guard d.check != .reported else { return d }                            // reported: no version, no command
         (d.target, d.withheld) = shown(core.upgrade(from: installed, advisories: advisories))

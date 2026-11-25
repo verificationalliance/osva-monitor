@@ -27,10 +27,10 @@ import Testing
     }
 
     @Test func atItsBranchFixItIsNot() {
-        // nothing affects or likely affects 1.30.7; only the record's critical advisories that state nothing are reported
+        // the record's critical advisories that state no versions make no finding of their own
         let f = FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [brew("nginx", "1.30.7", "nginx")],
                                                       projects: ["nginx": nginx], bigIssues: [])
-        #expect(f.map(\.group) == [.reported] && f.first?.fixedVersion == nil && f.first?.upgradeCommand == nil && f.first?.flawCount == 5)
+        #expect(f.isEmpty)
     }
 
     @Test func patchTheseFirstMarksWhatItCannotCheck() throws {
