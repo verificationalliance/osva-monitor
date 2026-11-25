@@ -32,7 +32,7 @@ import OSVAKit
         ("critical glyph", Tokens.critical.glyph), ("high glyph", Tokens.high.glyph), ("moderate glyph", Tokens.moderate.glyph),
         ("low glyph", Tokens.low.glyph), ("malicious glyph", Tokens.Malicious.glyph), ("exploited glyph", Tokens.Exploited.glyph),
         ("clean", Tokens.clean), ("verified disc", Tokens.Verification.wholeDisc), ("verified parts", Tokens.Verification.partsStroke),
-        ("not checked glyph", Tokens.NotChecked.glyph),
+        ("not checked mark", Tokens.NotChecked.mark), ("exploited mark", Tokens.Exploited.mark),
     ]
     static let texts: [(String, Tone)] = [
         ("critical text", Tokens.critical.text), ("high text", Tokens.high.text), ("moderate text", Tokens.moderate.text),
@@ -94,8 +94,25 @@ import OSVAKit
                 #expect(label >= 4.5, "not checked label \(v) on \(level): \(label)")
             }
         }
-        #expect(Tokens.NotChecked.glyph == Tokens.moderate.glyph && Tokens.NotChecked.mark == Tokens.moderate.text)
+        #expect(Tokens.NotChecked.mark == Tokens.moderate.text && Tokens.NotChecked.mark.hex(.light) == 0x8C6100)
         #expect(Tokens.NotChecked.tint == Tokens.moderate.fill.opacity(light: 0.15, dark: 0.25))
+    }
+
+    /// The section headings' and the hero's glyphs drawn in one colour lie on a Surface.control plate (GlyphPlate): the
+    /// not-checked shield and the exploited flame clear 3:1 on it over any glass the panel models, from white (black) to
+    /// the owner's mid-grey (138). Bare, the hollow shield measured 1.09:1 (grey, light) and 2.15:1 (grey, dark), the
+    /// flame 1.87:1 and 1.07:1.
+    @Test func theHeadingAndHeroGlyphsReadOnTheirPlates() {
+        for (name, tone) in [("not checked shield", Tokens.NotChecked.mark), ("exploited flame", Tokens.Exploited.mark)] {
+            for v in Tone.Variant.allCases {
+                let dark = v == .dark || v == .darkIC
+                for level in dark ? SurfaceTests.darkGlass : SurfaceTests.lightGlass {
+                    let g = UInt32(level), plate = Self.over(g << 16 | g << 8 | g, Surface.control, v)
+                    let c = Self.contrast(tone.hex(v), plate)
+                    #expect(c >= 3, "\(name) \(v) on its plate over \(level): \(c)")
+                }
+            }
+        }
     }
 
     /// The hero's summary chips lie on the panel's bare glass, on the site link's surface under their tint: their
@@ -180,37 +197,64 @@ import OSVAKit
                           "ListDisclosureRow", "QuietCoverageSection", "AppIcon", "PanelCard", "WhatsNewCard", "ChangelogLines",
                           "WhatsNewSection", "FixAllCard", "FixAllReview", "FixAllBatchLine", "FixAllSkipLine", "FixAllProgress",
                           "FixAllSummary", "FixNotice", "FixDisclosure", "ConsentView", "FixAllProposalLine", "FixAllNeedLine",
-                          "TerminalButton", "NeedActionBreakdown"] {
+                          "TerminalButton", "NeedActionBreakdown", "GlyphPlate", "ScanProgress"] {
             let definitions = all.components(separatedBy: "struct \(component)").count - 1
             #expect(definitions == 1, "\(component) is defined \(definitions) times")
         }
     }
 
     /// The amber mark of a flaw not checked against published ranges is one component, StatusChip's `.notChecked`, which
-    /// only rows show, from Finding.notCheckedChip. Its amber is reached only through Tokens.NotChecked, by that chip,
-    /// its section's heading and the hero; no view takes the moderate amber for itself, writes the chip's words, or
-    /// decides the red chip from `exploited` alone.
-    @Test func theNotCheckedMarkIsOneComponent() {
+    /// only rows show, from `Finding.statusChips`. Its amber is reached only through Tokens.NotChecked, by that chip,
+    /// its section's heading and the hero: no view takes the moderate amber (`Tokens.moderate`, the moderate severity's
+    /// tones, `.orange`, `.yellow`) for itself, fills a capsule of its own, or writes the chip's words; and the row
+    /// draws its status line only from that list.
+    @Test func theNotCheckedMarkIsOneComponent() throws {
+        let ownAmber = try Regex(#"Tokens\.moderate|Tokens\.severity\(\.moderate\)|\.(orange|yellow)\b"#)
         let allowed = ["Components.swift": 3, "PopoverView.swift": 1]
         for (file, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") where file != "Theme.swift" {
             let code = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
             let amber = code.components(separatedBy: "Tokens.NotChecked").count - 1
             #expect(amber == allowed[file, default: 0], "\(file) uses the not-checked amber \(amber) times")
-            #expect(!code.contains("Tokens.moderate"), "\(file) takes the moderate amber for itself")
-            #expect(!code.contains("StatusChip(.notChecked"), "\(file) builds its own not-checked chip")
-            let words = code.components(separatedBy: "\"Exploited, not checked\"").count - 1
-            #expect(words == (file == "Components.swift" ? 1 : 0), "\(file) writes the chip's words")
-            let red = code.components(separatedBy: "StatusChip(.exploited)").count - 1
-            #expect(red == (file == "FindingRow.swift" ? 1 : 0), "\(file) draws the exploited chip")
+            #expect(code.firstMatch(of: ownAmber) == nil, "\(file) takes the amber for itself")
+            #expect(!code.contains("StatusChip(.notChecked") && !code.contains("StatusChip(.exploited)"), "\(file) builds a status chip of its own")
+            #expect(!code.contains("Capsule().fill(") || file == "Components.swift", "\(file) fills a capsule of its own")
+            for phrase in ["\"Exploited, not checked\"", "\"Critical, not checked\"", "\"Not checked\""] {
+                let n = code.components(separatedBy: phrase).count - 1
+                #expect(n == (file == "Components.swift" ? 1 : 0), "\(file) writes \(phrase)")
+            }
+            let red = code.components(separatedBy: ".chip(.exploited)").count - 1
+            #expect(red == (file == "FindingRow.swift" ? 1 : 0), "\(file) decides the exploited chip")
         }
         let row = Self.sources("OSVAMonitorUI").first { $0.0 == "FindingRow.swift" }!.1
-        #expect(row.contains("if finding.checkedExploited { StatusChip(.exploited) }") && !row.contains("finding.exploited"))
-        #expect(row.contains("finding.notCheckedChip.map(StatusChip.init)"))
+        #expect(row.contains("ForEach(finding.statusChips, id: \\.self)") && row.contains("case let .chip(kind): StatusChip(kind)"))
+        #expect(row.contains("checkedExploited ? [.chip(.exploited)] : []") && !row.contains("finding.exploited"))
+        #expect(row.contains("notCheckedChip.map(StatusLineItem.chip)"))
+        // a chip is one line at its own width, and the status line wraps it whole to the next line, never inside it
+        #expect(row.contains("WrapAtSpaces(spacing: 8, lineSpacing: 4) {\n            ForEach(finding.statusChips"))
+        // headings and the hero draw their glyphs on one plate
+        let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
+        #expect(views.contains("GlyphPlate(size: 38, disc: 46) {"))
+        // and the quiet coverage lines keep the plates' width, so every heading's words start at one x
+        #expect(views.contains("Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)"))
+        let plates = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
+        #expect(plates.contains("GlyphPlate(size: 20) { glyph.font(.system(size: 12, weight: .semibold)) }"))
+        #expect(plates.contains("        chip.lineLimit(1).fixedSize()"))
         // the tinted chips lie on the site link's surface, which the contrast tests model under their tints: one capsule
         let components = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
         #expect(components.contains("    @ViewBuilder static func capsule(_ tint: Tone) -> some View {\n        Capsule().fill(Surface.control.color)\n        Capsule().fill(tint.color)\n    }"))
         #expect(components.contains(".background { Self.capsule(tally.tint) }") && components.contains(".background { Self.capsule(Tokens.NotChecked.tint) }"))
         #expect(components.components(separatedBy: ".opacity(light: 0.15, dark: 0.25)").count - 1 == 1)          // Tally.tint's alone
+    }
+
+    /// The footer's gear and power are `.primary`, which clears 3:1 on the mid-grey backdrop osva-render draws (128) in
+    /// either appearance; `.secondary` did not.
+    @Test func theFooterIconsReadOnGrey() {
+        let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
+        #expect(views.contains(".symbolRenderingMode(.hierarchical)\n        .foregroundStyle(.primary)\n        .help(help)"))
+        for (dark, label) in [(false, 0.85), (true, 0.85)] {
+            let ink = Tone(0x000000, dark: 0xFFFFFF, alpha: label), v: Tone.Variant = dark ? .dark : .light
+            #expect(ToneTests.contrast(ToneTests.over(0x808080, ink, v), 0x808080) >= 3)
+        }
     }
 
     /// Every SF Symbol the panel, Settings and the menu bar name exists on this macOS: a missing one draws nothing at

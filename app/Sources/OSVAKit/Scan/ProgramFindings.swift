@@ -58,6 +58,9 @@ extension FindingBuilder {
         /// list), and the most urgent of them: said in the sentence, never hidden.
         var more: Int
         var moreAlert: Finding.NotChecked?
+        /// Its reported flaws on this Mac whose published ranges leave the version out: checked and found clear, so said
+        /// apart, never "not checked" (a reported part counts them in `flawCount`, any other part beyond it).
+        var outside = 0
         /// Its most urgent flaw not checked against published ranges, when exploited or critical.
         var notChecked: Finding.NotChecked?
         var advisories: [String]
@@ -117,6 +120,7 @@ extension FindingBuilder {
                          advisories: verdict.advisories, unresolved: unresolved,
                          fixes: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), own: own, onlyElsewhere: state.onlyElsewhere)
         c.unconfirmed = decided && upgrade == nil && (target == .unconfirmed || target == .notAVersion)
+        c.outside = state.outside
         return c
     }
 
@@ -361,6 +365,7 @@ extension FindingBuilder {
     /// 0.62.0", " — no fixed release yet", " — no checked fixed version yet" when the server named a fix the core did
     /// not confirm, or " — reported, not checked" when none of them has a checked flaw.
     static func fixClause(_ same: [Component]) -> String {
+        if same.allSatisfy({ $0.check == .reported && $0.flawCount == $0.outside }) { return " — reported outside its published ranges" }
         if same.allSatisfy({ $0.check == .reported }) {
             let alert = same.map(\.notChecked).reduce(nil, Finding.NotChecked.worse)
             return " — reported, not checked" + BatchCheck.parenthetical(alert, count: same.map(\.flawCount).max() ?? 0)
@@ -384,10 +389,12 @@ extension FindingBuilder {
     /// most urgent of them; "" when there are none.
     static func moreClause(_ same: [Component]) -> String {
         let counted = Set(countedParts(same).map(\.package))
-        let more = same.map { counted.contains($0.package) ? $0.more : $0.flawCount + $0.more }.max() ?? 0
-        guard more > 0 else { return "" }
+        // a reported part's flaws outside their published ranges are said apart: the core checked those
+        let more = same.map { counted.contains($0.package) ? $0.more : $0.flawCount - ($0.check == .reported ? $0.outside : 0) + $0.more }.max() ?? 0
+        let outside = same.map(\.outside).max() ?? 0
         let alert = same.map { counted.contains($0.package) ? $0.moreAlert : $0.notChecked }.reduce(nil, Finding.NotChecked.worse)
-        return ", and \(more) more reported, not checked" + BatchCheck.parenthetical(alert, count: more)
+        let unchecked = more > 0 ? ", and \(more) more reported, not checked" + BatchCheck.parenthetical(alert, count: more) : ""
+        return unchecked + (outside == 0 ? "" : ", and \(outside) more reported outside \(outside == 1 ? "its" : "their") published ranges")
     }
 
     /// The components grouped by package, in the order of their worst version.

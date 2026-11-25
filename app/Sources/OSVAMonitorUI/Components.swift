@@ -52,7 +52,12 @@ public struct StatusChip: View {
     public var kind: Kind
     public init(_ kind: Kind) { self.kind = kind }
 
+    /// One line, at its own width: a row that has no room for a chip moves it whole to the next line (WrapAtSpaces).
     public var body: some View {
+        chip.lineLimit(1).fixedSize()
+    }
+
+    @ViewBuilder private var chip: some View {
         switch kind {
         case .exploited:
             Label("Exploited", systemImage: "flame.fill")
@@ -132,6 +137,41 @@ extension Finding.NotChecked {
     /// "CVE-2026-1: critical, exploited in the wild; reported by the site, not checked against published ranges".
     public var chipHelp: String {
         (id.map { "\($0): \(words)" } ?? words.prefix(1).uppercased() + words.dropFirst()) + "; reported by the site, not checked against published ranges"
+    }
+}
+
+/// A status glyph on the panel's bare glass, the section headings' and the hero's: on a `Surface.control` disc, which
+/// keeps its colour at 3:1 or more on grey glass (ToneTests), in a frame of one size, so what follows lines up.
+public struct GlyphPlate<Glyph: View>: View {
+    let size: CGFloat
+    /// The disc's diameter, when larger than the frame (the hero's shield): drawn behind it, the layout unchanged.
+    let disc: CGFloat?
+    let glyph: Glyph
+
+    public init(size: CGFloat, disc: CGFloat? = nil, @ViewBuilder glyph: () -> Glyph) {
+        self.size = size; self.disc = disc; self.glyph = glyph()
+    }
+
+    public var body: some View {
+        glyph
+            .frame(width: size, height: size)
+            .background { Circle().fill(Surface.control.color).frame(width: disc ?? size, height: disc ?? size) }
+    }
+}
+
+/// The scan's progress under the hero: the system's linear bar. Drawn off-screen (osva-render), where that AppKit
+/// control would be a placeholder, a still accent bar in the same 20 pt frame stands in for it.
+struct ScanProgress: View {
+    @Environment(\.drawsOffScreen) private var drawsOffScreen
+
+    var body: some View {
+        if drawsOffScreen {
+            Capsule().fill(.tertiary).frame(height: 5)
+                .overlay(alignment: .leading) { Capsule().fill(Color.accentColor).frame(width: 110, height: 5) }
+                .frame(height: 20)
+        } else {
+            ProgressView().progressViewStyle(.linear)
+        }
     }
 }
 
@@ -235,7 +275,7 @@ public struct GroupContainer<Content: View>: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                glyph.font(.system(size: 12, weight: .semibold))
+                GlyphPlate(size: 20) { glyph.font(.system(size: 12, weight: .semibold)) }
                 Text(heading.title).font(Typeface.groupTitle).foregroundStyle(.primary)
                 if let n = Self.countText(count) { Text(n).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary) }
             }
@@ -256,13 +296,13 @@ public struct GroupContainer<Content: View>: View {
         case .findings(.malicious):
             Image(systemName: "xmark.octagon.fill").symbolRenderingMode(.palette).foregroundStyle(.white, Tokens.Malicious.glyph.color)
         case .findings(.exploited):
-            Image(systemName: "flame.fill").symbolRenderingMode(.hierarchical).foregroundStyle(Tokens.Exploited.glyph.color)
+            Image(systemName: "flame.fill").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.Exploited.mark.color)
         case .findings(.criticalHigh):
             Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.palette).foregroundStyle(.white, Tokens.critical.glyph.color)
         case .findings(.other):
             Image(systemName: "info.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         case .findings(.likely), .findings(.reported):
-            Image(systemName: "exclamationmark.shield").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.NotChecked.glyph.color)
+            Image(systemName: "exclamationmark.shield").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.NotChecked.mark.color)
         case .noRecord:
             Image(systemName: "questionmark.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         }
@@ -407,7 +447,7 @@ public struct CommandBlock: View {
     }
 }
 
-/// Lays words out left to right and starts a new line only between them. Its ideal width (asked with no width
+/// Lays words (or chips) out left to right and starts a new line only between them, each centred on its line. Its ideal width (asked with no width
 /// offered, as `ViewThatFits` does) is its widest word: the narrowest it can wrap to. So it "fits" exactly when no
 /// single word is wider than the space, and otherwise `ViewThatFits` picks the scrolling form.
 struct WrapAtSpaces: Layout {
@@ -428,7 +468,8 @@ struct WrapAtSpaces: Layout {
             var x = bounds.minX
             for i in line.items {
                 let size = subviews[i].sizeThatFits(.unspecified)
-                subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                // centred on the line, as an HStack centres them: a chip beside a label of another height stays level
+                subviews[i].place(at: CGPoint(x: x, y: y + (line.height - size.height) / 2), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
             y += line.height + lineSpacing

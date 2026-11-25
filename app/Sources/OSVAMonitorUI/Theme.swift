@@ -125,6 +125,9 @@ public enum Tokens {
         public static let chip = Tone(0xA12828, dark: 0xA12828, lightIC: 0x990015, darkIC: 0xA12828)
         public static let chipRing = Tone.darkOnly(0xE7524E, darkIC: 0xFFA8A0)
         public static let glyph = Tone(0xA12828, dark: 0xE7524E, lightIC: 0x990015, darkIC: 0xFFA8A0)
+        /// The section heading's flame, on its plate (GlyphPlate): the glyph in light, critical's text shades in dark,
+        /// which keep 3:1 on the plate over grey glass where the glyph's red does not.
+        public static let mark = Tone(0xA12828, dark: 0xFFA8A0, lightIC: 0x990015, darkIC: 0xFFCDC7)
     }
 
     /// Not checked against published ranges: the moderate amber, with no hex of its own. It marks an exploited or
@@ -132,9 +135,8 @@ public enum Tokens {
     /// listed in, and the hero when they are all that is urgent. Never the exploited chip's solid red, which says the
     /// core checked the flaw.
     public enum NotChecked {
-        /// On the glass: the hero's shield and the section heading's glyph.
-        public static let glyph = Tokens.moderate.glyph
-        /// The chip's shield, on the chip's tint: the darker shade, which clears 3:1 there.
+        /// Every not-checked mark: the chip's shield, the section heading's and the hero's (on their plates). The
+        /// darker shade in light, which clears 3:1 on the tint and on the plates over grey glass: one amber, one mark.
         public static let mark = Tokens.moderate.text
         /// The chip's capsule: the summary chips' faint tint of the status colour (15% light, 25% dark).
         public static let tint = Tokens.moderate.fill.opacity(light: 0.15, dark: 0.25)

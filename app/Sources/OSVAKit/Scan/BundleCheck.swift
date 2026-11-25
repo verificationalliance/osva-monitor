@@ -279,9 +279,9 @@ public enum FindingOrder {
     public static func sorted(_ findings: [Finding]) -> [Finding] {
         let base = findings.sorted(by: FindingBuilder.precedes)
         var out: [Finding] = []
-        for group in Finding.Group.allCases {
+        for group in Finding.Group.sections {
             var clusters: [String: [Finding]] = [:], order: [String] = []
-            for f in base where f.group == group {
+            for f in base where f.group.section == group {
                 let k = f.clusterKey
                 if clusters[k] == nil { order.append(k) }
                 clusters[k, default: []].append(f)

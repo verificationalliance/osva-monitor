@@ -38,9 +38,10 @@ public struct FindingBuilder: Sendable {
     }
 
     /// The order findings are listed in: by group, worst severity first, then by title.
+    /// The panel's order: by section (likely and reported share one), then worst first, then by name.
     public static func precedes(_ a: Finding, _ b: Finding) -> Bool {
-        (a.group, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.title.lowercased(), a.id)
-            < (b.group, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.title.lowercased(), b.id)
+        (a.group.section, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.title.lowercased(), a.id)
+            < (b.group.section, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.title.lowercased(), b.id)
     }
 
     // MARK: Packages (exact versions, from api/v1/check/batch)
@@ -62,8 +63,12 @@ public struct FindingBuilder: Sendable {
         var here: Set<String>
         /// The likely flaws on this Mac an affected finding also has, and the most urgent of them.
         var moreLikely = 0, likelyAlert: Finding.NotChecked? = nil
-        /// The reported flaws on this Mac (and past the list) an affected or likely finding also has, and the most urgent.
+        /// The reported flaws on this Mac (and past the list) an affected or likely finding also has that the core could
+        /// not check, and the most urgent.
         var moreReported = 0, reportedAlert: Finding.NotChecked? = nil
+        /// The reported flaws on this Mac whose published ranges leave the version out: the core checked them, so they
+        /// are said in the note only, never alerts (a reported finding counts them in its flaws).
+        var outside = 0
         /// Its most urgent flaw on this Mac not checked against published ranges, when exploited or critical.
         var notChecked: Finding.NotChecked? = nil
     }
@@ -89,27 +94,31 @@ public struct FindingBuilder: Sendable {
                                 malicious: true, flawCount: count, onlyElsewhere: false, here: ids(here))
         }
         let affected = onThisMacOnly(check.affected), likely = onThisMacOnly(check.likely), reported = onThisMacOnly(check.reported.map(\.flaw))
-        let likelyAlert = check.alert(likely, unlisted: false), reportedAlert = check.alert(reported, unlisted: true)
-        let moreReported = reported.count + check.unlisted
+        // a flaw whose published ranges leave the version out was checked, and found clear: never an alert
+        let outsideIDs = Set(check.reported.filter { $0.reason == .outsideRanges }.map(\.flaw.id))
+        let unchecked = reported.filter { !outsideIDs.contains($0.id) }, outside = reported.count - unchecked.count
+        let likelyAlert = check.alert(likely, unlisted: false), reportedAlert = check.alert(unchecked, unlisted: true)
+        let moreReported = unchecked.count + check.unlisted
         if !affected.isEmpty {
             // Today's groups, applied to the affected flaws on this Mac only.
             let severity = worst(affected)
             let group: Finding.Group = exploited(affected) ? .exploited : (severity ?? .low) >= .high ? .criticalHigh : .other
             return PackageState(check: .affected, group: group, severity: severity, exploited: exploited(affected), malicious: false,
                                 flawCount: affected.count, onlyElsewhere: false, here: ids(affected), moreLikely: likely.count, likelyAlert: likelyAlert,
-                                moreReported: moreReported, reportedAlert: reportedAlert, notChecked: .worse(likelyAlert, reportedAlert))
+                                moreReported: moreReported, reportedAlert: reportedAlert, outside: outside, notChecked: .worse(likelyAlert, reportedAlert))
         }
         if !likely.isEmpty {
             return PackageState(check: .likely, group: .likely, severity: worst(likely), exploited: exploited(likely), malicious: false,
                                 flawCount: likely.count, onlyElsewhere: false, here: ids(likely), moreReported: moreReported, reportedAlert: reportedAlert,
-                                notChecked: .worse(likelyAlert, reportedAlert))
+                                outside: outside, notChecked: .worse(likelyAlert, reportedAlert))
         }
         if !reported.isEmpty || check.unlisted > 0 || flaws.isEmpty {
             // Never counted and never fixed by a version; how serious it would be stays visible, past the list too.
             let severity = [worst(reported), check.unlistedWorst].compactMap { $0 }.max() ?? (flaws.isEmpty ? Severity(api: verdict.worstSeverity) : nil)
-            let isExploited = exploited(reported) || !check.unlistedExploited.isEmpty || (flaws.isEmpty && !verdict.exploited.isEmpty)
+            let isExploited = exploited(unchecked) || !check.unlistedExploited.isEmpty || (flaws.isEmpty && !verdict.exploited.isEmpty)
             return PackageState(check: .reported, group: .reported, severity: severity, exploited: isExploited, malicious: false,
-                                flawCount: max(moreReported, 1), onlyElsewhere: false, here: ids(reported), notChecked: reportedAlert)
+                                flawCount: max(moreReported + outside, 1), onlyElsewhere: false, here: ids(reported), outside: outside,
+                                notChecked: reportedAlert)
         }
         let shown = check.check == .affected ? check.affected : check.check == .likely ? check.likely : check.reported.map(\.flaw)
         return PackageState(check: check.check, group: .other, severity: worst(shown), exploited: false, malicious: false, flawCount: shown.count,
@@ -212,7 +221,7 @@ public struct FindingBuilder: Sendable {
         let noChecked = UpgradeCommand.noCheckedVersion
         let itemNote = itemWithheld.map { $0 == .notAVersion ? Self.listNotAVersion : noChecked }
         let more = Self.sentences(BatchCheck.moreLikely(state.moreLikely, naming: state.likelyAlert),
-                                  BatchCheck.moreReported(state.moreReported, naming: state.reportedAlert))
+                                  BatchCheck.moreReported(state.moreReported, naming: state.reportedAlert), BatchCheck.moreOutside(state.outside))
         let note: String?
         switch state.check {
         case nil:

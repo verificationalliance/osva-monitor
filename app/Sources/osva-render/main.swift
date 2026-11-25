@@ -258,6 +258,8 @@ func main() throws {
         // only what the core could not check: the amber hero, the section, a reported exploited flaw and a likely one, open
         ("popover-not-checked", AnyView(popover(PreviewData.notCheckedReport(),
                                                 expanded: [PreviewData.NotCheckedID.imagemagick, PreviewData.NotCheckedID.redis])), .imageRenderer),
+        // rows with everything on their status line, long names and versions: a chip wraps whole, never inside
+        ("popover-crowded", AnyView(popover(PreviewData.crowdedReport())), .imageRenderer),
         ("popover-high-only", AnyView(popover(PreviewData.report(findings: PreviewData.findings.filter { $0.severity == .high && !$0.exploited }))),
          .imageRenderer),
         ("popover-offline", AnyView(popover(PreviewData.report(findings: [], problems: ["Could not refresh the public index; using the copy from 2 days ago."]))), .imageRenderer),

@@ -140,6 +140,35 @@ public enum PreviewData {
     /// Only what was not checked: nothing the core checked needs action, and an exploited flaw is reported.
     public static func notCheckedReport() -> ScanReport { report(findings: notCheckedFindings) }
 
+    /// Rows with everything on their status line at once, and long names and versions: the status line wraps a chip
+    /// whole to its next line, never inside it; a title too long for the row is cut in the middle.
+    public static let crowdedFindings: [Finding] = {
+        let openmtp = Origin.electronApp(name: "OpenMTP", bundlePath: "/Applications/OpenMTP.app", caskToken: "openmtp")
+        let insiders = Origin.electronApp(name: "Visual Studio Code - Insiders", bundlePath: "/Applications/Visual Studio Code - Insiders.app",
+                                          caskToken: "visual-studio-code@insiders")
+        let storefront = Origin.folder(root: NSHomeDirectory() + "/code/storefront", lockfile: NSHomeDirectory() + "/code/storefront/package-lock.json",
+                                       direct: true)
+        return [
+            finding("crowded|openmtp|128", .exploited, .package(ecosystem: .npm, name: "electron"), "OpenMTP", component: "Electron", "18.3.15",
+                    "42.11.16", .moderate, flaws: 128, exploited: true, origins: [openmtp], page: SiteURL.packagePage(.npm, "electron", version: "18.3.15"),
+                    name: "electron", ecosystem: .npm, notChecked: Finding.NotChecked(id: "CVE-2026-50112", exploited: true, critical: false)),
+            finding("crowded|openmtp|12", .exploited, .package(ecosystem: .npm, name: "electron"), "OpenMTP", component: "Electron", "24.2.0",
+                    "42.11.16", .moderate, flaws: 12, exploited: true, origins: [openmtp], page: SiteURL.packagePage(.npm, "electron", version: "24.2.0"),
+                    name: "electron", ecosystem: .npm, notChecked: Finding.NotChecked(id: "CVE-2026-50112", exploited: true, critical: true)),
+            finding("crowded|insiders", .likely, .package(ecosystem: .npm, name: "electron"), "Visual Studio Code - Insiders Edition (Universal)",
+                    component: "Electron", "38.0.0-beta.17", "38.0.1", .critical, flaws: 128, exploited: true,
+                    note: "Likely affected: the site publishes no affected ranges, and the issuer names 38.0.1 as fixed.",
+                    origins: [insiders], page: SiteURL.packagePage(.npm, "electron", version: "38.0.0-beta.17"), name: "electron", ecosystem: .npm,
+                    mark: .parts, grade: "B", notChecked: Finding.NotChecked(id: "CVE-2026-50113", exploited: true, critical: true)),
+            finding("crowded|aws", .criticalHigh, .package(ecosystem: .npm, name: "@aws-sdk/client-secrets-manager"), "@aws-sdk/client-secrets-manager",
+                    "3.1022.0-beta.17", "3.1022.1", .high, flaws: 12, origins: [storefront],
+                    page: SiteURL.packagePage(.npm, "@aws-sdk/client-secrets-manager", version: "3.1022.0-beta.17"), ecosystem: .npm, mark: .whole,
+                    grade: "A", notChecked: Finding.NotChecked(id: "CVE-2026-50114", exploited: false, critical: true)),
+        ]
+    }()
+
+    public static func crowdedReport() -> ScanReport { report(findings: crowdedFindings, coverage: Coverage()) }
+
     // MARK: Fixes (osva-render)
 
     /// This Mac as the fixtures describe it: every tool their commands name is there.
