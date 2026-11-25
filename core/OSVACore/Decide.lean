@@ -3,21 +3,25 @@
 
   An advisory carries the affected ranges the site publishes for it (Ranges.lean), or none when it publishes none it
   can read, and the first fixed versions its issuer names (Affected.lean). Ranges decide when there are any; without
-  them the first-fixed rule decides, and its answer is only "likely":
+  them (none, or an empty list: no answer, as in Ranges.lean) the first-fixed rule decides, and its answer is only
+  "likely":
 
     inRange  ⟺  the advisory has ranges, and v lies in one of them;
     likely   ⟺  it has none, and the first-fixed rule says v is affected;
-    clear       otherwise (an empty list of ranges flags no version).
+    clear       otherwise.
 
-  An upgrade u leaves an advisory when the advisory calls u clear. The theorems say, of the core, for every input:
+  "clear" alone is no evidence: an advisory that states neither ranges nor fixed versions calls every version clear.
+  So an upgrade u is clear of an advisory, with evidence, only when the advisory has ranges and u lies in none of them,
+  or has none and its fixed versions say u is not affected. The theorems say, of the core, for every input:
     · a version is flagged as inside a range only if it lies in one of the advisory's published ranges, and every
       version in one is flagged;
     · "likely" comes only from an advisory without ranges, by the first-fixed rule;
-    · the upgrade the core suggests is above the installed version and leaves every advisory it was given: it lies in
-      none of their published ranges, and the first-fixed rule does not flag it for those without;
-    · it is the lowest such candidate (a fixed version named by a range or by the issuer);
+    · the upgrade the core suggests is above the installed version and clear, with evidence, of every advisory it was
+      given;
+    · it is the lowest such candidate (a release, not a pre-release, named as fixed by a range or by the issuer);
     · asked about an upgrade it did not pick (the server's target, a vendor's build, pip's choice), the core answers
-      only when it is above the installed version, and says it fixes an advisory only if it leaves that advisory.
+      only when it is above the installed version, and says it fixes an advisory only if it is clear of it, with
+      evidence.
 -/
 import OSVACore.Ranges
 import OSVACore.Affected
@@ -43,20 +47,22 @@ inductive Verdict where
 
 /-- Ranges decide when there are any; otherwise the first fixed versions do, and only as "likely". -/
 def verdict (v : Bytes) (a : Advisory) : Verdict :=
-  match a.ranges with
-  | some rs => if affectedIn v rs = some true then .inRange else .clear
+  match affectedIn v (a.ranges.getD []) with
+  | some true => .inRange
+  | some false => .clear
   | none => if affected v a.fixed = some true then .likely else .clear
 
 /-- A warning "inside a range" means the version lies in one of the advisory's published ranges. -/
 theorem verdict_inRange_sound {v : Bytes} {a : Advisory} (h : verdict v a = .inRange) :
     ∃ rs, a.ranges = some rs ∧ ∃ r ∈ rs, InRange v r := by
   rcases a with ⟨_ | rs, fixed⟩
-  · simp only [verdict] at h
+  · simp only [verdict, Option.getD, affectedIn, List.isEmpty_nil, ite_true] at h
     split at h <;> cases h
-  · simp only [verdict] at h
+  · simp only [verdict, Option.getD] at h
     split at h
     · exact ⟨rs, rfl, affectedIn_sound ‹_›⟩
     · cases h
+    · split at h <;> cases h
 
 /-- Every version that lies in one of the advisory's published ranges is flagged as inside one. -/
 theorem verdict_inRange_complete {v : Bytes} {a : Advisory} {rs : List Range} {r : Range} (ha : a.ranges = some rs)
@@ -65,45 +71,70 @@ theorem verdict_inRange_complete {v : Bytes} {a : Advisory} {rs : List Range} {r
 
 /-- "Likely" comes only from an advisory without ranges, when the first-fixed rule says the version is affected. -/
 theorem verdict_likely_spec {v : Bytes} {a : Advisory} (h : verdict v a = .likely) :
-    a.ranges = none ∧ affected v a.fixed = some true := by
-  rcases a with ⟨_ | rs, fixed⟩
-  · simp only [verdict] at h
+    (a.ranges = none ∨ a.ranges = some []) ∧ affected v a.fixed = some true := by
+  have hn : affectedIn v (a.ranges.getD []) = none := by
+    unfold verdict at h
     split at h
-    · exact ⟨rfl, ‹_›⟩
     · cases h
-  · simp only [verdict] at h
-    split at h <;> cases h
+    · cases h
+    · assumption
+  have hl : affected v a.fixed = some true := by
+    simp only [verdict, hn] at h
+    split at h
+    · assumption
+    · cases h
+  refine ⟨?_, hl⟩
+  rw [affectedIn_unknown_iff] at hn
+  cases hr : a.ranges with
+  | none => exact Or.inl rfl
+  | some rs => simp [hr] at hn; exact Or.inr (by rw [hn])
 
-/-- A version an advisory calls clear lies in none of its published ranges; without ranges, the first-fixed rule does
-  not flag it. -/
-theorem verdict_clear {u : Bytes} {a : Advisory} (h : verdict u a = .clear) :
+/-- The advisory states something to decide by: published ranges, or else first fixed versions. -/
+def decided (a : Advisory) : Bool := !(a.ranges.getD []).isEmpty || !a.fixed.isEmpty
+
+/-- `u` is clear of `a`, with evidence: the advisory states something, and by it `u` is not affected. -/
+def clearOf (u : Bytes) (a : Advisory) : Bool := decided a && verdict u a == .clear
+
+/-- Clear, with evidence: with ranges, `u` lies in none of them; without, its fixed versions say `u` is not affected
+  (so there are some). -/
+theorem clearOf_sound {u : Bytes} {a : Advisory} (h : clearOf u a = true) :
     (∀ rs, a.ranges = some rs → ∀ r ∈ rs, ¬ InRange u r) ∧
-    (a.ranges = none → affected u a.fixed ≠ some true) := by
+    (a.ranges = none ∨ a.ranges = some [] → affected u a.fixed = some false) := by
+  simp only [clearOf, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨hd, hc⟩ := h
   constructor
   · intro rs ha r hr hv
-    rw [verdict_inRange_complete ha hr hv] at h
-    cases h
-  · intro ha hf
-    simp [verdict, ha, hf] at h
+    rw [verdict_inRange_complete ha hr hv] at hc
+    cases hc
+  · intro hn
+    have he : a.ranges.getD [] = [] := by rcases hn with hn | hn <;> simp [hn]
+    have hf : a.fixed.isEmpty = false := by simpa [decided, he] using hd
+    have hnt : affected u a.fixed ≠ some true := by
+      intro hx
+      simp [verdict, he, affectedIn, hx] at hc
+    cases hx : affected u a.fixed with
+    | none => simp [affected, hf] at hx
+    | some b => cases b <;> simp_all
 
 /-! ### The upgrade -/
 
-/-- `u` is above `v` and every advisory calls it clear. -/
+/-- `u` is above `v` and clear, with evidence, of every advisory. -/
 def leaves (v u : Bytes) (as : List Advisory) : Bool :=
-  vcmp v u == .lt && as.all (fun a => verdict u a == .clear)
+  vcmp v u == .lt && as.all (clearOf u)
 
-/-- An upgrade that leaves the advisories is above the installed version, lies in none of their published ranges,
-  and is not flagged by the first-fixed rule of any advisory without ranges. -/
+/-- An upgrade that leaves the advisories is above the installed version and, for each advisory, lies in none of its
+  published ranges, or, when it has none, is not affected by its fixed versions. -/
 theorem leaves_sound {v u : Bytes} {as : List Advisory} (h : leaves v u as = true) :
     vcmp v u = .lt ∧ ∀ a ∈ as,
       (∀ rs, a.ranges = some rs → ∀ r ∈ rs, ¬ InRange u r) ∧
-      (a.ranges = none → affected u a.fixed ≠ some true) := by
+      (a.ranges = none ∨ a.ranges = some [] → affected u a.fixed = some false) := by
   simp only [leaves, Bool.and_eq_true, beq_iff_eq, List.all_eq_true] at h
-  exact ⟨h.1, fun a ha => verdict_clear (h.2 a ha)⟩
+  exact ⟨h.1, fun a ha => clearOf_sound (h.2 a ha)⟩
 
-/-- The versions worth trying: every fixed version a range names, and every first fixed version the issuer names. -/
+/-- The versions worth trying: every release a range names as fixed, and every release the issuer names as first
+  fixed. Pre-releases are left out, as the site leaves them out of its own targets. -/
 def candidates (as : List Advisory) : List Bytes :=
-  as.flatMap fun a => (a.ranges.getD []).filterMap (·.fixed) ++ a.fixed
+  (as.flatMap fun a => (a.ranges.getD []).filterMap (·.fixed) ++ a.fixed).filter isRelease
 
 /-- The upgrade the core suggests: the lowest candidate that leaves every advisory. -/
 def upgradeFor (v : Bytes) (as : List Advisory) : Option Bytes :=
@@ -122,11 +153,12 @@ theorem upgradeFor_mem {v u : Bytes} {as : List Advisory} (h : upgradeFor v as =
     · rw [h1]; simp
     · exact List.mem_cons_of_mem _ h1
 
-/-- The upgrade the core suggests is above the installed version and leaves every advisory it was given. -/
+/-- The upgrade the core suggests is above the installed version and, for every advisory it was given, lies in none
+  of its published ranges, or, when it has none, is not affected by its fixed versions. -/
 theorem upgradeFor_leaves {v u : Bytes} {as : List Advisory} (h : upgradeFor v as = some u) :
     vcmp v u = .lt ∧ ∀ a ∈ as,
       (∀ rs, a.ranges = some rs → ∀ r ∈ rs, ¬ InRange u r) ∧
-      (a.ranges = none → affected u a.fixed ≠ some true) :=
+      (a.ranges = none ∨ a.ranges = some [] → affected u a.fixed = some false) :=
   leaves_sound (List.mem_filter.1 (upgradeFor_mem h)).2
 
 /-- It is the lowest such candidate: no other candidate that leaves every advisory is below it. -/
@@ -142,24 +174,24 @@ theorem upgradeFor_nearest {v u g : Bytes} {as : List Advisory} (h : upgradeFor 
 
 /-! ### An upgrade the core did not pick -/
 
-/-- For an upgrade `u` proposed from elsewhere: nothing unless `u` is above `v`; otherwise, per advisory, whether `u`
-  leaves it. -/
+/-- For an upgrade `u` proposed from elsewhere: nothing unless `u` is above `v`; otherwise, per advisory, `true`
+  exactly when `u` is clear of it, with evidence. -/
 def judge (v u : Bytes) (as : List Advisory) : Option (List Bool) :=
-  if vcmp v u = .lt then some (as.map fun a => verdict u a == .clear) else none
+  if vcmp v u = .lt then some (as.map (clearOf u)) else none
 
 /-- The core answers only for an upgrade above the installed version, with one answer per advisory, and says it fixes
-  an advisory only if it lies in none of that advisory's published ranges (or, without ranges, the first-fixed rule
-  does not flag it). -/
+  an advisory only if it is clear of it, with evidence: it lies in none of the advisory's published ranges, or, when
+  there are none, the advisory's fixed versions say it is not affected. -/
 theorem judge_spec {v u : Bytes} {as : List Advisory} {m : List Bool} (h : judge v u as = some m) :
     vcmp v u = .lt ∧ m.length = as.length ∧
       ∀ (i : Nat) (hi : i < as.length) (hm : i < m.length), m[i] = true →
         (∀ rs, as[i].ranges = some rs → ∀ r ∈ rs, ¬ InRange u r) ∧
-        (as[i].ranges = none → affected u as[i].fixed ≠ some true) := by
+        (as[i].ranges = none ∨ as[i].ranges = some [] → affected u as[i].fixed = some false) := by
   unfold judge at h
   split at h
   · simp only [Option.some.injEq] at h
     subst h
-    refine ⟨‹_›, by simp, fun i _ _ hi => verdict_clear ?_⟩
+    refine ⟨‹_›, by simp, fun i _ _ hi => clearOf_sound ?_⟩
     simpa using hi
   · cases h
 
@@ -167,7 +199,6 @@ theorem judge_spec {v u : Bytes} {as : List Advisory} {m : List Bool} (h : judge
 
 #guard verdict (bytes "16.14") ⟨some pg, []⟩ == .inRange
 #guard verdict (bytes "16.16") ⟨some pg, [bytes "99"]⟩ == .clear          -- ranges decide; first fixed versions not consulted
-#guard verdict (bytes "1.0") ⟨some [], [bytes "2.0"]⟩ == .clear            -- []: no version is affected
 #guard verdict (bytes "1.31.5") ⟨none, [bytes "1.30.7", bytes "1.31.9"]⟩ == .likely
 #guard verdict (bytes "1.32.0") ⟨none, [bytes "1.30.7", bytes "1.31.9"]⟩ == .clear
 #guard upgradeFor (bytes "16.14") [⟨some pg, []⟩, ⟨none, [bytes "16.20"]⟩] == some (bytes "16.20")
@@ -175,5 +206,23 @@ theorem judge_spec {v u : Bytes} {as : List Advisory} {m : List Bool} (h : judge
 #guard judge (bytes "16.14") (bytes "16.15") [⟨some pg, []⟩, ⟨none, [bytes "16.20"]⟩] == some [true, false]
 #guard judge (bytes "16.14") (bytes "16.14") [⟨some pg, []⟩] == none
 #guard judge (bytes "2.2.0") (bytes "2.13.0") [⟨some [⟨none, some (bytes "2.7.1-rc1"), none⟩], []⟩, ⟨some [{}], []⟩] == some [true, false]
+-- an advisory that states nothing is never left: "clear" there is no evidence
+#guard judge (bytes "1.0") (bytes "1.1") [⟨none, []⟩] == some [false]
+#guard judge (bytes "1.0") (bytes "1.1") [⟨some [], []⟩] == some [false]
+#guard upgradeFor (bytes "16.14") [⟨some pg, []⟩, ⟨none, []⟩] == none
+-- an empty list of ranges is no answer, as none is: the fixed versions decide
+#guard verdict (bytes "1.0") ⟨some [], [bytes "2.0"]⟩ == .likely
+#guard judge (bytes "1.0") (bytes "2.0") [⟨some [], [bytes "2.0"]⟩] == some [true]
+-- PEP 440 boundaries, both ways round: 1.0 is 1.0.0
+#guard verdict (bytes "1.0") ⟨some [⟨some (bytes "0.9"), some (bytes "1.0.0"), none⟩], []⟩ == .clear
+#guard verdict (bytes "1.0.0") ⟨some [⟨some (bytes "0.9"), some (bytes "1.0"), none⟩], []⟩ == .clear
+-- semver boundaries, both ways round: a pre-release is below its release, so a downgrade is never an upgrade
+#guard verdict (bytes "15.0.0") ⟨some [⟨none, some (bytes "15.0.0-canary.12"), none⟩], []⟩ == .clear
+#guard verdict (bytes "15.0.0-canary.12") ⟨some [⟨none, some (bytes "15.0.0"), none⟩], []⟩ == .inRange
+#guard judge (bytes "15.0.0") (bytes "15.0.0-canary.12") [⟨some [⟨none, some (bytes "15.0.0"), none⟩], []⟩] == none
+#guard judge (bytes "15.0.0-canary.12") (bytes "15.0.0") [⟨some [⟨none, some (bytes "15.0.0"), none⟩], []⟩] == some [true]
+-- a pre-release is never suggested; a release named beside it is
+#guard upgradeFor (bytes "2.2.0") [⟨some [⟨none, some (bytes "2.7.1-rc1"), none⟩], []⟩] == none
+#guard upgradeFor (bytes "2.2.0") [⟨some [⟨none, some (bytes "2.7.1-rc1"), none⟩], [bytes "2.7.1"]⟩] == some (bytes "2.7.1")
 
 end OSVA
