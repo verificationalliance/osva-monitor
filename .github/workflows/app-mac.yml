@@ -36,6 +36,7 @@ jobs:
         run: cd app && swift test
       - name: Build the app, with its link check
         # An ad-hoc signed build, as anyone can make one: no keychain, no signing key, nothing published. It stops if
-        # the linker took a symbol the Lean archives define, or a name they import from the system, from other code
-        # (scripts/build-app.sh's header says what it checks).
-        run: ./scripts/build-app.sh
+        # the linker took a symbol the Lean archives define, or a name they or Core.swift import, from other code
+        # (scripts/build-app.sh's header says what it checks). Every variable that makes build-app.sh sign, notarize
+        # or use a keychain is removed, whatever the runner's environment holds, so this step never does.
+        run: env -u DEVELOPER_ID -u NOTARY_PROFILE -u SIGNING_KEYCHAIN -u SIGNING_KEYCHAIN_PASSWORD_FILE -u SIGN_APP ./scripts/build-app.sh
