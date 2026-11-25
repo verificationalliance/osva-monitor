@@ -1,7 +1,8 @@
 import Foundation
 
 /// GET api/v1/product/<key>: an app's or a bundled library's record. `recent` has the project endpoint's shape, so
-/// the same verified decision (`osva_affected` on each advisory's `fixed_hint`) says whether a version is affected.
+/// the same verified decision (AdvisoryCheck, by its published ranges or else its `fixed_hint`) says whether a version is
+/// affected.
 public struct ProductResponse: Codable, Sendable {
     public var key: String
     public var name: String

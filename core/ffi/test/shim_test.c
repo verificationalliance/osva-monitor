@@ -14,6 +14,25 @@ static int fails = 0;
    flags strlen(NULL) in the untaken branch when the macro is given a literal NULL. */
 static size_t len_or_0(const char *s) { return s ? strlen(s) : 0; }
 
+/* What osva_verdicts says of one advisory that names only first fixed versions, or that publishes only these ranges
+   (or its status, when it refuses them); and osva_upgrade_for for that one advisory of ranges. */
+static int first_fixed(const char *v, const uint8_t *const *fixed, const size_t *len, size_t n) {
+    const osva_advisory a = { 0, NULL, 0, fixed, len, n };
+    uint8_t out = 9;
+    int r = osva_verdicts((const uint8_t *)v, strlen(v), &a, 1, &out);
+    return r < 0 ? r : out;
+}
+static int in_ranges(const char *v, const osva_range *ranges, size_t n) {
+    const osva_advisory a = { 1, ranges, n, NULL, NULL, 0 };
+    uint8_t out = 9;
+    int r = osva_verdicts((const uint8_t *)v, strlen(v), &a, 1, &out);
+    return r < 0 ? r : out;
+}
+static long upgrade_in(const char *v, const osva_range *ranges, size_t n, uint8_t *out, size_t cap) {
+    const osva_advisory a = { 1, ranges, n, NULL, NULL, 0 };
+    return osva_upgrade_for((const uint8_t *)v, strlen(v), &a, 1, out, cap);
+}
+
 int main(void) {
     CHECK(osva_core_init() == 0, "init");
     CHECK(osva_core_init() == 0, "init twice");
@@ -54,41 +73,42 @@ int main(void) {
 
     const uint8_t *fx[] = { (const uint8_t *)"1.30.7", (const uint8_t *)"1.31.9" };
     size_t fl[] = { 6, 6 };
-    CHECK(osva_affected(S("1.31.5"), fx, fl, 2) == 1, "nginx 1.31.5 affected");
-    CHECK(osva_affected(S("1.30.8"), fx, fl, 2) == 0, "nginx 1.30.8 not affected");
-    CHECK(osva_affected(S("1.29.0"), fx, fl, 2) == 1, "nginx 1.29.0 affected");
-    CHECK(osva_affected(S("1.32.0"), fx, fl, 2) == 0, "nginx 1.32.0 not affected");
-    CHECK(osva_affected(S("1.0"), NULL, NULL, 0) == -1, "no fixes: unknown");
+    /* first fixed versions alone: affected (2, likely) exactly by Affected.lean's rule, per release branch */
+    CHECK(first_fixed("1.31.5", fx, fl, 2) == 2, "nginx 1.31.5 likely affected");
+    CHECK(first_fixed("1.30.8", fx, fl, 2) == 0, "nginx 1.30.8 clear");
+    CHECK(first_fixed("1.29.0", fx, fl, 2) == 2, "nginx 1.29.0 likely affected");
+    CHECK(first_fixed("1.32.0", fx, fl, 2) == 0, "nginx 1.32.0 clear");
+    CHECK(first_fixed("1.0", NULL, NULL, 0) == 0, "no fixes: states nothing, 0");
 
     /* affected ranges: PostgreSQL's CVE-2026-14662 (one range per branch) and CPython's CVE-2026-119170 (only 3.14.10) */
 #define R(i, f, l) { (const uint8_t *)(i), len_or_0(i), (const uint8_t *)(f), len_or_0(f), (const uint8_t *)(l), len_or_0(l) }
     const osva_range pg[] = { R(NULL, "14.24", NULL), R("15", "15.19", NULL), R("16", "16.15", NULL), R("17", "17.11", NULL), R("18", "18.6", NULL) };
     const osva_range py[] = { R("3.14.10", "3.14.11", NULL) };
     const osva_range go_stdlib[] = { R(NULL, "1.22.11", NULL), R("1.23.0-0", "1.23.5", NULL), R("1.24.0-0", "1.24.0-rc.2", NULL) };
-    CHECK(osva_affected_ranges(S("1.24.0-rc.1"), go_stdlib, 3) == 1 && osva_affected_ranges(S("1.24.0"), go_stdlib, 3) == 0,
+    CHECK(in_ranges("1.24.0-rc.1", go_stdlib, 3) == 1 && in_ranges("1.24.0", go_stdlib, 3) == 0,
           "go stdlib: 1.24.0-rc.1 inside [1.24.0-0, 1.24.0-rc.2), 1.24.0 not");
     uint8_t up[32];
-    CHECK(osva_affected_ranges(S("16.16"), pg, 5) == 0, "postgresql 16.16 not affected (outside every branch's range)");
-    CHECK(osva_affected_ranges(S("16.14"), pg, 5) == 1, "postgresql 16.14 affected");
-    CHECK(osva_upgrade_ranges(S("16.14"), pg, 5, up, sizeof up) == 5 && memcmp(up, "16.15", 5) == 0, "postgresql 16.14: upgrade to 16.15, its own branch's fix");
-    CHECK(osva_affected_ranges(S("13.9"), pg, 5) == 1, "postgresql 13.9 affected (range from the first version)");
-    CHECK(osva_affected_ranges(S("14.24"), pg, 5) == 0, "postgresql 14.24 not affected (fixed is excluded)");
-    CHECK(osva_affected_ranges(S("3.11.18"), py, 1) == 0, "cpython 3.11.18 not affected");
-    CHECK(osva_affected_ranges(S("3.14.10"), py, 1) == 1, "cpython 3.14.10 affected");
-    CHECK(osva_upgrade_ranges(S("3.11.18"), py, 1, up, sizeof up) == 7 && memcmp(up, "3.14.11", 7) == 0, "upgrade is computed even when not flagged");
-    CHECK(osva_affected_ranges(S("1.0"), NULL, 0) == -1, "no ranges: unknown");
-    CHECK(osva_affected_ranges(S("1.0"), NULL, 1) == -2, "NULL ranges refused");
-    CHECK(osva_upgrade_ranges(S("1.0"), NULL, 0, up, sizeof up) == -1, "no ranges: no upgrade");
+    CHECK(in_ranges("16.16", pg, 5) == 0, "postgresql 16.16 clear (outside every branch's range)");
+    CHECK(in_ranges("16.14", pg, 5) == 1, "postgresql 16.14 inside a range");
+    CHECK(upgrade_in("16.14", pg, 5, up, sizeof up) == 5 && memcmp(up, "16.15", 5) == 0, "postgresql 16.14: upgrade to 16.15, its own branch's fix");
+    CHECK(in_ranges("13.9", pg, 5) == 1, "postgresql 13.9 inside a range (from the first version)");
+    CHECK(in_ranges("14.24", pg, 5) == 0, "postgresql 14.24 clear (fixed is excluded)");
+    CHECK(in_ranges("3.11.18", py, 1) == 0, "cpython 3.11.18 clear");
+    CHECK(in_ranges("3.14.10", py, 1) == 1, "cpython 3.14.10 inside its range");
+    CHECK(upgrade_in("3.11.18", py, 1, up, sizeof up) == 7 && memcmp(up, "3.14.11", 7) == 0, "upgrade is computed even when not flagged");
+    CHECK(in_ranges("1.0", NULL, 0) == 0, "no ranges and no fixed versions: states nothing, 0");
+    CHECK(in_ranges("1.0", NULL, 1) == -2, "NULL ranges refused");
+    CHECK(upgrade_in("1.0", NULL, 0, up, sizeof up) == -1, "states nothing: no upgrade");
     const osva_range open_end[] = { R("1.5", NULL, NULL) };
-    CHECK(osva_affected_ranges(S("9.0"), open_end, 1) == 1 && osva_upgrade_ranges(S("9.0"), open_end, 1, up, sizeof up) == -1, "no end: affected, no upgrade");
+    CHECK(in_ranges("9.0", open_end, 1) == 1 && upgrade_in("9.0", open_end, 1, up, sizeof up) == -1, "no end: inside, no upgrade");
     const osva_range last[] = { R("2.11.0", NULL, "2.13.0") };
-    CHECK(osva_affected_ranges(S("2.13.0"), last, 1) == 1 && osva_affected_ranges(S("2.13.1"), last, 1) == 0, "last_affected is included, the next is not");
+    CHECK(in_ranges("2.13.0", last, 1) == 1 && in_ranges("2.13.1", last, 1) == 0, "last_affected is included, the next is not");
     const osva_range empty_bound[] = { R("", "1.0", NULL) };       /* present but empty: a bound, not "absent" */
-    CHECK(osva_affected_ranges(S("dev"), empty_bound, 1) == 0, "an empty introduced is a bound");
+    CHECK(in_ranges("dev", empty_bound, 1) == 0, "an empty introduced is a bound");
     const osva_range two[] = { R("16", "16.15", NULL), R("16.14", "16.20", NULL) };
-    CHECK(osva_upgrade_ranges(S("16.10"), two, 2, up, sizeof up) == 5 && memcmp(up, "16.20", 5) == 0, "an upgrade inside another range is skipped");
-    CHECK(osva_upgrade_ranges(S("16.10"), two, 2, up, 4) == -3, "upgrade refuses a small buffer");
-    CHECK(osva_upgrade_ranges(S("16.10"), two, 2, NULL, 8) == -2, "upgrade refuses a NULL buffer");
+    CHECK(upgrade_in("16.10", two, 2, up, sizeof up) == 5 && memcmp(up, "16.20", 5) == 0, "an upgrade inside another range is skipped");
+    CHECK(upgrade_in("16.10", two, 2, up, 4) == -3, "upgrade refuses a small buffer");
+    CHECK(upgrade_in("16.10", two, 2, NULL, 8) == -2, "upgrade refuses a NULL buffer");
 
     /* advisories (Decide.lean's examples): ranges decide when there are any, else the first fixed versions, as "likely" */
     const uint8_t *f1620[] = { (const uint8_t *)"16.20" };

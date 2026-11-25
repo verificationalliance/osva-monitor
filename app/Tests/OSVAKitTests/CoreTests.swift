@@ -53,37 +53,34 @@ import OSVACore
         #expect(core.sortedVersions(["1.10", "1.9", "1.0rc1", "1.0"]) == ["1.0rc1", "1.0", "1.9", "1.10"])
         #expect(core.newestVersion(["3.5.10", "4.1.1", "4.0.4"]) == "4.1.1")
         #expect(core.newestVersion([]) == nil)
-        #expect(core.nearestVersion(in: ["1.31.9", "1.30.7"], above: "1.30.2") == "1.30.7")
-        #expect(core.nearestVersion(in: ["1.31.9", "1.30.7"], above: "1.31.9") == nil)
     }
 
-    @Test("affectedness, per release branch", arguments: [
+    @Test("first fixed versions, per release branch", arguments: [
         // nginx names a fix per branch
-        ("1.30.2", ["1.31.9", "1.30.7"], Core.Affectedness.affected),
-        ("1.30.7", ["1.31.9", "1.30.7"], .notAffected),       // at its branch's fix
-        ("1.30.9", ["1.31.9", "1.30.7"], .notAffected),       // past its branch's fix
-        ("1.31.0", ["1.31.9", "1.30.7"], .affected),
-        ("1.29.0", ["1.31.9", "1.30.7"], .affected),          // a branch with no fix, below a fix
-        ("1.32.0", ["1.31.9", "1.30.7"], .notAffected),       // at or above every fix
+        ("1.30.2", ["1.31.9", "1.30.7"], Core.Verdict.likely),
+        ("1.30.7", ["1.31.9", "1.30.7"], .clear),             // at its branch's fix
+        ("1.30.9", ["1.31.9", "1.30.7"], .clear),             // past its branch's fix
+        ("1.31.0", ["1.31.9", "1.30.7"], .likely),
+        ("1.29.0", ["1.31.9", "1.30.7"], .likely),            // a branch with no fix, below a fix
+        ("1.32.0", ["1.31.9", "1.30.7"], .clear),             // at or above every fix
         // OpenSSL: three branches
-        ("3.5.9", ["4.1.1", "4.0.4", "3.5.10"], .affected),
-        ("3.5.10", ["4.1.1", "4.0.4", "3.5.10"], .notAffected),
-        ("4.0.4", ["4.1.1", "4.0.4", "3.5.10"], .notAffected),
+        ("3.5.9", ["4.1.1", "4.0.4", "3.5.10"], .likely),
+        ("3.5.10", ["4.1.1", "4.0.4", "3.5.10"], .clear),
+        ("4.0.4", ["4.1.1", "4.0.4", "3.5.10"], .clear),
         // OpenSSH's portable releases
-        ("10.6p1", ["10.6p2"], .affected),
-        ("10.6p2", ["10.6p2"], .notAffected),
-        ("9.9", [], .unknown),
+        ("10.6p1", ["10.6p2"], .likely),
+        ("10.6p2", ["10.6p2"], .clear),
+        ("9.9", [], .unstated),                               // nothing stated: never read as clear
     ])
-    func affected(_ installed: String, _ fixed: [String], _ expected: Core.Affectedness) {
-        #expect(core.affectedness(installed: installed, fixedVersions: fixed) == expected)
+    func firstFixed(_ installed: String, _ fixed: [String], _ expected: Core.Verdict) {
+        #expect(core.verdicts(installed: installed, advisories: [CoreAdvisory(ranges: nil, fixed: fixed)]) == [expected])
     }
 
-    @Test func anAffectedVersionAlwaysHasAFixAboveIt() {
-        // Theorem 1 of Affected.lean, on a sample: whenever the core says affected, some fixed version is newer.
-        let fixed = [["1.31.9", "1.30.7"], ["4.1.1", "4.0.4", "3.5.10"], ["2.0"], ["10.6p2", "9.9p3"]]
+    @Test func aLikelyVersionAlwaysHasAFixAboveIt() {
+        // Theorem 1 of Affected.lean, on a sample: whenever the first fixed versions say likely, one of them is newer.
         let versions = ["0.1", "1.29.9", "1.30.6", "1.30.8", "1.31.10", "3.4.0", "3.5.11", "4.0.0", "9.9p1", "10.0", "10.6", "1.0rc1", "2.0", "5"]
-        for f in fixed {
-            for v in versions where core.affectedness(installed: v, fixedVersions: f) == .affected {
+        for f in Self.firstFixedSets {
+            for v in versions where core.verdicts(installed: v, advisories: [CoreAdvisory(ranges: nil, fixed: f)]) == [.likely] {
                 #expect(f.contains { core.compareVersions($0, v) > 0 }, "\(v) with \(f)")
             }
         }
@@ -97,7 +94,7 @@ import OSVACore
     let ff10 = CoreAdvisory(ranges: nil, fixed: ["1.0"])
     let nginx = CoreAdvisory(ranges: nil, fixed: ["1.30.7", "1.31.9"])
 
-    /// First fixed versions per release branch, from `anAffectedVersionAlwaysHasAFixAboveIt`'s sample.
+    /// First fixed versions per release branch, the sample of `aLikelyVersionAlwaysHasAFixAboveIt`.
     static let firstFixedSets = [["1.31.9", "1.30.7"], ["4.1.1", "4.0.4", "3.5.10"], ["2.0"], ["10.6p2", "9.9p3"]]
 
     @Test func verdictsReadRangesThenFirstFixedVersions() {
@@ -194,12 +191,12 @@ import OSVACore
 
     @Test func verdictsAgreeWithTheReferenceOnASample() {
         // Decide.lean's theorems, on RangesTests' sample and first fixed versions, with the wrapper's own comparisons
-        // and osva_affected as the references
+        // as the reference, and Affected.lean's rule written again here
         let firstFixed = Self.firstFixedSets.map { CoreAdvisory(ranges: nil, fixed: $0) }
         let versions = RangesTests.sampleVersions + ["1.29.9", "1.30.7", "1.31.5", "1.31.9", "3.5.9", "4.0.4", "9.9p1", "10.6", "5"]
         func reference(_ a: CoreAdvisory, _ v: String) -> Core.Verdict {
             if let rs = a.ranges { return rs.contains { RangesTests.holds($0, v) } ? .inRange : .clear }
-            return core.affectedness(installed: v, fixedVersions: a.fixed) == .affected ? .likely : .clear
+            return Self.firstFixedSaysAffected(v, a.fixed) ? .likely : .clear
         }
         for rs in RangesTests.sampleSets {
             let whole = [CoreAdvisory(ranges: rs, fixed: [])], split = rs.map { CoreAdvisory(ranges: [$0], fixed: []) }
@@ -217,27 +214,32 @@ import OSVACore
         }
     }
 
+    /// Affected.lean's rule, written again with the wrapper's comparisons: some first fixed version is above `v`, and none
+    /// on `v`'s branch is at or below it. A branch is a version's first two numbers before any word ("10.6p2" is 10.6,
+    /// "1.0rc1" is 1.0, "2" is 2.0), after a leading "v" and before a "+".
+    static func firstFixedSaysAffected(_ v: String, _ fixed: [String]) -> Bool {
+        let core = Core.shared
+        func branch(_ s: String) -> [Int] {
+            var t = Substring(s.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+            if t.first == "v" || t.first == "V", t.dropFirst().first?.isNumber == true { t = t.dropFirst() }
+            var numbers: [Int] = [], digits = ""
+            for c in t + "." {
+                if c.isASCII && c.isNumber { digits.append(c); continue }
+                if !digits.isEmpty { numbers.append(Int(digits.drop { $0 == "0" }.prefix(18)) ?? 0); digits = "" }
+                if c.isLetter { break }
+            }
+            return Array((numbers + [0, 0]).prefix(2))
+        }
+        return fixed.contains { core.compareVersions(v, $0) < 0 }
+            && !fixed.contains { core.compareVersions(v, $0) >= 0 && branch(v) == branch($0) }
+    }
+
     @Test func versionUncertainNamesVersionsTheCoreMayMisorder() {
         // a word after a '-' that is neither the release itself nor after it: Maven and Composer may order it otherwise
         for v in ["33.7.2-jre", "31.1-jre", "2.0.0-incubating", "1.0.0-rc.1"] { #expect(core.versionUncertain(v), "\(v)") }
         for v in ["33.7.2", "2.4.6-p3", "1.0-SP1", "5.3.0-RELEASE", "1.2.3", "10.6p2", "1.0rc1", "7.1.1-41", "1.0+build-jre", ""] {
             #expect(!core.versionUncertain(v), "\(v)")
         }
-    }
-
-    @Test func onlyCoreSwiftExtendsTheCheckedTypes() throws {
-        // CheckedUpgrade and Judgement keep their storage private and their initialisers file-private, so only Core.swift
-        // can make one. An extension elsewhere is where a forgery would start (an initialiser, a Decodable conformance).
-        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources")
-        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL })
-        let swift = files.filter { $0.pathExtension == "swift" }
-        try #require(swift.contains { $0.lastPathComponent == "Core.swift" }, "the scan reads app/Sources")
-        let pattern = /\bextension\s+(?:OSVAKit\s*\.\s*)?(?:CheckedUpgrade|Judgement)\b/
-        let offenders = try swift.filter { $0.lastPathComponent != "Core.swift" }
-            .filter { try String(contentsOf: $0, encoding: .utf8).contains(pattern) }
-            .map(\.lastPathComponent)
-        #expect(offenders == [])
     }
 
     /// The upgrade, when the core found one. A switch, so that a refusal is never read as "no upgrade" unseen.

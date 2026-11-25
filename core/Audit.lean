@@ -41,9 +41,6 @@ open OSVA
 #print axioms encode_length
 #print axioms ffiVcmp_spec
 #print axioms ffiVersionUncertain_spec
-#print axioms ffiAffected_one_iff
-#print axioms ffiAffectedRanges_one_iff
-#print axioms ffiUpgradeRanges_spec
 #print axioms ffiVerdicts_spec
 #print axioms ffiVerdicts_length
 #print axioms verdictCode_eq_one_iff

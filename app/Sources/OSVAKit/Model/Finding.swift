@@ -169,8 +169,10 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     /// Set when the version is not the titled thing's own: "Electron" for an app that bundles it.
     public var component: String?
     public var installedVersion: String
-    /// The version to upgrade to, when one is known.
-    public var fixedVersion: String?
+    /// The version to upgrade to, when the verified core checked one, as the app shows it (`CheckedUpgrade.display`).
+    /// Set only from a `CheckedUpgrade` (the initialiser, `setUpgrade`); a report saved on disk keeps the one it was made
+    /// with.
+    public private(set) var fixedVersion: String?
     public var severity: Severity?
     public var advisoryIDs: [String]
     /// How many distinct flaws (advisories describing the same flaw count once).
@@ -202,33 +204,23 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     /// and in reports saved before). It never weighs in the app's finding it is folded into.
     public var onlyElsewhere: Bool? = nil
 
-    public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String, fixedVersion: String?,
-                severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
+    /// A finding whose version to upgrade to is one the core checked (`upgrade.display`), or none.
+    public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String,
+                upgrade: CheckedUpgrade?, severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
                 note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
                 verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
                 commandInputs: UpgradeCommand.Inputs? = nil, notChecked: NotChecked? = nil) {
         self.id = id; self.group = group; self.subject = subject; self.title = title; self.component = component
         self.installedVersion = installedVersion
-        self.fixedVersion = fixedVersion; self.severity = severity; self.advisoryIDs = advisoryIDs; self.flawCount = flawCount
+        self.fixedVersion = upgrade?.display; self.severity = severity; self.advisoryIDs = advisoryIDs; self.flawCount = flawCount
         self.exploited = exploited; self.malicious = malicious; self.note = note; self.bigIssue = bigIssue
         self.origins = origins; self.pageURL = pageURL; self.upgradeCommand = upgradeCommand
         self.verification = verification; self.grade = grade
         self.fixesCount = fixesCount; self.unresolved = unresolved; self.commandInputs = commandInputs; self.notChecked = notChecked
     }
 
-    /// A finding whose version to upgrade to is one the core checked (`upgrade.display`). The `fixedVersion:`
-    /// initialiser stays until every path builds its version this way.
-    public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String,
-                upgrade: CheckedUpgrade?, severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
-                note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
-                verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
-                commandInputs: UpgradeCommand.Inputs? = nil, notChecked: NotChecked? = nil) {
-        self.init(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installedVersion,
-                  fixedVersion: upgrade?.display, severity: severity, advisoryIDs: advisoryIDs, flawCount: flawCount, exploited: exploited,
-                  malicious: malicious, note: note, bigIssue: bigIssue, origins: origins, pageURL: pageURL, upgradeCommand: upgradeCommand,
-                  verification: verification, grade: grade, fixesCount: fixesCount, unresolved: unresolved, commandInputs: commandInputs,
-                  notChecked: notChecked)
-    }
+    /// The version to upgrade to, from one the core checked, or none.
+    public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }
 
     public var ecosystem: Ecosystem? {
         if case let .package(ecosystem, _) = subject { return ecosystem }

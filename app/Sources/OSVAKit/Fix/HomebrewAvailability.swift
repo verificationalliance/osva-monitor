@@ -121,11 +121,11 @@ public enum HomebrewAvailability: Equatable, Sendable {
         let java = !plan.cask && JavaVersion.isHomebrewFormula(info.name)
         func comparable(_ v: String) -> String { java ? JavaVersion.canonical(v) ?? v : v }
         func said(_ v: String) -> String { java ? JavaVersion.shown(v) : v }
-        let stable = comparable(rawStable), fixedVersion = fixedVersion.map(comparable)
+        let stable = comparable(rawStable), fix = fixedVersion.map(comparable)
         var info = info
         info.installed = info.installed.map(comparable)
         if plan.cask {
-            if plan.versionIsTheFix, let fixed = fixedVersion, core.compareVersions(stable, fixed) < 0 {
+            if plan.versionIsTheFix, let fixed = fix, core.compareVersions(stable, fixed) < 0 {
                 return .unavailable("Homebrew still ships \(stable); the fix is \(fixed) upstream.")
             }
             if let installed = bundleVersion ?? info.installed, core.compareVersions(stable, installed) <= 0 {
@@ -136,7 +136,7 @@ public enum HomebrewAvailability: Equatable, Sendable {
             if plan.versionIsTheFix { return .available(line: "Has \(stable)\(from).") }
             return .available(line: "Has \(plan.label) \(stable)\(from). Whether that brings the fix shows when the app checks again.")
         }
-        if plan.versionIsTheFix, let fixed = fixedVersion {
+        if plan.versionIsTheFix, let fixed = fix {
             if core.compareVersions(stable, fixed) < 0 {
                 return .unavailable("Homebrew still ships \(said(stable)); the fix is \(said(fixed)) upstream.")
             }

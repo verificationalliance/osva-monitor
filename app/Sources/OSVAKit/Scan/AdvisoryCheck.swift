@@ -205,8 +205,9 @@ public struct AdvisoryCheck: Sendable {
     /// those ranges ends at one (each range asked of the core alone).
     static func lastAffected(_ installed: String, _ hits: [Hit]) -> String? {
         let core = Core.shared
-        let holding = hits.filter { $0.basis == .ranges }.compactMap { weighedAs($0.advisory).ranges }.flatMap { $0 }
-            .filter { core.affectedness(installed: installed, ranges: [$0]) == .affected }
+        let ranges = hits.filter { $0.basis == .ranges }.compactMap { weighedAs($0.advisory).ranges }.flatMap { $0 }
+        let verdicts = core.verdicts(installed: installed, advisories: ranges.map { CoreAdvisory(ranges: [$0], fixed: []) })
+        let holding = zip(ranges, verdicts).filter { $0.1 == .inRange }.map(\.0)
         guard !holding.isEmpty, holding.allSatisfy({ $0.fixed == nil && $0.lastAffected != nil }) else { return nil }
         return core.newestVersion(holding.compactMap(\.lastAffected))
     }

@@ -163,10 +163,11 @@ public struct FindingBuilder: Sendable {
                 made.append((id, others[0].name, nil, origins, others[0].name))
             }
             for m in made {
-                let make = { (v: BatchResponse.Result) in
-                    packageFinding(package, v, id: m.id, title: m.title, component: m.component, origins: m.origins, spelledAs: m.spelledAs)
+                let make = { (v: BatchResponse.Result, itemWithheld: AdvisoryCheck.Withheld?) in
+                    packageFinding(package, v, id: m.id, title: m.title, component: m.component, origins: m.origins, spelledAs: m.spelledAs,
+                                   itemWithheld: itemWithheld)
                 }
-                let f = make(verdict)
+                let f = make(verdict, nil)
                 decided[f.id] = .batch(verdict, installed: package.version, shown: f.fixedVersion, make)
                 out.append(f)
             }
@@ -175,8 +176,10 @@ public struct FindingBuilder: Sendable {
     }
 
     /// One copy's finding (or several copies' shared one) of a package checked by exact version, from its answer.
+    /// `itemWithheld`: a "patch these first" item promoted it (Decided.batch) and the core would not weigh the item's
+    /// version: no version and no command, Homebrew's included, and the note says why.
     func packageFinding(_ package: ApprovedPackage, _ verdict: BatchResponse.Result, id: String, title: String, component: String?,
-                        origins: [Origin], spelledAs: String) -> Finding {
+                        origins: [Origin], spelledAs: String, itemWithheld: AdvisoryCheck.Withheld? = nil) -> Finding {
         let onThisMac = package.platform == "macos"
         let check = BatchCheck.read(verdict, installed: package.version)
         let state = Self.state(verdict, check, onThisMac: onThisMac)
@@ -198,7 +201,8 @@ public struct FindingBuilder: Sendable {
         // A command needs a version the core checked, unless Homebrew picks it (`brew upgrade`, whose versions the
         // person already takes): never npm's @latest, `cargo install x` or `gem update x` on the server's word. Without
         // one, UpgradeCommand writes none and says so (`noCheckedVersion`).
-        let withheld = !malicious && (rejected || unconfirmed || state.check == .reported || onlyElsewhere)
+        let itemWithheld = malicious || upgrade != nil ? nil : itemWithheld
+        let withheld = !malicious && (rejected || unconfirmed || state.check == .reported || onlyElsewhere || itemWithheld != nil)
         let page = SiteURL.packagePage(package.ecosystem, package.name, version: package.version)
         let inputs = UpgradeCommand.Inputs(origin: origins[0], name: spelledAs, ecosystem: package.ecosystem, target: upgrade, malicious: malicious)
         let full = UpgradeCommand.advice(inputs)
@@ -206,6 +210,7 @@ public struct FindingBuilder: Sendable {
         let advice = withheld ? UpgradeCommand.Advice(command: nil, note: full.command == nil ? full.note : nil) : full
         let rejectedNote = "The server named a fixed version the app does not accept as a version; see the site."
         let noChecked = UpgradeCommand.noCheckedVersion
+        let itemNote = itemWithheld.map { $0 == .notAVersion ? Self.listNotAVersion : noChecked }
         let more = Self.sentences(BatchCheck.moreLikely(state.moreLikely, naming: state.likelyAlert),
                                   BatchCheck.moreReported(state.moreReported, naming: state.reportedAlert))
         let note: String?
@@ -216,14 +221,15 @@ public struct FindingBuilder: Sendable {
             note = nil
         case .affected?:
             let why: String?
-            if rejected { why = rejectedNote }
+            if let itemNote { why = itemNote }
+            else if rejected { why = rejectedNote }
             else if unconfirmed { why = noChecked }
             else if verdict.plan != nil && target == .none && unresolved.isEmpty { why = "No fixed release yet." }
             else { why = advice.note }
             note = Self.sentences(why, more)
         case .likely?:
             // with no target, the likely sentence already says no fixed version clears it
-            let how = rejected ? rejectedNote : unconfirmed ? noChecked : upgrade == nil && advice.note == noChecked ? nil : advice.note
+            let how = itemNote ?? (rejected ? rejectedNote : unconfirmed ? noChecked : upgrade == nil && advice.note == noChecked ? nil : advice.note)
             note = Self.sentences(check.likelySentence(upgrade: upgrade?.display), how, more)
         case .reported?:
             note = check.reportedNote(ecosystem: verdict.ecosystem, onThisMac: onThisMac)
@@ -283,12 +289,15 @@ public struct FindingBuilder: Sendable {
         /// it clear of the item's published ranges too, else the item's: so the core judges it against the finding's own
         /// flaws and the item's alike, and "fixes N" and what it does not fix are the core's. The item's sentence leads.
         static func batch(_ verdict: BatchResponse.Result, installed: String, shown: String?,
-                          _ make: @escaping (BatchResponse.Result) -> Finding) -> Decided {
+                          _ make: @escaping (BatchResponse.Result, AdvisoryCheck.Withheld?) -> Finding) -> Decided {
             Decided { issue, item in
-                let target = shown.flatMap { item.leaves($0, from: installed) ? $0 : nil } ?? item.fix(installed).upgrade?.version
+                // the version the finding shows when it leaves the item's ranges too, else the item's; one the core would
+                // not weigh is withheld, and the finding says so (never "No fixed release yet", never a command)
+                let kept = shown.flatMap { item.leaves($0, from: installed) ? $0 : nil }
+                let fix = kept == nil ? item.fix(installed) : (upgrade: nil, withheld: nil)
                 let v = BatchCheck.promoting(verdict, by: issue, ranges: item.rangedAdvisories.flatMap { AdvisoryCheck.weighedAs($0).ranges ?? [] },
-                                             target: target, installed: installed)
-                var f = make(v)
+                                             target: kept ?? fix.upgrade?.version, installed: installed)
+                var f = make(v, fix.withheld)
                 let lead = f.fixedVersion.map { "The issuer lists \(installed) as affected and \($0) as fixed." } ?? "The issuer lists \(installed) as affected."
                 f.note = FindingBuilder.sentences(lead, f.note)
                 return (f, .batch(v, installed: installed, shown: f.fixedVersion, make))
@@ -380,6 +389,9 @@ public struct FindingBuilder: Sendable {
     }
 
     // MARK: "Patch these first" (api/v1/state big_issues)
+
+    /// Said when the core's version for a "patch these first" item does not read as a version and nothing else.
+    static let listNotAVersion = "The “patch these first” list names a fixed version the app does not accept as a version; see the site."
 
     /// The label of a finding on the site's "patch these first" list.
     static func label(_ issue: StateResponse.BigIssue) -> String {

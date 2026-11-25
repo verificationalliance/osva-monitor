@@ -198,11 +198,11 @@ import OSVAKit
 
         var findings: [Finding] = [], inventory: [InstalledPackage] = []
         func add(_ origin: Origin, _ ecosystem: Ecosystem, _ p: Package, id: String? = nil) {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: p.name, ecosystem: ecosystem,
-                                               target: p.malicious ? nil : PreviewData.fix(p.fixed, above: p.installed), malicious: p.malicious)
+            let upgrade = p.malicious ? nil : PreviewData.fix(p.fixed, above: p.installed)
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: p.name, ecosystem: ecosystem, target: upgrade, malicious: p.malicious)
             findings.append(Finding(id: id ?? "pkg|\(ecosystem.rawValue)|\(p.name)|\(p.installed)", group: p.malicious ? .malicious : p.group,
                                     subject: .package(ecosystem: ecosystem, name: p.name), title: p.name, installedVersion: p.installed,
-                                    fixedVersion: p.malicious ? nil : p.fixed, severity: p.malicious ? nil : p.severity, advisoryIDs: ["GHSA-x"],
+                                    upgrade: upgrade, severity: p.malicious ? nil : p.severity, advisoryIDs: ["GHSA-x"],
                                     flawCount: 1, exploited: p.exploited, malicious: p.malicious, note: nil, bigIssue: nil, origins: [origin],
                                     pageURL: SiteURL.packagePage(ecosystem, p.name, version: p.installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
                                     verification: .none, grade: nil, commandInputs: inputs))
@@ -243,7 +243,7 @@ import OSVAKit
         storage.save(ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(packages: inventory),
                                 findings: FindingOrder.sorted(findings), sent: SentRecord(), indexGeneratedAt: nil, problems: []))
         let site = Site(packages.map { ("npm", $0.name, $0.installed, $0.fixed) } + pip.map { ("PyPI", $0.name, $0.installed, $0.fixed) } + alsoVulnerable)
-        let model = AppModel(storage: storage, notifier: FixLoopTests.Quiet(), tools: tools, transport: site)
+        let model = AppModel(storage: storage, notifier: FixLoopTests.Quiet(), tools: tools, transport: site, defaults: FixLoopTests.defaults())
         model.terminal = terminal
         return Home(model: model, findings: findings, npm: npm, python: python)
     }
@@ -355,10 +355,10 @@ import OSVAKit
         let tools = ToolEnvironment(base: [:], isExecutable: { _ in true })
         func f(_ name: String, _ group: Finding.Group, _ severity: Severity?, exploited: Bool = false, malicious: Bool = false,
                origin: Origin = .npmGlobal(npm: "/opt/homebrew/bin/npm"), eco: Ecosystem = .npm) -> Finding {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: malicious ? nil : PreviewData.fix("9.9.9", above: "1.0.0"),
-                                               malicious: malicious)
+            let upgrade = malicious ? nil : PreviewData.fix("9.9.9", above: "1.0.0")
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: upgrade, malicious: malicious)
             return Finding(id: "pkg|npm|\(name)|1.0.0", group: group, subject: .package(ecosystem: eco, name: name), title: name, installedVersion: "1.0.0",
-                           fixedVersion: malicious ? nil : "9.9.9", severity: severity, advisoryIDs: [], flawCount: 1, exploited: exploited,
+                           upgrade: upgrade, severity: severity, advisoryIDs: [], flawCount: 1, exploited: exploited,
                            malicious: malicious, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(eco, name, version: "1.0.0"),
                            upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
         }

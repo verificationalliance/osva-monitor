@@ -1,0 +1,11 @@
+{"checked":3,"packages":[
+ {"ecosystem":"npm","name":"likely-pkg","version":"1.31.5","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-likely"],"exploited":[],
+  "flaws":[{"id":"GHSA-likely","severity":"HIGH","summary":"No published ranges; first fixed 1.30.7 and 1.31.9","fixed_in":["1.30.7","1.31.9"],"ranges":null,"ranges_note":"no exact ranges"}],
+  "plan":{"target":"1.31.9","fixes":["GHSA-likely"],"remaining":[]}},
+ {"ecosystem":"npm","name":"inside-target","version":"1.0.0","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-inside"],"exploited":[],
+  "flaws":[{"id":"GHSA-inside","severity":"HIGH","summary":"Fixed in 2.0.0","fixed_in":["2.0.0"],"ranges":[{"fixed":"2.0.0"}]}],
+  "plan":{"target":"1.5.0","fixes":["GHSA-inside"],"remaining":[]}},
+ {"ecosystem":"npm","name":"typo-range","version":"3.0","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-typo"],"exploited":[],
+  "flaws":[{"id":"GHSA-typo","severity":"HIGH","summary":"A range with a key nobody publishes","fixed_in":[],"ranges":[{"introduced":"1.0","fixd":"2.0"}]}],
+  "plan":null}
+]}

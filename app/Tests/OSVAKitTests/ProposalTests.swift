@@ -60,10 +60,10 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
 
     /// A pip finding in the test Python: `name` at `installed`, its fix `fixed`.
     static func finding(_ name: String, _ installed: String, _ fixed: String, flaws: Int = 1, exploited: Bool = false) -> Finding {
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: python, user: false, formula: nil), name: name, ecosystem: .pypi,
-                                           target: Fixture.fix(fixed, above: installed), malicious: false)
+        let upgrade = Fixture.fix(fixed, above: installed)
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: python, user: false, formula: nil), name: name, ecosystem: .pypi, target: upgrade, malicious: false)
         return Finding(id: "pkg|PyPI|\(name)|\(installed)", group: exploited ? .exploited : .criticalHigh, subject: .package(ecosystem: .pypi, name: name),
-                       title: name, installedVersion: installed, fixedVersion: fixed, severity: .high, advisoryIDs: [], flawCount: flaws,
+                       title: name, installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: flaws,
                        exploited: exploited, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
                        pageURL: SiteURL.packagePage(.pypi, name, version: installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
                        verification: .none, grade: nil, commandInputs: inputs)
@@ -339,6 +339,22 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         #expect(accepted.blocked == nil && accepted.pins == ["demo==2.4", "dep==1.1"])
     }
 
+    /// MP2: two flaws, A fixed in 2.0, and B fixed in 2.0 but back from 2.2 to 2.4. The fix (2.0) leaves both; pip's 2.3
+    /// leaves A only. It must leave every flaw the fix leaves, not some: refused.
+    @Test func pipsVersionMustLeaveEveryFlawTheFixLeaves() async throws {
+        let folder = Self.site([("demo", "1.0", [], false), ("dep", "1.0", ["demo<2"], false)])
+        let a = BatchCheckTests.flaw("A", ranges: #"[{"fixed":"2.0"}]"#)
+        let b = BatchCheckTests.flaw("B", ranges: #"[{"fixed":"2.0"},{"introduced":"2.2","fixed":"2.4"}]"#)
+        let (tools, _) = Self.tools([folder]) { _ in ok(pipReport([("demo", "2.3", []), ("dep", "1.1", ["demo>=2"])])) }
+        let at = { (v: String) in PackageVersion(name: "demo", version: v) }
+        let server = FakeFixServer(results: [at("1.0"): try BatchCheckTests.result("demo", "1.0", flaws: [a, b]),
+                                             at("2.3"): try BatchCheckTests.result("demo", "2.3", flaws: [b])])
+        let offer = FixOffer(plan: try FixPlan.make(for: Self.finding("demo", "1.0", "2.0", flaws: 2), tools: tools, home: "/Users/ana").get(),
+                             proposal: .together(.init(package: "demo", fix: "2.0", blockers: ["dep"], python: Self.python)))
+        let p = await FixAdvisor(tools: tools, home: "/Users/ana", server: server).preview(offer)
+        #expect(p.blocked == "pip's set would install demo 2.3, which the core does not confirm fixes what 2.0 fixes")
+    }
+
     // MARK: The end state
 
     /// A pair fine alone and broken together: alpha 1.1 needs beta below 2.1, and beta goes to 2.1. Each alone passes;
@@ -386,10 +402,10 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
     @Test func plansJoinTheirToolsCommand() {
         let tools = ToolEnvironment(base: [:], isExecutable: { _ in true })
         func plan(_ origin: Origin, _ name: String, _ eco: Ecosystem?, malicious: Bool = false) -> FixPlan {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: malicious ? nil : Fixture.fix("9.9.9", above: "1.0.0"),
-                                               malicious: malicious)
+            let upgrade = malicious ? nil : Fixture.fix("9.9.9", above: "1.0.0")
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: upgrade, malicious: malicious)
             let f = Finding(id: name, group: .criticalHigh, subject: eco.map { .package(ecosystem: $0, name: name) } ?? .project(slug: name, name: name, installedAs: name),
-                            title: name, installedVersion: "1.0.0", fixedVersion: malicious ? nil : "9.9.9", severity: .high, advisoryIDs: [], flawCount: 1,
+                            title: name, installedVersion: "1.0.0", upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                             exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.projectPage(slug: name),
                             upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
             return try! FixPlan.make(for: f, tools: tools).get()
@@ -478,7 +494,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         let origin = Origin.electronApp(name: name, bundlePath: bundle.path, caskToken: token)
         let inputs = UpgradeCommand.Inputs(origin: origin, name: "electron", ecosystem: .npm, target: Fixture.fix("42.11.16", above: electron), malicious: false)
         return Finding(id: "app|\(bundle.path)|\(electron)", group: .exploited, subject: .package(ecosystem: .npm, name: "electron"), title: name,
-                       component: "Electron", installedVersion: electron, fixedVersion: "42.11.16", severity: .high, advisoryIDs: [], flawCount: 50,
+                       component: "Electron", installedVersion: electron, upgrade: inputs.target.map { _ in Fixture.fix("42.11.16", above: electron) }, severity: .high, advisoryIDs: [], flawCount: 50,
                        exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [origin],
                        pageURL: SiteURL.packagePage(.npm, "electron", version: electron), upgradeCommand: UpgradeCommand.advice(inputs).command,
                        verification: .none, grade: nil, commandInputs: inputs)

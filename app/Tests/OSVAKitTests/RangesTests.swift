@@ -34,23 +34,34 @@ import Testing
     static let pg = [AffectedRange(fixed: "14.24"), AffectedRange(introduced: "15", fixed: "15.19"), AffectedRange(introduced: "16", fixed: "16.15"),
                      AffectedRange(introduced: "17", fixed: "17.11"), AffectedRange(introduced: "18", fixed: "18.6")]
 
+    /// What the core says of one advisory with these published ranges, at `v`.
+    func verdict(_ v: String, _ ranges: [AffectedRange]) -> Core.Verdict? {
+        core.verdicts(installed: v, advisories: [CoreAdvisory(ranges: ranges, fixed: [])]).first
+    }
+
+    /// The core's upgrade for one advisory with these published ranges, from `v`.
+    func upgrade(_ v: String, _ ranges: [AffectedRange]) -> String? {
+        guard case let .upgrade(u) = core.upgrade(from: v, advisories: [CoreAdvisory(ranges: ranges, fixed: [])]) else { return nil }
+        return u.version
+    }
+
     @Test func theCoreDecidesByRanges() {
         let pg = Self.pg
-        #expect(core.affectedness(installed: "16.16", ranges: pg) == .notAffected)
-        #expect(core.affectedness(installed: "16.14", ranges: pg) == .affected)
-        #expect(core.upgrade(from: "16.14", ranges: pg) == "16.15")                // its own branch's fix, not 18.6
-        #expect(core.affectedness(installed: "13.9", ranges: pg) == .affected)      // no introduced: from the first version
-        #expect(core.affectedness(installed: "14.24", ranges: pg) == .notAffected)  // fixed is excluded
-        #expect(core.affectedness(installed: "1.0", ranges: []) == .unknown && core.upgrade(from: "1.0", ranges: []) == nil)
+        #expect(verdict("16.16", pg) == .clear)
+        #expect(verdict("16.14", pg) == .inRange)
+        #expect(upgrade("16.14", pg) == "16.15")                         // its own branch's fix, not 18.6
+        #expect(verdict("13.9", pg) == .inRange)                         // no introduced: from the first version
+        #expect(verdict("14.24", pg) == .clear)                          // fixed is excluded
+        #expect(verdict("1.0", []) == .unstated && upgrade("1.0", []) == nil)   // no ranges and no fixed versions: nothing stated
         let open = [AffectedRange(introduced: "1.5")]
-        #expect(core.affectedness(installed: "9.0", ranges: open) == .affected && core.upgrade(from: "9.0", ranges: open) == nil)
+        #expect(verdict("9.0", open) == .inRange && upgrade("9.0", open) == nil)
         let last = [AffectedRange(introduced: "2.11.0", lastAffected: "2.13.0")]
-        #expect(core.affectedness(installed: "2.13.0", ranges: last) == .affected && core.affectedness(installed: "2.13.1", ranges: last) == .notAffected)
+        #expect(verdict("2.13.0", last) == .inRange && verdict("2.13.1", last) == .clear)
         // an upgrade that another range includes (a flaw that starts later) is skipped
         let later = [AffectedRange(introduced: "16", fixed: "16.15"), AffectedRange(introduced: "16.14", fixed: "16.20")]
-        #expect(core.upgrade(from: "16.10", ranges: later) == "16.20")
+        #expect(upgrade("16.10", later) == "16.20")
         // a present but empty bound is a bound, never "absent"
-        #expect(core.affectedness(installed: "dev", ranges: [AffectedRange(introduced: "", fixed: "1.0")]) == .notAffected)
+        #expect(verdict("dev", [AffectedRange(introduced: "", fixed: "1.0")]) == .clear)
     }
 
     /// A sample of range sets and versions, for checking the core's theorems with the wrapper's own comparisons as the
@@ -76,9 +87,9 @@ import Testing
         for rs in Self.sampleSets {
             for v in Self.sampleVersions {
                 let inOne = rs.contains { Self.holds($0, v) }
-                #expect((core.affectedness(installed: v, ranges: rs) == .affected) == inOne, "\(v) in \(rs)")
-                if let u = core.upgrade(from: v, ranges: rs) {
-                    #expect(core.compareVersions(v, u) < 0 && core.affectedness(installed: u, ranges: rs) == .notAffected, "\(v) → \(u)")
+                #expect((verdict(v, rs) == .inRange) == inOne, "\(v) in \(rs)")
+                if let u = upgrade(v, rs) {
+                    #expect(core.compareVersions(v, u) < 0 && verdict(u, rs) == .clear, "\(v) → \(u)")
                 }
             }
         }

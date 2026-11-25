@@ -90,7 +90,8 @@ public struct FixAdvisor: Sendable {
     ///      it passes the same check as any target here;
     ///   2. otherwise, when dependents' specifiers block it, an upgrade together: the fix with what holds it back, which
     ///      pip's resolver works out at the review. Not when what holds it back is a project of the person's.
-    func proposal(_ finding: Finding, plan: FixPlan, pip: FixPlan.Pip, site: PythonSite, conflicts: [DependencyConflict]) async -> FixOffer? {
+    /// `@concurrent`: it asks the core (`partial`), which must never run on the main actor.
+    @concurrent func proposal(_ finding: Finding, plan: FixPlan, pip: FixPlan.Pip, site: PythonSite, conflicts: [DependencyConflict]) async -> FixOffer? {
         guard let server else { return nil }                   // without the site, neither can be checked
         if let constraints = PythonConstraints.blocking(pip.name, from: pip.installed, to: pip.target, in: site),
            case let .success(answer?) = await server.plan(finding, within: constraints.map(\.specifier)),
@@ -192,7 +193,8 @@ public struct FixAdvisor: Sendable {
     /// boundaries), it moves no project of the person's nor anything such a project uses past a major version, nothing
     /// it moves brings a flaw the version before did not have, and the core confirms pip's version of the package
     /// leaves every flaw the fix leaves (PipSetGuard.review). Then every version in it is pinned.
-    func together(_ plan: FixPlan, _ t: FixProposal.Together) async -> FixPreview {
+    /// `@concurrent`, as `proposal`: the review asks the core.
+    @concurrent func together(_ plan: FixPlan, _ t: FixProposal.Together) async -> FixPreview {
         guard let pip = plan.pip else { return .none("Nothing to ask pip about.") }
         let source = "pip install --dry-run --report (asks PyPI about \(t.asked.joined(separator: ", ")), installs nothing)"
         func refused(_ why: String, _ lines: [String] = []) -> FixPreview { FixPreview(source: source, lines: lines, blocked: why) }

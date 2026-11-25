@@ -57,6 +57,14 @@ enum Fixture {
         return u
     }
 
+    /// A finding as a report saved on disk has it, with any fixed version: what a report from an older version, or one
+    /// changed on disk, gives the Fix button.
+    static func saved(_ f: Finding, fixedVersion: String?) -> Finding {
+        var json = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(f)) as! [String: Any]
+        json["fixedVersion"] = fixedVersion
+        return try! JSONDecoder().decode(Finding.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
     /// Command inputs as a report saved on disk has them, with any target: what a report from an older version, or one
     /// changed on disk, gives the Fix button.
     static func savedInputs(origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool) -> UpgradeCommand.Inputs {

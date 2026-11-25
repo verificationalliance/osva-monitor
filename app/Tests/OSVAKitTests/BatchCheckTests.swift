@@ -181,7 +181,7 @@ import Testing
         #expect(Finding.Group.allCases.filter(\.isNotChecked) == [.likely, .reported])
         // a report saved by 0.5.1 reads with the same group
         let saved = Finding(id: "x", group: .criticalHigh, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1",
-                            fixedVersion: "2", severity: .high, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil,
+                            upgrade: Fixture.fix("2", above: "1"), severity: .high, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil,
                             bigIssue: nil, origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
         let json = String(decoding: try JSONEncoder().encode(saved), as: UTF8.self)
         #expect(json.contains(#""group":2"#))
@@ -221,7 +221,7 @@ import Testing
                                                                          brew: [], projects: [:], bigIssues: []).first)
         #expect(program.group == .reported && program.flawCount == 1 && program.upgradeCommand == nil)
         let app = Finding(id: "product|docker|4.41.2", group: .criticalHigh, subject: .product(key: "docker", name: "Docker"), title: "Docker",
-                          installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
+                          installedVersion: "4.41.2", upgrade: Fixture.fix("4.86.0", above: "4.41.2"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: false,
                           malicious: false, note: "The issuer lists 4.41.2 as affected and 4.86.0 as fixed.", bigIssue: nil,
                           origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
                           upgradeCommand: nil, verification: .none, grade: nil)
@@ -487,7 +487,7 @@ extension BatchCheckTests {
 
     @Test func notifiedAgainOnlyWhenMoreSerious() throws {
         func f(_ group: Finding.Group, exploited: Bool = false, notChecked: Alert? = nil, big: String? = nil) -> Finding {
-            Finding(id: "x", group: group, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", fixedVersion: nil,
+            Finding(id: "x", group: group, subject: .package(ecosystem: .npm, name: "x"), title: "x", installedVersion: "1", upgrade: nil,
                     severity: .high, advisoryIDs: [], flawCount: 1, exploited: exploited, malicious: false, note: nil, bigIssue: big,
                     origins: [.npmGlobal(npm: "npm")], pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil, notChecked: notChecked)
         }
@@ -606,6 +606,29 @@ extension BatchCheckTests {
         {"slug":"electron","name":"Electron","recent":[{"id":"CVE-EL","sev":"HIGH","ranges":[{"introduced":"28.0.0","fixed":"28.3.2"}]}]}
         """#.utf8))
     static let slack = Origin.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack")
+
+    /// Task 6's decision 4: an item the electron record's ranges hold promotes the app's finding, but the core will not
+    /// weigh the item's version (one that does not read as a version, or more work than it may take). The finding names
+    /// no version, never says "No fixed release yet", offers no command (not even Homebrew's cask upgrade), and says why.
+    @Test func aPromotionWhoseVersionTheCoreWithholdsGivesNoCommand() throws {
+        func promoted(_ ranges: String) throws -> Finding {
+            let record = try JSONDecoder().decode(ProjectResponse.self, from: Data(
+                #"{"slug":"electron","name":"Electron","recent":[{"id":"CVE-EL","sev":"HIGH","ranges":\#(ranges)}]}"#.utf8))
+            let reported = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-EL", severity: "HIGH")], plan: Self.plan("28.3.2"))
+            return try #require(Self.findings([reported], index: Fixture.index, bigIssues: [try Self.electronItem()], projects: ["electron": record]) { _ in
+                Self.slack
+            }.first)
+        }
+        let odd = try promoted(#"[{"introduced":"28.0.0","fixed":"28.3.2;reboot"}]"#)
+        #expect(odd.group == .exploited && odd.bigIssue != nil)
+        #expect(odd.fixedVersion == nil && odd.upgradeCommand == nil && odd.commandInputs == nil)
+        #expect(odd.note?.hasPrefix("The issuer lists 28.1.0 as affected. The “patch these first” list names a fixed version the app does not accept"
+                                    + " as a version; see the site.") == true, "\(odd.note ?? "")")
+        #expect(odd.note?.contains("No fixed release yet") == false)
+        let many = try promoted("[" + (0..<400).map { #"{"introduced":"28.0.0","fixed":"29.\#($0)"}"# }.joined(separator: ",") + "]")
+        #expect(many.group == .exploited && many.fixedVersion == nil && many.upgradeCommand == nil && many.commandInputs == nil)
+        #expect(many.note?.hasPrefix("The issuer lists 28.1.0 as affected. No checked fixed version yet; see the site.") == true, "\(many.note ?? "")")
+    }
 
     @Test func aPromotedPackageFindingIsJudgedAgainstAllItsFlaws() throws {
         // N1, scenario 1: A fixed in 28.2.0, BB in 28.3.0, target 28.2.0; the item's range moves the version to 28.3.2,
