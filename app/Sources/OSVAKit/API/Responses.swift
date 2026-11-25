@@ -19,10 +19,19 @@ public struct BatchResponse: Decodable, Sendable {
         public var platform: String?
         public var exploitedSince: String?
         public var malicious: Bool
+        /// The affected ranges the site publishes for this flaw, read strictly (`AffectedRange`). Nil when it publishes
+        /// none it can state exactly (`rangesNote` says why), when the server is older than ranges, or when they could
+        /// not be read (`rangesUnreadable`).
+        public var ranges: [AffectedRange]?
+        public var rangesNote: String?
+        /// The server sent ranges the app could not read: the flaw is not checked against them, never against a wider
+        /// range. Kept in the cache's copy (`ranges_unreadable`).
+        public var rangesUnreadable: Bool
 
         enum CodingKeys: String, CodingKey {
-            case id, aliases, severity, summary, platform, malicious
+            case id, aliases, severity, summary, platform, malicious, ranges
             case fixedIn = "fixed_in", fixForYou = "fix_for_you", exploitedSince = "exploited_since"
+            case rangesNote = "ranges_note", rangesUnreadable = "ranges_unreadable"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
@@ -35,7 +44,13 @@ public struct BatchResponse: Decodable, Sendable {
             platform = try? c.decodeIfPresent(String.self, forKey: .platform)
             exploitedSince = try? c.decodeIfPresent(String.self, forKey: .exploitedSince)
             malicious = (try? c.decodeIfPresent(Bool.self, forKey: .malicious)) ?? false
+            (ranges, rangesUnreadable) = AffectedRange.read(c, .ranges, unreadableKey: .rangesUnreadable)
+            rangesNote = try? c.decodeIfPresent(String.self, forKey: .rangesNote)
         }
+
+        /// The flaw as the core weighs it: its ranges, and `fixedIn` as its first fixed versions. Nil when its ranges
+        /// could not be read.
+        public var coreAdvisory: CoreAdvisory? { rangesUnreadable ? nil : CoreAdvisory(ranges: ranges, fixed: fixedIn) }
 
         /// Whether it can affect a Mac (no platform named, or macOS).
         public var affectsThisMac: Bool { platform == nil || platform?.lowercased() == "macos" }
@@ -145,10 +160,14 @@ public struct ProjectResponse: Codable, Sendable {
         public var fixedHint: [String]
         public var kev: Bool
         public var cve: String?
-        /// Every affected range the issuer states ([]: no version is affected). Nil when the server has none for this
-        /// advisory: an older server, or a record it cannot read as ranges exactly (`rangesNote` says why).
+        /// Every affected range the issuer states, read strictly (`AffectedRange`). Nil when the server has none for
+        /// this advisory (an older server, or a record it cannot read as ranges exactly: `rangesNote` says why), or when
+        /// the app could not read them (`rangesUnreadable`). The core reads [] as it reads nil.
         public var ranges: [AffectedRange]?
         public var rangesNote: String?
+        /// The server sent ranges the app could not read: the advisory is not checked against them, never against a
+        /// wider range. Kept in the cache's copy (`ranges_unreadable`).
+        public var rangesUnreadable: Bool
         /// Builds a distributor's own record says contain the fix ("Amazon Corretto" 27.0.1.1.4: its changelog at that
         /// tag lists the advisory), not necessarily the first that does. [] from servers that do not send them.
         public var fixedBuilds: [FixedBuild]
@@ -162,7 +181,7 @@ public struct ProjectResponse: Codable, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case id, date, title, kev, cve, ranges, severity = "sev", fixedHint = "fixed_hint", rangesNote = "ranges_note"
-            case fixedBuilds = "fixed_builds"
+            case fixedBuilds = "fixed_builds", rangesUnreadable = "ranges_unreadable"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
@@ -173,10 +192,14 @@ public struct ProjectResponse: Codable, Sendable {
             fixedHint = (try? c.decodeIfPresent([String].self, forKey: .fixedHint)) ?? []
             kev = (try? c.decodeIfPresent(Bool.self, forKey: .kev)) ?? false
             cve = try? c.decodeIfPresent(String.self, forKey: .cve)
-            ranges = try? c.decodeIfPresent([AffectedRange].self, forKey: .ranges)     // malformed reads as none: fixed_hint decides
+            (ranges, rangesUnreadable) = AffectedRange.read(c, .ranges, unreadableKey: .rangesUnreadable)
             rangesNote = try? c.decodeIfPresent(String.self, forKey: .rangesNote)
             fixedBuilds = (try? c.decodeIfPresent([FixedBuild].self, forKey: .fixedBuilds)) ?? []    // optional, and never fatal
         }
+
+        /// The advisory as the core weighs it: its ranges, and `fixedHint` as its first fixed versions. Nil when its
+        /// ranges could not be read.
+        public var coreAdvisory: CoreAdvisory? { rangesUnreadable ? nil : CoreAdvisory(ranges: ranges, fixed: fixedHint) }
     }
 
     /// One entry of the project's formal-verification record.
