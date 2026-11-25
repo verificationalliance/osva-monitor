@@ -28,8 +28,12 @@ import OSVAKit
                 body = Data(("#osva-app-index\t1\t2026-11-19T03:00:00Z\t1\t0\n" + vulnerable.map { "K\t\($0.ecosystem)\t\($0.name)\n" }.joined()).utf8)
             case "/api/v1/check/batch":
                 let asked = ((try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any])?["packages"] as? [[String: Any]] ?? []
+                // a package with no fixed version (evil) is malicious: its answer is the malware record's, not a range
+                // that ends at "" (which the core finds every version outside of)
                 let packages = vulnerable.filter { v in asked.contains { $0["name"] as? String == v.name && $0["version"] as? String == v.version } }.map { v in
-                    #"{"ecosystem":"\#(v.ecosystem)","name":"\#(v.name)","version":"\#(v.version)","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(v.fixed)"],"ranges":[{"fixed":"\#(v.fixed)"}]}],"plan":{"target":"\#(v.fixed)","fixes":["GHSA-x"],"remaining":[]}}"#
+                    v.fixed.isEmpty
+                        ? #"{"ecosystem":"\#(v.ecosystem)","name":"\#(v.name)","version":"\#(v.version)","malicious":true,"distinct_flaws":1,"worst_severity":"CRITICAL","advisories":["MAL-x"],"flaws":[{"id":"MAL-x","severity":"CRITICAL","malicious":true,"fixed_in":[],"ranges":null}],"plan":null}"#
+                        : #"{"ecosystem":"\#(v.ecosystem)","name":"\#(v.name)","version":"\#(v.version)","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(v.fixed)"],"ranges":[{"fixed":"\#(v.fixed)"}]}],"plan":{"target":"\#(v.fixed)","fixes":["GHSA-x"],"remaining":[]}}"#
                 }
                 body = Data(#"{"checked":1,"packages":[\#(packages.joined(separator: ","))]}"#.utf8)
             default: body = Data("{}".utf8)
