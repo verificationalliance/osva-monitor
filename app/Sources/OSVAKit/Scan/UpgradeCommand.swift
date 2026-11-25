@@ -12,9 +12,12 @@ import Foundation
 ///
 /// Names, versions and paths come from this Mac's files, so every one is shell-quoted unless it is plainly safe.
 public enum UpgradeCommand {
+    /// A command and its note. Only the builders write a command into one (UpgradeCommand, its extensions in
+    /// ProgramCommands.swift and JavaCheck.swift, and BundleAdvice); elsewhere an advice is withheld (`command: nil`) or
+    /// passed on whole (ClaimsTests holds this).
     public struct Advice: Equatable, Sendable {
-        public var command: String?
-        public var note: String?
+        public fileprivate(set) var command: String?
+        public fileprivate(set) var note: String?
         public init(command: String?, note: String? = nil) { self.command = command; self.note = note }
     }
 

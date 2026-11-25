@@ -179,8 +179,9 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var flawCount: Int
     public var exploited: Bool
     public var malicious: Bool
-    /// One line of context: "likely affected: the issuer names 3.5.10 as fixed", or how this place is upgraded.
-    public var note: String?
+    /// One line of context: "likely affected: the issuer names 3.5.10 as fixed", or how this place is upgraded. Set by the
+    /// initialiser and only added to (`addNote`), never replaced.
+    public private(set) var note: String?
     /// How many of its flaws the upgrade to `fixedVersion` fixes (when the server's plan says).
     public var fixesCount: Int?
     /// The flaws that upgrade does not fix here, with the reason.
@@ -189,7 +190,9 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var bigIssue: String?
     public var origins: [Origin]
     public var pageURL: URL
-    public var upgradeCommand: String?
+    /// The command to paste into Terminal, as UpgradeCommand wrote it: set only from an `UpgradeCommand.Advice` (the
+    /// initialiser, `setAdvice`); a report saved on disk keeps the one it was made with.
+    public private(set) var upgradeCommand: String?
     /// What `upgradeCommand` was made from. The Fix button makes the command again from these and runs it only if it
     /// is exactly `upgradeCommand` (nil in reports saved before the button existed: they get no button until rescanned).
     public var commandInputs: UpgradeCommand.Inputs?
@@ -204,23 +207,33 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     /// and in reports saved before). It never weighs in the app's finding it is folded into.
     public var onlyElsewhere: Bool? = nil
 
-    /// A finding whose version to upgrade to is one the core checked (`upgrade.display`), or none.
+    /// A finding whose version to upgrade to is one the core checked (`upgrade.display`), or none, and whose command is
+    /// UpgradeCommand's (`advice.command`), or none.
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String,
                 upgrade: CheckedUpgrade?, severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,
-                note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, upgradeCommand: String?,
+                note: String?, bigIssue: String?, origins: [Origin], pageURL: URL, advice: UpgradeCommand.Advice?,
                 verification: Verification, grade: String?, fixesCount: Int? = nil, unresolved: [UnresolvedFlaw] = [],
                 commandInputs: UpgradeCommand.Inputs? = nil, notChecked: NotChecked? = nil) {
         self.id = id; self.group = group; self.subject = subject; self.title = title; self.component = component
         self.installedVersion = installedVersion
         self.fixedVersion = upgrade?.display; self.severity = severity; self.advisoryIDs = advisoryIDs; self.flawCount = flawCount
         self.exploited = exploited; self.malicious = malicious; self.note = note; self.bigIssue = bigIssue
-        self.origins = origins; self.pageURL = pageURL; self.upgradeCommand = upgradeCommand
+        self.origins = origins; self.pageURL = pageURL; self.upgradeCommand = advice?.command
         self.verification = verification; self.grade = grade
         self.fixesCount = fixesCount; self.unresolved = unresolved; self.commandInputs = commandInputs; self.notChecked = notChecked
     }
 
     /// The version to upgrade to, from one the core checked, or none.
     public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }
+
+    /// The command, from UpgradeCommand's advice, or none.
+    public mutating func setAdvice(_ advice: UpgradeCommand.Advice?) { upgradeCommand = advice?.command }
+
+    /// One more sentence for the note: after it, or `first`, before it.
+    public mutating func addNote(_ sentence: String?, first: Bool = false) {
+        guard let sentence else { return }
+        note = note.map { first ? sentence + " " + $0 : $0 + " " + sentence } ?? sentence
+    }
 
     public var ecosystem: Ecosystem? {
         if case let .package(ecosystem, _) = subject { return ecosystem }

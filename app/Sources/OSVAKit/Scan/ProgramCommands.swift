@@ -6,13 +6,26 @@ import Foundation
 extension UpgradeCommand {
     static let removeNote = "Remove it, then rotate every secret it could read."
 
+    /// A program's command, with the versions the core checked: for its own module or crate (`own`), and for Go's
+    /// standard library it was built with (`toolchain`). What ProgramFindings offers, and the preview fixtures show.
+    public static func rebuild(_ p: BuiltProgram, rebuildOnly: Bool, own: CheckedUpgrade?, toolchain: CheckedUpgrade?, malicious: Bool) -> Advice {
+        program(p, rebuildOnly: rebuildOnly, own: own?.version, toolchain: toolchain?.displayed(.program).display, malicious: malicious)
+    }
+
+    /// A pipx or uv tool's command, with the versions the core checked for its packages.
+    public static func tool(_ t: PythonTool, upgrades: [(name: String, upgrade: CheckedUpgrade?)], malicious: Bool) -> Advice {
+        pythonTool(t, upgrades: upgrades.map { ($0.name, $0.upgrade?.version) }, malicious: malicious)
+    }
+
     /// A Go or Rust program: Homebrew's formula, `go install` or `cargo install` again, or wherever it came from.
     /// `rebuildOnly` says the program's own code is fine and only what it was built with needs newer versions. A rebuild
     /// names the version it builds, never `@latest`: `own`, the version the core checked for the program's own module or
     /// crate, else the one installed (built again, with what it is built with brought up to date where the tool can:
-    /// cargo's newest compatible crates; for Go only the standard library, from the Go you have, so only when `toolchain`,
-    /// a part that is Go's standard library has a checked fix). Without a version that reads as one, no command.
-    static func program(_ p: BuiltProgram, rebuildOnly: Bool, own: String? = nil, toolchain: Bool = false, malicious: Bool) -> Advice {
+    /// cargo's newest compatible crates; for Go only the standard library, from the Go you have). `toolchain`: the Go
+    /// release the core checked as the standard library's fix. `go install` builds with the Go on this Mac, which the app
+    /// does not read, so the note says which Go the fix needs; and a same-version rebuild, which changes nothing else, is
+    /// offered only with one. Without a version that reads as one, no command.
+    static func program(_ p: BuiltProgram, rebuildOnly: Bool, own: String? = nil, toolchain: String? = nil, malicious: Bool) -> Advice {
         switch p.place {
         case .homebrew where p.formula != nil:
             let f = p.formula!
@@ -21,16 +34,18 @@ extension UpgradeCommand {
                           note: rebuildOnly ? "If brew says \(f) is up to date, the fix waits for Homebrew's next build of it." : nil)
         case .goInstall where p.package != nil && !malicious:
             func tag(_ v: String) -> String { quote(p.package! + "@" + (v.hasPrefix("v") ? v : "v" + v)) }
+            let needs = toolchain.map { "its standard library's fix needs Go \($0) or later" }
             if let own {
-                return Advice(command: "go install \(tag(own))", note: "Builds \(p.name) \(FindingBuilder.Component.shown(own)) with the Go you have.")
+                return Advice(command: "go install \(tag(own))",
+                              note: "Builds \(p.name) \(FindingBuilder.Component.shown(own)) with the Go you have" + (needs.map { "; \($0)." } ?? "."))
             }
-            guard toolchain else {
+            guard let needs else {
                 return Advice(command: nil, note: "The modules \(p.name) was built with change only in a newer release of it: update it where it came from.")
             }
             guard let v = p.version, FixSafety.isSafeVersion(v) else { return Advice(command: nil, note: versionUnknown(p.name)) }
             return Advice(command: "go install \(tag(v))",
-                          note: "Builds \(p.name) \(FindingBuilder.Component.shown(v)) again with the Go you have, and that Go's standard library; "
-                              + "the modules it was built with change only in a newer release.")
+                          note: "Builds \(p.name) \(FindingBuilder.Component.shown(v)) again with the Go you have; \(needs), "
+                              + "and the modules it was built with change only in a newer release.")
         case .cargoInstall where p.package != nil:
             if malicious { return Advice(command: "cargo uninstall \(quote(p.package!))", note: removeNote) }
             guard let v = own ?? p.version, FixSafety.isSafeVersion(v) else { return Advice(command: nil, note: versionUnknown(p.name)) }

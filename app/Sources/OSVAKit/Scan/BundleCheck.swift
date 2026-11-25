@@ -141,7 +141,7 @@ public struct BundleCheck: Sendable {
                 subject: .product(key: m.record.product, name: record.name), title: m.app.name, installedVersion: version,
                 upgrade: d.target, severity: d.severity, advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount,
                 exploited: d.exploited, malicious: false, note: FindingBuilder.sentences(d.note, advice.note),
-                bigIssue: nil, origins: [m.app.origin], pageURL: record.sourceURL ?? SiteURL.home, upgradeCommand: advice.command,
+                bigIssue: nil, origins: [m.app.origin], pageURL: record.sourceURL ?? SiteURL.home, advice: advice,
                 verification: .none, grade: nil, notChecked: d.notChecked))
         }
 
@@ -169,7 +169,7 @@ public struct BundleCheck: Sendable {
                 component: c.found.label, installedVersion: version, upgrade: d.target, severity: d.severity,
                 advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
                 note: FindingBuilder.sentences(d.note, advice.note), bigIssue: nil, origins: [c.app.origin],
-                pageURL: page, upgradeCommand: advice.command, verification: .none, grade: nil, notChecked: d.notChecked))
+                pageURL: page, advice: advice, verification: .none, grade: nil, notChecked: d.notChecked))
         }
 
         // An extension its store reported: malicious, removed with the editor's own command or in the browser.
@@ -189,7 +189,7 @@ public struct BundleCheck: Sendable {
                 id: "ext|\(m.record.store)|\(m.record.id)|\(host.rawValue)", group: .malicious, subject: .addOn(store: m.record.store, id: m.record.id),
                 title: first.name, installedVersion: first.version, upgrade: nil, severity: nil, advisoryIDs: [], flawCount: 0,
                 exploited: false, malicious: true, note: flagged + " " + what, bigIssue: nil, origins: m.copies.map(\.origin),
-                pageURL: m.record.source ?? SiteURL.home, upgradeCommand: advice.command, verification: .none, grade: nil))
+                pageURL: m.record.source ?? SiteURL.home, advice: advice, verification: .none, grade: nil))
         }
         return out
     }

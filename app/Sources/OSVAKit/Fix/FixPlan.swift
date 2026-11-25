@@ -118,7 +118,7 @@ public struct FixPlan: Hashable, Sendable {
             let inputs = UpgradeCommand.Inputs(origin: shown.origin, name: shown.name, ecosystem: shown.ecosystem, target: partial, malicious: false)
             finding.commandInputs = inputs
             finding.setUpgrade(partial)
-            finding.upgradeCommand = UpgradeCommand.advice(inputs, home: home).command
+            finding.setAdvice(UpgradeCommand.advice(inputs, home: home))
         }
         guard let command = finding.upgradeCommand else { return .failure(.noCommand) }
         guard let inputs = finding.commandInputs, UpgradeCommand.advice(inputs, home: home).command == command else {

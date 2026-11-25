@@ -65,7 +65,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         return Finding(id: "pkg|PyPI|\(name)|\(installed)", group: exploited ? .exploited : .criticalHigh, subject: .package(ecosystem: .pypi, name: name),
                        title: name, installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: flaws,
                        exploited: exploited, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
-                       pageURL: SiteURL.packagePage(.pypi, name, version: installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                       pageURL: SiteURL.packagePage(.pypi, name, version: installed), advice: UpgradeCommand.advice(inputs),
                        verification: .none, grade: nil, commandInputs: inputs)
     }
 
@@ -244,7 +244,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         #expect(Array(known.keys) == [at("2.7.0")])
         #expect(known[at("2.7.0")]?.flaws.map(\.ranges) == [[AffectedRange(fixed: "2.8.0")]])
         let answer = try await scanner.plan(Self.finding("torch", "2.7.0", "2.13.0"), within: ["<2.9"]).get()
-        #expect(answer?.flaws.map(\.ranges) == [[AffectedRange(fixed: "2.8.0")]] && answer?.plan?.target == "2.8.0")
+        #expect(answer?.flaws.map(\.ranges) == [[AffectedRange(fixed: "2.8.0")]] && answer?.plan?.unjudgedTarget == "2.8.0")
     }
 
     // MARK: Upgrade together
@@ -407,7 +407,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
             let f = Finding(id: name, group: .criticalHigh, subject: eco.map { .package(ecosystem: $0, name: name) } ?? .project(slug: name, name: name, installedAs: name),
                             title: name, installedVersion: "1.0.0", upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                             exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.projectPage(slug: name),
-                            upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
+                            advice: UpgradeCommand.advice(inputs), verification: .none, grade: nil, commandInputs: inputs)
             return try! FixPlan.make(for: f, tools: tools).get()
         }
         let brew = "/opt/homebrew/bin/brew"
@@ -496,7 +496,7 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         return Finding(id: "app|\(bundle.path)|\(electron)", group: .exploited, subject: .package(ecosystem: .npm, name: "electron"), title: name,
                        component: "Electron", installedVersion: electron, upgrade: inputs.target.map { _ in Fixture.fix("42.11.16", above: electron) }, severity: .high, advisoryIDs: [], flawCount: 50,
                        exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [origin],
-                       pageURL: SiteURL.packagePage(.npm, "electron", version: electron), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                       pageURL: SiteURL.packagePage(.npm, "electron", version: electron), advice: UpgradeCommand.advice(inputs),
                        verification: .none, grade: nil, commandInputs: inputs)
     }
 

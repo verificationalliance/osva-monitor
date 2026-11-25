@@ -67,7 +67,42 @@ mutant latest-command \
 mutant newest-version-elsewhere \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func newestFix(_ versions: [String]) -> String? { Core.shared.newestVersion(versions) }"
 mutant server-target-elsewhere \
-  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func planned(_ plan: BatchResponse.Plan?) -> String? { plan?.target }"
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func planned(_ plan: BatchResponse.Plan?) -> String? { plan?.unjudgedTarget }"
+mutant server-target-by-flatmap \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func planned(_ plan: BatchResponse.Plan?) -> String? { plan.flatMap { \$0.unjudgedTarget } }"
+mutant newest-version-as-a-value \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let pickNewest = Core.shared.newestVersion"
+mutant newest-version-elsewhere-in-advisorycheck \
+  $K/Scan/AdvisoryCheck.swift "import Foundation" "import Foundation; func newestFix(_ versions: [String]) -> String? { Core.shared.newestVersion(versions) }"
+mutant raw-pointer-load \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func reread(_ data: Data) -> UInt8 { data.withUnsafeBytes { \$0.load(as: UInt8.self) } }"
+mutant finding-decoded-again \
+  $K/Fix/FixAdvisor.swift "import Foundation" \
+  "import Foundation; func reforged(_ f: Finding) -> Finding? { guard var json = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(f))) as? [String: Any] else { return nil }; json[\"fixedVersion\"] = \"9.9\"; return try? JSONDecoder().decode(Finding.self, from: JSONSerialization.data(withJSONObject: json)) }"
+mutant inputs-decoded-again \
+  $K/Fix/FixAdvisor.swift "import Foundation" \
+  "import Foundation; func reforged(_ i: UpgradeCommand.Inputs) -> UpgradeCommand.Inputs? { guard var json = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(i))) as? [String: Any] else { return nil }; json[\"target\"] = \"9.9\"; return try? JSONDecoder().decode(UpgradeCommand.Inputs.self, from: JSONSerialization.data(withJSONObject: json)) }"
+mutant fixed-version-split-over-lines \
+  $K/Model/Finding.swift "public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }" \
+  "    public mutating func setUpgrade(_ upgrade: CheckedUpgrade?) { fixedVersion = upgrade?.display }
+    public mutating func forge(_ text: String?) { fixedVersion =
+        text }"
+mutant target-split-over-lines \
+  $K/Scan/UpgradeCommand.swift "self.origin = origin; self.name = name; self.ecosystem = ecosystem; self.target = target?.version; self.malicious = malicious" \
+  "            self.origin = origin; self.name = name; self.ecosystem = ecosystem; self.target = target?.version; self.malicious = malicious
+        }
+        public mutating func forge(_ text: String?) { target =
+            text"
+mutant command-outside-the-builders \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let handWritten = UpgradeCommand.Advice(command: \"npm install -g x@9.9\")"
+mutant command-written \
+  $K/Model/Finding.swift "public mutating func setAdvice(_ advice: UpgradeCommand.Advice?) { upgradeCommand = advice?.command }" \
+  "    public mutating func setAdvice(_ advice: UpgradeCommand.Advice?) { upgradeCommand = advice?.command }
+    public mutating func setCommand(_ text: String?) { upgradeCommand = text }"
+mutant settable-advice \
+  $K/Scan/UpgradeCommand.swift "        public fileprivate(set) var command: String?" "        public var command: String?"
+mutant settable-note \
+  $K/Model/Finding.swift "    public private(set) var note: String?" "    public var note: String?"
 mutant nearest-version-back \
   $K/Core.swift "    /// The versions, oldest first." \
   "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"

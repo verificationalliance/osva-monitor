@@ -128,7 +128,7 @@ struct BatchCheck: Sendable {
         }
 
         // The server's target, judged against every affected and likely flaw: one leaves[i] per flagged[i].
-        let planned = verdict.plan?.target
+        let planned = verdict.plan?.unjudgedTarget
         let judged = flagged.isEmpty ? nil : planned.flatMap { Self.judge($0, from: installed, advisories) }
         let upgrade = judged?.upgrade
         let target: Target = planned.map { FixSafety.isSafeVersion($0) ? (upgrade == nil ? .unconfirmed : .confirmed) : .notAVersion } ?? .none
@@ -294,7 +294,7 @@ extension BatchCheck {
         }
         v.advisories += issue.ids.filter { !v.advisories.contains($0) }
         var plan = v.plan ?? BatchResponse.Plan(target: nil, remaining: [])
-        plan.target = target
+        plan.unjudgedTarget = target
         v.plan = plan
         return v
     }
@@ -313,6 +313,6 @@ extension BatchResponse.Flaw {
 
 extension BatchResponse.Plan {
     init(target: String?, remaining: [Remaining]) {
-        self.target = target; fixes = []; self.remaining = remaining; requiresPython = nil; newestInstallable = nil
+        unjudgedTarget = target; fixes = []; self.remaining = remaining; requiresPython = nil; newestInstallable = nil
     }
 }

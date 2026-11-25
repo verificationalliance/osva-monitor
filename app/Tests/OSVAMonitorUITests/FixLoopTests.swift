@@ -111,7 +111,7 @@ import OSVAKit
             let f = Finding(id: "pkg|npm|\(name)|\(installed)", group: .criticalHigh, subject: .package(ecosystem: .npm, name: name), title: name,
                             installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 1,
                             exploited: false, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
-                            pageURL: SiteURL.packagePage(.npm, name, version: installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                            pageURL: SiteURL.packagePage(.npm, name, version: installed), advice: UpgradeCommand.advice(inputs),
                             verification: .none, grade: nil, commandInputs: inputs)
             return (f, InstalledPackage(ecosystem: .npm, name: name, version: installed, origin: inputs.origin))
         }
@@ -370,7 +370,7 @@ import OSVAKit
         let finding = Finding(id: "pkg|PyPI|starlette|0.48.0", group: .exploited, subject: .package(ecosystem: .pypi, name: "starlette"), title: "starlette",
                               installedVersion: "0.48.0", upgrade: PreviewData.fix("1.3.1", above: "0.48.0"), severity: .high, advisoryIDs: ["GHSA-x"], flawCount: 6,
                               exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
-                              pageURL: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                              pageURL: SiteURL.packagePage(.pypi, "starlette", version: "0.48.0"), advice: UpgradeCommand.advice(inputs),
                               verification: .none, grade: nil, commandInputs: inputs)
         let storage = Storage(directory: home.appendingPathComponent("support", isDirectory: true))
         storage.save(ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(packages: [

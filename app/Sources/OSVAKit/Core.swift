@@ -22,7 +22,7 @@ import OSVACore
 /// `versionUncertain` names the versions whose order Maven or Composer may not share. Packages checked by exact version
 /// (`api/v1/check/batch`: registry packages, project folders' lockfiles, the Electron inside apps, the packages inside
 /// Go and Rust programs and pipx and uv tools) ask them (BatchCheck): a flaw is affected only inside its published
-/// ranges, and the server's `plan.target` is shown only when `judge` confirms it. So do the advisories of a project's or
+/// ranges, and the server's planned target is shown only when `judge` confirms it. So do the advisories of a project's or
 /// product's record (AdvisoryCheck: Homebrew, MacPorts, Nix and conda packages, apps and the libraries they bundle, Java
 /// runtimes) and the site's "patch these first" list (IssueCheck): an advisory is affected only inside its published
 /// ranges, likely affected by its first fixed versions without them, reported when they cannot be read, and the

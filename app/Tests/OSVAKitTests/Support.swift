@@ -59,9 +59,12 @@ enum Fixture {
 
     /// A finding as a report saved on disk has it, with any fixed version: what a report from an older version, or one
     /// changed on disk, gives the Fix button.
-    static func saved(_ f: Finding, fixedVersion: String?) -> Finding {
+    static func saved(_ f: Finding, fixedVersion: String?) -> Finding { saved(f, ["fixedVersion": fixedVersion]) }
+
+    /// The same, with any stored fields set (nil removes one).
+    static func saved(_ f: Finding, _ fields: [String: String?]) -> Finding {
         var json = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(f)) as! [String: Any]
-        json["fixedVersion"] = fixedVersion
+        for (key, value) in fields { json[key] = value }
         return try! JSONDecoder().decode(Finding.self, from: JSONSerialization.data(withJSONObject: json))
     }
 

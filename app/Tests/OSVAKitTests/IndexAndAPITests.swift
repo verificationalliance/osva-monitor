@@ -163,11 +163,11 @@ import Testing
         #expect(setuptools.flaws.first { $0.id == "PYSEC-2026-3447" }?.platform == "windows")
         #expect(setuptools.flaws.first { $0.id == "PYSEC-2026-3447" }?.affectsThisMac == false)
         let plan = try #require(setuptools.plan)
-        #expect(plan.target == "78.1.1" && plan.fixes.count == 3 && plan.newestInstallable == "82.0.1" && plan.requiresPython == ">=3.9")
+        #expect(plan.unjudgedTarget == "78.1.1" && plan.fixes.count == 3 && plan.newestInstallable == "82.0.1" && plan.requiresPython == ">=3.9")
         #expect(plan.remaining.map(\.reason) == [.needsPython, .otherPlatform])
         #expect(plan.remaining[0].detail == "Python >=3.10" && plan.remaining[0].fixedIn == "83.0.0")
         let axios = try #require(r.packages.first { $0.name == "axios" })
-        #expect(axios.malicious && axios.plan?.target == nil && axios.plan?.remaining.first?.reason == .malicious)
+        #expect(axios.malicious && axios.plan?.unjudgedTarget == nil && axios.plan?.remaining.first?.reason == .malicious)
         // an answer from before plans existed still reads
         let old = try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch.json"))
         #expect(old.packages.allSatisfy { $0.flaws.isEmpty && $0.plan == nil })

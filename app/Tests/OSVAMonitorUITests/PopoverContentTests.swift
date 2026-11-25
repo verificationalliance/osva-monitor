@@ -105,7 +105,7 @@ import SwiftUI
     @Test func anUncheckedExploitedFlawNamesItsNotification() {
         let lodash = Finding(id: "x", group: .other, subject: .package(ecosystem: .npm, name: "lodash"), title: "lodash", installedVersion: "4.17.20",
                              upgrade: nil, severity: .low, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
-                             origins: [.npmGlobal(npm: "npm")], pageURL: PreviewData.findings[0].pageURL, upgradeCommand: nil, verification: .none,
+                             origins: [.npmGlobal(npm: "npm")], pageURL: PreviewData.findings[0].pageURL, advice: nil, verification: .none,
                              grade: nil, notChecked: Finding.NotChecked(id: "CVE-1", exploited: true, critical: false))
         #expect(lodash.deservesNotification && SystemNotifier.text(for: [lodash]).title == "Exploited flaw, not checked: lodash")
         var listed = lodash

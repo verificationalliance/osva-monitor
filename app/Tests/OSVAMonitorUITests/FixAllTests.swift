@@ -204,7 +204,7 @@ import OSVAKit
                                     subject: .package(ecosystem: ecosystem, name: p.name), title: p.name, installedVersion: p.installed,
                                     upgrade: upgrade, severity: p.malicious ? nil : p.severity, advisoryIDs: ["GHSA-x"],
                                     flawCount: 1, exploited: p.exploited, malicious: p.malicious, note: nil, bigIssue: nil, origins: [origin],
-                                    pageURL: SiteURL.packagePage(ecosystem, p.name, version: p.installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                                    pageURL: SiteURL.packagePage(ecosystem, p.name, version: p.installed), advice: UpgradeCommand.advice(inputs),
                                     verification: .none, grade: nil, commandInputs: inputs))
             inventory.append(InstalledPackage(ecosystem: ecosystem, name: p.name, version: p.installed, origin: origin))
         }
@@ -360,7 +360,7 @@ import OSVAKit
             return Finding(id: "pkg|npm|\(name)|1.0.0", group: group, subject: .package(ecosystem: eco, name: name), title: name, installedVersion: "1.0.0",
                            upgrade: upgrade, severity: severity, advisoryIDs: [], flawCount: 1, exploited: exploited,
                            malicious: malicious, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(eco, name, version: "1.0.0"),
-                           upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
+                           advice: UpgradeCommand.advice(inputs), verification: .none, grade: nil, commandInputs: inputs)
         }
         let py = PythonEnvironment(executable: "/opt/homebrew/bin/python3.12", version: "3.12.4", kind: .homebrew, externallyManaged: false,
                                    userSite: nil, formula: "python@3.12")

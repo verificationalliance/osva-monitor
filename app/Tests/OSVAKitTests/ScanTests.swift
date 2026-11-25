@@ -387,7 +387,8 @@ import Testing
         let finding = Finding(id: "x", group: .exploited, subject: .project(slug: "openssh", name: "OpenSSH", installedAs: "openssh"), title: "OpenSSH",
                               installedVersion: "10.6p1", upgrade: Fixture.fix("10.6p2", above: "10.6p1"), severity: .high, advisoryIDs: ["CVE-1"], flawCount: 1,
                               exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [.homebrewFormula(name: "openssh")],
-                              pageURL: SiteURL.projectPage(slug: "openssh"), upgradeCommand: "brew upgrade openssh", verification: .parts, grade: "U")
+                              pageURL: SiteURL.projectPage(slug: "openssh"), advice: UpgradeCommand.advice(for: .homebrewFormula(name: "openssh"), name: "openssh", ecosystem: nil, target: nil, malicious: false),
+                              verification: .parts, grade: "U")
         let report = ScanReport(startedAt: Date(timeIntervalSince1970: 1_800_000_000), finishedAt: Date(timeIntervalSince1970: 1_800_000_060),
                                 inventory: Inventory(), findings: [finding],
                                 sent: SentRecord(requests: [SentRequest(endpoint: "GET api/v1/project", items: ["project openssh"])], withheldCount: 2,

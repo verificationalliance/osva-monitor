@@ -102,7 +102,7 @@ public struct JavaCheck: Sendable {
             installedVersion: r.shownVersion, upgrade: upgrade, severity: d.severity,
             advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
             note: [d.note(showing: JavaVersion.shown), vendorNote, vendor.cleared, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil,
-            origins: [origin], pageURL: page, upgradeCommand: advice.command, verification: mark, grade: grade,
+            origins: [origin], pageURL: page, advice: advice, verification: mark, grade: grade,
             commandInputs: advice.command == nil ? nil : inputs, notChecked: d.notChecked)
     }
 

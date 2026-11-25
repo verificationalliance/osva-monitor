@@ -90,18 +90,20 @@ public struct BatchResponse: Decodable, Sendable {
             }
         }
 
-        public var target: String?
+        /// The version the server plans to upgrade to (`target` on the wire), which the core has not judged: read only by
+        /// BatchCheck, which shows it only when `Core.judge` confirms it (a guard in ClaimsTests holds this name to it).
+        public var unjudgedTarget: String?
         public var fixes: [String]
         public var remaining: [Remaining]
         public var requiresPython: String?
         public var newestInstallable: String?
 
         enum CodingKeys: String, CodingKey {
-            case target, fixes, remaining, requiresPython = "requires_python", newestInstallable = "newest_installable"
+            case unjudgedTarget = "target", fixes, remaining, requiresPython = "requires_python", newestInstallable = "newest_installable"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
-            target = try? c.decodeIfPresent(String.self, forKey: .target)
+            unjudgedTarget = try? c.decodeIfPresent(String.self, forKey: .unjudgedTarget)
             fixes = (try? c.decodeIfPresent([String].self, forKey: .fixes)) ?? []
             remaining = (try? c.decodeIfPresent([Remaining].self, forKey: .remaining)) ?? []
             requiresPython = try? c.decodeIfPresent(String.self, forKey: .requiresPython)
