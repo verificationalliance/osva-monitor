@@ -71,24 +71,23 @@ import Testing
     }
 
     @Test func aBoundaryTheCoreOrdersDifferentlyIsReportedNotDropped() throws {
-        // Where the core's order is not the ecosystem's (Version.lean): semver puts "2.0.0-0" below 2.0.0 and Go a
-        // pseudo-version below its release, the core does not. The flaw is reported, never dropped.
-        let npm = try Self.result("npm", "zero", "2.0.0-0", flaws: [Self.flaw("CVE-Z", ranges: #"[{"fixed":"2.0.0"}]"#, fixedIn: #"["2.0.0"]"#)])
-        let go = try Self.result("Go", "example.com/pseudo", "v1.2.4-0.20191109021931-abcdefabcdef",
-                                 flaws: [Self.flaw("GO-P", ranges: #"[{"fixed":"1.2.4"}]"#, fixedIn: #"["v1.2.4"]"#)])
-        for r in [npm, go] {
-            let c = BatchCheck.read(r, installed: r.version)
-            #expect(c.check == .reported && c.reported.map(\.reason) == [.outsideRanges], "\(r.version)")
-        }
-        let f = Self.findings([npm, go])
-        #expect(f.count == 2 && f.allSatisfy { $0.group == .reported && $0.flawCount == 1 })
-        #expect(f.first { $0.title == "zero" }?.note
-                == "Reported by the site, not checked: the affected ranges it publishes for CVE-Z do not include 2.0.0-0.")
+        // Where the core's order is not the ecosystem's (Version.lean): semver puts a numeric pre-release "2.0.0-1" below
+        // 2.0.0, the core reads the number as continuing the version. The flaw is reported, never dropped.
+        let npm = try Self.result("npm", "numeric", "2.0.0-1", flaws: [Self.flaw("CVE-Z", ranges: #"[{"fixed":"2.0.0"}]"#, fixedIn: #"["2.0.0"]"#)])
+        let c = BatchCheck.read(npm, installed: npm.version)
+        #expect(c.check == .reported && c.reported.map(\.reason) == [.outsideRanges])
+        let f = Self.findings([npm])
+        #expect(f.count == 1 && f.allSatisfy { $0.group == .reported && $0.flawCount == 1 })
+        #expect(f.first?.note == "Reported by the site, not checked: the affected ranges it publishes for CVE-Z do not include 2.0.0-1.")
         // The plan's first examples are ordered as their ecosystems order them since #12: PyPI's 1.0 is 1.0.0, and npm's
-        // canary is below its release. Both are affected.
+        // canary is below its release. Since #17 so are semver's "-0" and Go's pseudo-versions on a "-0." base, below
+        // their release. All are affected.
         let pypi = try Self.result("PyPI", "one", "1.0", flaws: [Self.flaw("CVE-O", ranges: #"[{"introduced":"1.0.0","fixed":"2.0"}]"#)])
         let canary = try Self.result("npm", "next", "15.0.0-canary.12", flaws: [Self.flaw("CVE-C", ranges: #"[{"fixed":"15.0.0"}]"#)])
-        for r in [pypi, canary] { #expect(BatchCheck.read(r, installed: r.version).check == .affected, "\(r.version)") }
+        let zero = try Self.result("npm", "zero", "2.0.0-0", flaws: [Self.flaw("CVE-0", ranges: #"[{"fixed":"2.0.0"}]"#, fixedIn: #"["2.0.0"]"#)])
+        let go = try Self.result("Go", "example.com/pseudo", "v1.2.4-0.20191109021931-abcdefabcdef",
+                                 flaws: [Self.flaw("GO-P", ranges: #"[{"fixed":"1.2.4"}]"#, fixedIn: #"["v1.2.4"]"#)])
+        for r in [pypi, canary, zero, go] { #expect(BatchCheck.read(r, installed: r.version).check == .affected, "\(r.version)") }
     }
 
     @Test func unreadableRangesAreReported() throws {

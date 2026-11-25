@@ -229,6 +229,11 @@ theorem judge_spec {v u : Bytes} {as : List Advisory} {m : List Bool} (h : judge
 #guard judge (bytes "2.4.6-p3") (bytes "2.4.7-p2") [⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩] == some [true]
 #guard verdict (bytes "2.4.7-p1") ⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩ == .inRange
 #guard verdict (bytes "2.4.6-p3") ⟨some [⟨some (bytes "2.4.7-beta1"), some (bytes "2.4.7-p2"), none⟩], []⟩ == .clear
+-- Go's stdlib, CVE-2024-45341: fixed in 1.22.11 and 1.23.5, and the 1.24.0 line closed by [1.24.0-0, 1.24.0-rc.2)
+#guard verdict (bytes "1.24.0-rc.1") ⟨some [⟨none, some (bytes "1.22.11"), none⟩, ⟨some (bytes "1.23.0-0"), some (bytes "1.23.5"), none⟩, ⟨some (bytes "1.24.0-0"), some (bytes "1.24.0-rc.2"), none⟩], []⟩ == .inRange
+#guard verdict (bytes "1.24.0") ⟨some [⟨none, some (bytes "1.22.11"), none⟩, ⟨some (bytes "1.23.0-0"), some (bytes "1.23.5"), none⟩, ⟨some (bytes "1.24.0-0"), some (bytes "1.24.0-rc.2"), none⟩], []⟩ == .clear
+#guard verdict (bytes "1.23.4") ⟨some [⟨none, some (bytes "1.22.11"), none⟩, ⟨some (bytes "1.23.0-0"), some (bytes "1.23.5"), none⟩, ⟨some (bytes "1.24.0-0"), some (bytes "1.24.0-rc.2"), none⟩], []⟩ == .inRange
+#guard verdict (bytes "1.23.5") ⟨some [⟨none, some (bytes "1.22.11"), none⟩, ⟨some (bytes "1.23.0-0"), some (bytes "1.23.5"), none⟩, ⟨some (bytes "1.24.0-0"), some (bytes "1.24.0-rc.2"), none⟩], []⟩ == .clear
 -- Maven, guava fixed in 33.7.2: the core reads "-jre" as semver does, below the release, so it does not call
 -- 33.7.2-jre a fix, where Maven would. Both versions are uncertain, so the app does not decide by the core's order.
 #guard judge (bytes "31.1-jre") (bytes "33.7.2-jre") [⟨some [⟨none, some (bytes "33.7.2"), none⟩], []⟩] == some [false]
