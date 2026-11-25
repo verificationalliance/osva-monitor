@@ -10,6 +10,7 @@
 # OSVA Monitor
 
 [![ci](https://github.com/verificationalliance/osva-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/verificationalliance/osva-monitor/actions/workflows/ci.yml)
+[![Verification Alliance: Code proved](https://verificationalliance.org/api/v1/badge/github.com/verificationalliance/osva-monitor.svg)](https://verificationalliance.org/#/proof/github.com/verificationalliance/osva-monitor)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Your Mac runs a lot of open-source code you never chose by hand. The Electron inside Slack and VS Code. The Python
