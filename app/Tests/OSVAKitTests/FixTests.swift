@@ -667,6 +667,8 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
     final class Later: @unchecked Sendable {
         let lock = NSLock()
         var batch: Data?
+        /// nginx's project record in place of the fixture's.
+        var nginx: Data?
     }
 
     /// The recorded site, except that the batch answer can be changed after the scan.
@@ -679,6 +681,7 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
             case "/api/v1/state": return .init(status: 200, body: Fixture.data("api/state.json"))
             default:
                 let slug = String(path.dropFirst("/api/v1/project/".count))
+                if slug == "nginx", let record = later.lock.withLock({ later.nginx }) { return .init(status: 200, body: record) }
                 return (try? Data(contentsOf: Fixture.url("api/project-\(slug).json"))).map { .init(status: 200, body: $0) } ?? .init(status: 404, body: Data())
             }
         }
@@ -696,8 +699,19 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         return (scanner, runner, transport, later)
     }
 
+    /// nginx's recorded advisories without those that state nothing (13 of them, five critical, which no version
+    /// leaves: `aRecheckIsNeverFixedOverAnUrgentAdvisoryThatStatesNothing`).
+    static var nginxStating: Data {
+        var json = try! JSONSerialization.jsonObject(with: Fixture.data("api/project-nginx.json")) as! [String: Any]
+        json["recent"] = (json["recent"] as! [[String: Any]]).filter { a in
+            !((a["ranges"] as? [Any])?.isEmpty ?? true) || !((a["fixed_hint"] as? [Any])?.isEmpty ?? true)
+        }
+        return try! JSONSerialization.data(withJSONObject: json)
+    }
+
     @Test func aHomebrewUpgradeThatReachedTheFixIsFixed() async throws {
-        let (scanner, runner, transport, _) = setUp()
+        let (scanner, runner, transport, later) = setUp()
+        later.lock.withLock { later.nginx = Self.nginxStating }
         let report = await scanner.scan()
         let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
         let asked = transport.requests.count
@@ -720,6 +734,21 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
         #expect(now.id == "brew|nginx|1.30.5" && now.fixedVersion == "1.30.7" && now.group == .likely)
         #expect(updated.findings.filter { $0.title == "nginx" }.map(\.id) == ["brew|nginx|1.30.5"])
+    }
+
+    /// An upgrade that leaves every advisory with published ranges is not "fixed" while an urgent one states nothing.
+    @Test func aRecheckIsNeverFixedOverAnUrgentAdvisoryThatStatesNothing() async throws {
+        let (scanner, runner, _, later) = setUp()
+        later.lock.withLock {
+            later.nginx = Data(#"{"slug":"nginx","name":"nginx","recent":[{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.30.7"}]},{"id":"CVE-S","sev":"CRITICAL","ranges":null}]}"#.utf8)
+        }
+        let report = await scanner.scan()
+        let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
+        #expect(nginx.group == .criticalHigh && nginx.notChecked?.id == "CVE-S")
+        runner.set(Self.brewKey, Self.nginx("1.30.7_1"))
+        let (_, outcome) = await scanner.recheck(nginx, in: report)
+        guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
+        #expect(now.group == .reported && now.notChecked?.id == "CVE-S" && now.fixedVersion == nil)
     }
 
     @Test func aPackageIsAskedAboutAloneAndAfresh() async throws {

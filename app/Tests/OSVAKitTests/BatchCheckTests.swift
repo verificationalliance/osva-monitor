@@ -36,7 +36,7 @@ import Testing
     /// The findings FindingBuilder makes of these answers, each package installed once: with npm (global) or pip, or
     /// where `origin` says.
     static func findings(_ results: [BatchResponse.Result], index: PublicIndex? = nil, bigIssues: [StateResponse.BigIssue] = [],
-                         origin: ((BatchResponse.Result) -> Origin)? = nil) -> [Finding] {
+                         projects: [String: ProjectResponse] = [:], origin: ((BatchResponse.Result) -> Origin)? = nil) -> [Finding] {
         let index = index ?? PublicIndex(generatedAt: "T", packages: results.map { (Ecosystem($0.ecosystem), $0.name) }, projects: [])
         let installed = results.map { r in
             InstalledPackage(ecosystem: Ecosystem(r.ecosystem), name: r.name, version: r.version,
@@ -47,7 +47,7 @@ import Testing
         let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in
             results.first { $0.name == a.name && $0.version == a.version }.map { (a, $0) }
         })
-        return FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: bigIssues)
+        return FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: projects, bigIssues: bigIssues)
     }
 
     static let oauthlib = flaw("CVE-2026-49264", ranges: #"[{"introduced":"0.6.1","fixed":"4.0.0"}]"#, fixedIn: #"["4.0.0"]"#)
@@ -566,5 +566,31 @@ extension BatchCheckTests {
         let many = try made((0..<500).map { "29.\($0)" })
         #expect(many.fixedVersion == nil && many.upgradeCommand == nil && many.commandInputs == nil)
         #expect(many.note == "Likely affected: the site publishes no affected ranges. No checked fixed version yet; see the site.")
+    }
+
+    /// MK: an item the electron project's published ranges hold promotes the app's batch finding, with the item's version
+    /// and sentence.
+    @Test func anElectronItemTheRangesHoldPromotesTheAppsFinding() throws {
+        let issue = try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data(#"""
+            {"name":"Electron","slug":"electron","severity":"CRITICAL","exploited":true,"date":"2026-11-01","ids":["CVE-EL"],
+             "fixed_in":["28.3.2"],"title":"Electron's renderer escapes"}
+            """#.utf8))
+        let record = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
+            {"slug":"electron","name":"Electron","recent":[{"id":"CVE-EL","sev":"HIGH","ranges":[{"introduced":"28.0.0","fixed":"28.3.2"}]}]}
+            """#.utf8))
+        let app = Origin.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack")
+        let reported = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-EL", severity: "HIGH")], plan: Self.plan("28.3.2"))
+        let f = try #require(Self.findings([reported], index: Fixture.index, bigIssues: [issue], projects: ["electron": record]) { _ in app }.first)
+        #expect(f.group == .exploited && f.exploited && f.severity == .critical && f.flawCount == 1 && f.bigIssue != nil)
+        #expect(f.fixedVersion == "28.3.2" && f.upgradeCommand == "brew upgrade --cask slack")
+        #expect(f.note?.hasPrefix("The issuer lists 28.1.0 as affected and 28.3.2 as fixed.") == true)
+        // a likely finding's version (28.2.0) that the item's range still holds gives way to the item's
+        let likely = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-L", fixedIn: #"["28.2.0"]"#)], plan: Self.plan("28.2.0"))
+        let g = try #require(Self.findings([likely], index: Fixture.index, bigIssues: [issue], projects: ["electron": record]) { _ in app }.first)
+        #expect(g.group == .exploited && g.fixedVersion == "28.3.2" && g.flawCount == 1 && g.upgradeCommand == "brew upgrade --cask slack")
+        #expect(g.note == "The issuer lists 28.1.0 as affected and 28.3.2 as fixed. 1 more flaw without published ranges likely affects it too.")
+        // without the project's record, the item decides by its first fixed versions: marked, never promoted
+        let marked = try #require(Self.findings([reported], index: Fixture.index, bigIssues: [issue]) { _ in app }.first)
+        #expect(marked.group == .reported && marked.fixedVersion == nil && marked.notChecked?.exploited == true)
     }
 }

@@ -18,16 +18,19 @@ import Testing
         #expect(finding.group == .likely)                             // the record publishes no ranges: never counted
         #expect(finding.severity == .critical)
         #expect(finding.fixedVersion == "1.30.7")                    // the fix on its own branch, not the newest branch's
-        #expect(finding.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed.")
+        // 13 of nginx's weighed advisories state nothing: counted, and the most urgent of them named
+        #expect(finding.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed. 13 more advisories state no affected versions; not checked, among them CVE-2026-42533, critical.")
+        #expect(finding.notChecked == Finding.NotChecked(id: "CVE-2026-121810", exploited: false, critical: true))   // a likely one, first
         #expect(finding.upgradeCommand == "brew upgrade nginx")
         #expect(finding.pageURL.absoluteString == "https://verificationalliance.org/#/project/nginx")
         #expect(finding.originSummary == "Homebrew nginx")
     }
 
     @Test func atItsBranchFixItIsNot() {
+        // nothing affects or likely affects 1.30.7; only the record's critical advisories that state nothing are reported
         let f = FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [brew("nginx", "1.30.7", "nginx")],
                                                       projects: ["nginx": nginx], bigIssues: [])
-        #expect(f.isEmpty)
+        #expect(f.map(\.group) == [.reported] && f.first?.fixedVersion == nil && f.first?.upgradeCommand == nil && f.first?.flawCount == 5)
     }
 
     @Test func patchTheseFirstMarksWhatItCannotCheck() throws {

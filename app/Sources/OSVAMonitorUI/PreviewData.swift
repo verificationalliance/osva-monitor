@@ -8,7 +8,8 @@ public enum PreviewData {
 
     /// `make`'s result, made off the main thread and waited for. Fixtures built as a scan builds its findings ask the core
     /// for upgrades and judgements, which must not run on the main thread (Core.swift), and osva-render and the previews
-    /// first read them there.
+    /// first read them there. `make` must not need a fixture that is still being built: when the main thread is in a
+    /// fixture's first read (a `static let`) and `make` reads that same fixture, the two wait for each other forever.
     static func offMain<T: Sendable>(_ make: @escaping @Sendable () -> T) -> T {
         guard Thread.isMainThread else { return make() }
         let box = MadeOffMain<T>(), done = DispatchSemaphore(value: 0)

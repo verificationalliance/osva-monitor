@@ -116,7 +116,9 @@ import SwiftUI
     /// osva-render first reads the Java fixture on the main thread, and JavaCheck asks the core for upgrades, which must
     /// not run there: the fixture is built off it.
     @MainActor @Test func theJavaFixtureIsBuiltOffTheMainThread() {
+        // made again here, from the main thread, whichever test read the fixture first
         #expect(Thread.isMainThread)
+        #expect(PreviewData.makeJavaFindings().map(\.id) == PreviewData.javaFindings.map(\.id))
         #expect(PreviewData.javaFindings.contains { $0.id == PreviewData.JavaID.temurin })
     }
 
