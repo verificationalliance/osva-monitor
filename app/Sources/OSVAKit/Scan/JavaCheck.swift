@@ -115,7 +115,10 @@ public struct JavaCheck: Sendable {
     /// A vendor's build as the fix, as the core judges it from the runtime's version (Decide.lean `judge_spec`) against
     /// the weighed advisories the vendor's build does not already fix: above the version, clear of at least one advisory
     /// the row is shown for, and inside the published ranges of no other one (as the core's own upgrades never are).
-    /// With the advisories the row is shown for that it does not leave. Nil otherwise. Call it off the main thread.
+    /// Project and product records name no platform per advisory (the server's ADVISORY_KEYS), so every weighed one
+    /// applies to this Mac's runtime; a flaw of another platform is told apart only on the exact-version path
+    /// (BatchCheck.unflagged). With the advisories the row is shown for that it does not leave. Nil otherwise. Call it
+    /// off the main thread.
     static func vendorUpgrade(_ build: String, from installed: String, _ kept: [ProjectResponse.Advisory],
                               shownFor d: AdvisoryCheck) -> (upgrade: CheckedUpgrade, notFixed: [ProjectResponse.Advisory])? {
         guard FixSafety.isSafeVersion(build) else { return nil }

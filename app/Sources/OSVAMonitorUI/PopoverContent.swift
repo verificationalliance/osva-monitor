@@ -9,7 +9,9 @@ public struct PopoverContent: Sendable {
         public var group: Finding.Group
         /// Its rows: the findings, and those fixed since the last full scan, each where it was.
         public var findings: [Finding]
-        /// How many still stand (the heading's number): fixed rows are shown, not counted.
+        /// How many still stand (the heading's number): fixed rows are shown, not counted, and so are rows listed with
+        /// nothing to do on this Mac (outside their published ranges, or of another platform), which the hero's
+        /// "lower-severity findings" does not count either.
         public var count: Int
         public var id: Int { group.rawValue }
     }
@@ -95,7 +97,7 @@ public struct PopoverContent: Sendable {
         let shown = findings + resolved.filter { !standing.contains($0.id) }
         sections = Finding.Group.sections.compactMap { g in
             let items = FindingOrder.sorted(shown.filter { $0.group.section == g })  // each app's findings together
-            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) }.count)
+            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) && !$0.affectsNothingHere }.count)
         }
         actionCount = report?.actionCount ?? 0
         problem = report?.problems.first

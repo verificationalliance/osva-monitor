@@ -85,18 +85,21 @@ struct BatchCheck: Sendable {
     /// asked about these, with every one flagged.
     let flagged: [BatchResponse.Flaw]
     private let advisories: [CoreAdvisory]
-    /// Every other flaw with published ranges the app can read, in the answer's order: the installed version lies
-    /// outside them (or is one whose order the core may not share with the ecosystem). `upgrade` and `judge` are asked
-    /// about these too, none flagged: a version that lands inside any of them is never the upgrade, as the core's own
-    /// upgrades (AdvisoryCheck) never are.
+    /// Every other flaw with published ranges the app can read that applies where the package runs (not another
+    /// platform's, for software on this Mac), in the answer's order: the installed version lies outside them (or is one
+    /// whose order the core may not share with the ecosystem). `upgrade` and `judge` are asked about these too, none
+    /// flagged: a version that lands inside any of them is never the upgrade, as the core's own upgrades (AdvisoryCheck)
+    /// never are.
     let unflagged: [BatchResponse.Flaw]
     private let others: [CoreAdvisory]
 
     /// The finding's state: affected when any flaw is, else likely when any flaw is, else reported.
     var check: Finding.Check { !affected.isEmpty ? .affected : !likely.isEmpty ? .likely : .reported }
 
-    /// Reads the answer for `installed` (the version asked about).
-    static func read(_ verdict: BatchResponse.Result, installed: String) -> BatchCheck {
+    /// Reads the answer for `installed` (the version asked about). `onThisMac`: the package runs on this Mac (installed
+    /// software), so a flaw of another platform cannot block its upgrade; false for a project folder's dependencies,
+    /// which run wherever the project is deployed.
+    static func read(_ verdict: BatchResponse.Result, installed: String, onThisMac: Bool = true) -> BatchCheck {
         let core = Core.shared
         let ecosystem = Ecosystem(verdict.ecosystem)
         let orderMayDiffer = ecosystem == .maven || ecosystem == .packagist
@@ -136,9 +139,11 @@ struct BatchCheck: Sendable {
             }
         }
 
-        // Every other flaw with published ranges: a suggested version must land inside none of them.
+        // Every other flaw with published ranges that applies where the package runs: a suggested version must land
+        // inside none of them. A Windows-only flaw's range never blocks an upgrade of software on this Mac.
         var unflagged: [BatchResponse.Flaw] = [], others: [CoreAdvisory] = []
-        for r in reported { if let a = r.flaw.coreAdvisory, !(a.ranges ?? []).isEmpty { unflagged.append(r.flaw); others.append(a) } }   // claims-mutant: flagged-only-judge
+        let applies = { (f: BatchResponse.Flaw) in !onThisMac || f.affectsThisMac }   // claims-mutant: elsewhere-range-blocks
+        for r in reported where applies(r.flaw) { if let a = r.flaw.coreAdvisory, !(a.ranges ?? []).isEmpty { unflagged.append(r.flaw); others.append(a) } }   // claims-mutant: flagged-only-judge
 
         // The server's target, judged against every affected and likely flaw (one leaves[i] per flagged[i]) and every
         // other flaw with published ranges, which it must leave too.

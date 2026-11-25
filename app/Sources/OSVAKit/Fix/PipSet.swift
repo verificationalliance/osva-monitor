@@ -182,7 +182,7 @@ public enum PipSetGuard {
             return "pip's set would not update \(package) to \(fix) or later"
         }
         guard let answer = known[PackageVersion(name: package, version: installed)] else { return nil }
-        let check = BatchCheck.read(answer, installed: installed)
+        let check = BatchCheck.read(answer, installed: installed, onThisMac: true)
         let byFix = check.judge(fix)?.leaves ?? [], byOwn = check.judge(own)?.leaves ?? []
         let kept = byFix.indices.allSatisfy { !byFix[$0] || (byOwn.indices.contains($0) && byOwn[$0]) }
         return kept ? nil : "pip's set would install \(package) \(own), which the core does not confirm fixes what \(fix) fixes"

@@ -110,7 +110,7 @@ extension FindingBuilder {
     /// The same reading of an answer as `packageFindings` (BatchCheck, `state`): what affects this Mac, how serious, and
     /// the server's version only as the core confirmed it. Programs are installed software: macOS.
     func component(_ package: ApprovedPackage, _ verdict: BatchResponse.Result, name: String, own: Bool) -> Component {
-        let check = BatchCheck.read(verdict, installed: package.version)
+        let check = BatchCheck.read(verdict, installed: package.version, onThisMac: true)
         let state = Self.state(verdict, check, onThisMac: true, program: true)
         let upgrade = state.malicious || state.onlyElsewhere || state.check == .reported ? nil : check.upgrade(for: state.here)
         let unresolved = state.malicious

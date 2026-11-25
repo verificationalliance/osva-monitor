@@ -64,7 +64,15 @@ import Testing
 
     /// One finding, with what the claims are read against: the ranges published for the advisories it can name (by id
     /// and alias) and each id's aliases. `kind` says how the app made it.
-    struct Checked { var kind: String; var finding: Finding; var ranges: [String: [AffectedRange]]; var same: [String: Set<String>] }
+    struct Checked {
+        var kind: String; var finding: Finding; var ranges: [String: [AffectedRange]]; var same: [String: Set<String>]
+        /// The ids of flaws of another platform than this Mac's (an exact-version answer's `platform`): their ranges
+        /// never block a version suggested for software on this Mac.
+        var elsewhere: Set<String> = []
+    }
+
+    /// The ids of these flaws that are another platform's.
+    static func elsewhere(_ flaws: [BatchResponse.Flaw]) -> Set<String> { Set(flaws.filter { !$0.affectsThisMac }.flatMap { [$0.id] + $0.aliases }) }
 
     static func reading(_ flaws: [BatchResponse.Flaw]) -> (ranges: [String: [AffectedRange]], same: [String: Set<String>]) {
         var ranges: [String: [AffectedRange]] = [:], same: [String: Set<String>] = [:]
@@ -107,7 +115,7 @@ import Testing
                       let r = results.first(where: { $0.ecosystem == eco.rawValue && $0.name == name && $0.version == f.installedVersion })
                 else { missed.append(f.id); continue }
                 let (ranges, same) = reading(r.flaws)
-                out.append(Checked(kind: "package", finding: f, ranges: ranges, same: same))
+                out.append(Checked(kind: "package", finding: f, ranges: ranges, same: same, elsewhere: elsewhere(r.flaws)))
             }
         }
         // programs and tools: a row shows its worst part, its version as people write it ("0.23.0" for "v0.23.0")
@@ -127,7 +135,7 @@ import Testing
                 $0.ecosystem == eco.rawValue && $0.name == name && FindingBuilder.Component.shown($0.version) == f.installedVersion
             }) else { missed.append(f.id); continue }
             let (ranges, same) = reading(r.flaws)
-            out.append(Checked(kind: "program", finding: f, ranges: ranges, same: same))
+            out.append(Checked(kind: "program", finding: f, ranges: ranges, same: same, elsewhere: elsewhere(r.flaws)))
         }
         // Homebrew formulae decided by their projects' records
         let postgres = try! JSONDecoder().decode(ProjectResponse.self, from: Fixture.data("api/project-postgres.json"))
@@ -270,8 +278,9 @@ import Testing
 
     /// "Every version it suggests upgrading to is newer than yours and lies outside the published ranges of every
     /// advisory it says that version fixes": the advisories whose ranges hold the installed version, less those the
-    /// finding lists as not fixed. And for a package checked by exact version (ruling 8), it lands inside none of the
-    /// published ranges the installed version is outside of: the core's own upgrades never do (`upgradeFor_leaves`).
+    /// finding lists as not fixed. And for a package checked by exact version (ruling 8, as corrected), it lands inside
+    /// none of the published ranges the installed version is outside of that apply to this Mac: the core's own upgrades
+    /// never do (`upgradeFor_leaves`). A Windows-only flaw's range does not block it (`windows-range-target`).
     @Test func everyNamedVersionLeavesTheAdvisoriesItFixes() {
         let named = Self.checked.filter { $0.finding.fixedVersion != nil && !$0.finding.malicious }
         #expect(named.count >= 20, "the sample names versions to check")
@@ -285,11 +294,14 @@ import Testing
                 #expect(!rs.contains { RangesTests.holds($0, fixed) }, "\(c.kind) \(f.id): \(fixed) lies inside \(id)'s published ranges")
             }
             guard c.kind == "package" || c.kind == "program" else { continue }
-            for (id, rs) in c.ranges.sorted(by: { $0.key < $1.key }) where !notFixed.contains(id) && !rs.isEmpty && !rs.contains(where: { RangesTests.holds($0, installed) }) {
+            for (id, rs) in c.ranges.sorted(by: { $0.key < $1.key })
+            where !notFixed.contains(id) && !c.elsewhere.contains(id) && !rs.isEmpty && !rs.contains(where: { RangesTests.holds($0, installed) }) {
                 #expect(!rs.contains { RangesTests.holds($0, fixed) }, "\(c.kind) \(f.id): \(fixed) lands inside \(id)'s published ranges, which \(installed) is outside of")
             }
         }
         #expect(Self.package("lands-inside").fixedVersion == nil, "the claims fixture's lands-inside names a version inside GHSA-land-b")
+        #expect(Self.package("windows-range-target").fixedVersion == "2.0.0",
+                "the claims fixture's windows-range-target is refused for a Windows-only flaw's range, on a Mac")
     }
 
     /// A flaw's "Fixed in X, not by this upgrade" is held to what a named version is: above the installed version, and
@@ -312,6 +324,11 @@ import Testing
         }
         #expect(named >= 2, "the sample names fixed-in versions to check")
         #expect(Self.package("unfixed-fixed-in").unresolved.map(\.id) == ["GHSA-uf-b"], "the claims fixture's unfixed-fixed-in lists its flaw")
+        // a flaw with a range per release branch: its "Fixed in" is the fix on the installed version's branch, never the
+        // first one it names (1.4.2, below 2.5.0)
+        let branches = Self.package("multi-branch")
+        #expect(branches.fixedVersion == "2.5.5" && branches.unresolved.map(\.id) == ["GHSA-mb"] && branches.unresolved.map(\.fixedIn) == ["2.6.1"],
+                "the claims fixture's multi-branch: \(branches.unresolved.map { "\($0.id) \($0.fixedIn ?? "-")" })")
         #expect(Self.package("malicious-remaining").unresolved.map(\.id) == ["GHSA-mr"], "the claims fixture's malicious-remaining lists its flaw")
     }
 
@@ -417,6 +434,25 @@ import Testing
         #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])unjudgedTarget(?![A-Za-z0-9_])/, except: { path, _ in
             path == "OSVAKit/Scan/BatchCheck.swift" || path == "OSVAKit/API/Responses.swift"
         }) == [])
+    }
+
+    /// A published range's bounds, and an advisory's ranges and first fixed versions, are constants: no code can take a
+    /// range the site published, move its `fixed`, and ask the core to approve the result. Neither type has a `var` bound
+    /// or a mutating method, and nothing extends either outside Core.swift (an extension could rebuild one; making one
+    /// is held to the answers' readers by `onlyCoreSwiftBuildsACheckedUpgrade`).
+    @Test func publishedRangesAreConstants() throws {
+        let core = try #require(Self.code("OSVAKit/Core.swift"))
+        let types = Self.declarations(core).filter { $0.keyword == "struct" && ($0.name == "AffectedRange" || $0.name == "CoreAdvisory") }
+        #expect(types.map(\.name).sorted() == ["AffectedRange", "CoreAdvisory"])
+        for t in types {
+            #expect(!t.body.contains(/(?:^|[^A-Za-z0-9_])var\s+`?(?:introduced|fixed|lastAffected|ranges)`?(?![A-Za-z0-9_])/), "\(t.name) has a settable field")
+            #expect(!t.body.contains(/(?:^|[^A-Za-z0-9_])mutating(?![A-Za-z0-9_])/), "\(t.name) has a mutating method")
+        }
+        for line in ["public let introduced: String?", "public let fixed: String?", "public let lastAffected: String?",
+                     "public let ranges: [AffectedRange]?", "public let fixed: [String]"] {
+            #expect(core.contains(line), "Core.swift: \(line)")
+        }
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_])extension\s+(?:OSVAKit\s*\.\s*)?(?:AffectedRange|CoreAdvisory)(?![A-Za-z0-9_])/) == [])
     }
 
     /// Nothing writes a finding's version to upgrade to, its command, or a command's version, but from a `CheckedUpgrade`

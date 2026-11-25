@@ -140,7 +140,7 @@ public struct FixAdvisor: Sendable {
     /// its target only when the core confirms it leaves at least one flaw the finding is shown for (affected, or likely,
     /// on this Mac), how many of those it leaves, and of how many. Nil otherwise. Call it off the main thread.
     static func partial(_ answer: BatchResponse.Result, finding: Finding) -> (target: CheckedUpgrade, fixes: Int, of: Int)? {
-        let check = BatchCheck.read(answer, installed: finding.installedVersion)
+        let check = BatchCheck.read(answer, installed: finding.installedVersion, onThisMac: true)
         let state = FindingBuilder.state(answer, check, onThisMac: true)
         guard state.check == .affected || state.check == .likely, !state.onlyElsewhere, let target = check.upgrade(for: state.here) else { return nil }
         let fixes = check.fixed.filter(state.here.contains).count

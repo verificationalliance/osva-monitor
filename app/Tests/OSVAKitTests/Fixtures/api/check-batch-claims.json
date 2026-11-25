@@ -1,4 +1,4 @@
-{"checked":10,"packages":[
+{"checked":12,"packages":[
  {"ecosystem":"npm","name":"likely-pkg","version":"1.31.5","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-likely"],"exploited":[],
   "flaws":[{"id":"GHSA-likely","severity":"HIGH","summary":"No published ranges; first fixed 1.30.7 and 1.31.9","fixed_in":["1.30.7","1.31.9"],"ranges":null,"ranges_note":"no exact ranges"}],
   "plan":{"target":"1.31.9","fixes":["GHSA-likely"],"remaining":[]}},
@@ -28,6 +28,14 @@
  {"ecosystem":"npm","name":"likely-unconfirmed","version":"1.31.5","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-likely-u"],"exploited":[],
   "flaws":[{"id":"GHSA-likely-u","severity":"HIGH","summary":"No published ranges; first fixed 1.30.7 and 1.31.9","fixed_in":["1.30.7","1.31.9"],"ranges":null,"ranges_note":"no exact ranges"}],
   "plan":{"target":"1.31.6","fixes":["GHSA-likely-u"],"remaining":[]}},
+ {"ecosystem":"npm","name":"windows-range-target","version":"1.0.0","malicious":false,"distinct_flaws":2,"worst_severity":"HIGH","advisories":["GHSA-wr-a","GHSA-wr-w"],"exploited":[],
+  "flaws":[{"id":"GHSA-wr-a","severity":"HIGH","summary":"Fixed in 2.0.0","fixed_in":["2.0.0"],"ranges":[{"fixed":"2.0.0"}]},
+           {"id":"GHSA-wr-w","severity":"HIGH","summary":"Windows only, from 2.0.0 to 2.1.0","fixed_in":["2.1.0"],"ranges":[{"introduced":"2.0.0","fixed":"2.1.0"}],"platform":"windows"}],
+  "plan":{"target":"2.0.0","fixes":["GHSA-wr-a"],"remaining":[]}},
+ {"ecosystem":"npm","name":"multi-branch","version":"2.5.0","malicious":false,"distinct_flaws":2,"worst_severity":"HIGH","advisories":["GHSA-mb-a","GHSA-mb"],"exploited":[],
+  "flaws":[{"id":"GHSA-mb-a","severity":"HIGH","summary":"Fixed in 2.5.5","fixed_in":["2.5.5"],"ranges":[{"fixed":"2.5.5"}]},
+           {"id":"GHSA-mb","severity":"HIGH","summary":"Fixed in 1.4.2 on the 1.x line and 2.6.1 on 2.x","fixed_in":["1.4.2","2.6.1"],"ranges":[{"fixed":"1.4.2"},{"introduced":"2.0.0","fixed":"2.6.1"}]}],
+  "plan":{"target":"2.5.5","fixes":["GHSA-mb-a"],"remaining":[{"id":"GHSA-mb","fixed_in":"2.6.1","reason":"unknown","detail":null}]}},
  {"ecosystem":"npm","name":"malicious-remaining","version":"1.0.0","malicious":true,"distinct_flaws":2,"worst_severity":"CRITICAL","advisories":["MAL-2026-1","GHSA-mr"],"exploited":[],
   "flaws":[{"id":"MAL-2026-1","severity":"CRITICAL","summary":"Malicious code in malicious-remaining","fixed_in":[],"ranges":null,"ranges_note":"a malicious-package record","malicious":true},
            {"id":"GHSA-mr","severity":"HIGH","summary":"Fixed in 2.0.0","fixed_in":["2.0.0"],"ranges":[{"fixed":"2.0.0"}]}],
