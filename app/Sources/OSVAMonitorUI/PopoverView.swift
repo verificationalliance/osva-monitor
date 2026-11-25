@@ -215,14 +215,14 @@ struct QuietCoverageSection: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 // the headings' plate width, so this line's words start where theirs do
-                Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)
+                Image(systemName: symbol).foregroundStyle(Ink.subline.color).frame(width: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).foregroundStyle(.secondary)
-                    Text(caption).font(Typeface.caption).foregroundStyle(.secondary)
+                    Text(title).foregroundStyle(Ink.subline.color)
+                    Text(caption).font(Typeface.caption).foregroundStyle(Ink.subline.color)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.subline.color)
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .font(Typeface.small)

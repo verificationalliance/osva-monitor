@@ -261,7 +261,7 @@ import OSVAKit
         let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
         #expect(views.contains("GlyphPlate(size: 38, width: 42, plate: content.isScanning ? .none : content.hero.plate, alignment: .leading) {"))
         // and the quiet coverage lines keep the plates' width, so every heading's words start at one x
-        #expect(views.contains("Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)"))
+        #expect(views.contains("Image(systemName: symbol).foregroundStyle(Ink.subline.color).frame(width: 20)"))
         let plates = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
         #expect(plates.contains("GlyphPlate(size: 20, plate: heading.plate) { glyph.font(.system(size: 12, weight: .semibold)) }"))
         #expect(plates.contains("        chip.lineLimit(1).fixedSize()"))
@@ -283,12 +283,15 @@ import OSVAKit
         }
     }
 
-    /// The hero's quiet lines are drawn in their tones (ToneTests), and its caveat on its plate: never `.secondary` or
-    /// `.tertiary` on the bare glass, which measured under 3:1 over grey.
+    /// The hero's quiet lines and the quiet coverage lines under the groups are drawn in their tones (ToneTests), and the
+    /// caveat on its plate: never `.secondary` or `.tertiary` on the bare glass, which measured under 3:1 over grey.
     @Test func theHerosQuietLinesUseTheirTones() {
         let views = Self.sources("OSVAMonitorUI").first { $0.0 == "PopoverView.swift" }!.1
         let hero = views.components(separatedBy: "struct HeroView")[1].components(separatedBy: "@ViewBuilder private var shield")[0]
-        #expect(!hero.contains(".foregroundStyle(.secondary)") && !hero.contains(".foregroundStyle(.tertiary)"))
+        let quiet = views.components(separatedBy: "struct QuietCoverageSection")[1].components(separatedBy: "\nstruct ")[0]
+        for (name, body) in [("the hero", hero), ("a quiet coverage line", quiet)] {
+            #expect(!body.contains(".foregroundStyle(.secondary)") && !body.contains(".foregroundStyle(.tertiary)"), "\(name) is drawn in a system shade")
+        }
         #expect(hero.contains("Text(content.subline).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)") && hero.contains("HeroCaveat(text: caveat)"))
         #expect(views.contains("Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)"))
         let components = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
