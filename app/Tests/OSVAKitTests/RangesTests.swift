@@ -98,7 +98,10 @@ import Testing
          {"id":"G","ranges":[{"fixed":null}]},
          {"id":"H","ranges":[{"fixed":2}]},
          {"id":"I","ranges":[{}]},
-         {"id":"J","ranges":[{"introduced":"1.0","fixed":"1.2"},"1.3"]}]}
+         {"id":"J","ranges":[{"introduced":"1.0","fixed":"1.2"},"1.3"]},
+         {"id":"K","fixed_hint":"1.2","ranges":[{"fixed":"1.2"}]},
+         {"id":"L","fixed_hint":["1.2",3]},
+         {"id":"M","fixed_hint":null,"ranges":[{"fixed":"1.2"}]}]}
         """#
         let p = try JSONDecoder().decode(ProjectResponse.self, from: Data(json.utf8))
         #expect(p.recent[0].ranges == [AffectedRange(introduced: "1.0", fixed: "1.2"), AffectedRange(lastAffected: "0.9")])
@@ -114,9 +117,15 @@ import Testing
         #expect(p.recent[5].coreAdvisory == nil && p.recent[8].coreAdvisory == CoreAdvisory(ranges: [AffectedRange()], fixed: []))
         #expect(p.recent[0].coreAdvisory == CoreAdvisory(ranges: p.recent[0].ranges, fixed: ["1.2"]))
         #expect(p.recent[1].coreAdvisory == CoreAdvisory(ranges: nil, fixed: ["3"]))
+        // first fixed versions read as strictly: a list that does not read is unreadable, never []
+        #expect(p.recent[0...9].allSatisfy { !$0.fixedHintUnreadable })
+        #expect(p.recent[10].fixedHintUnreadable && p.recent[10].fixedHint == [] && p.recent[10].coreAdvisory == nil)
+        #expect(p.recent[11].fixedHintUnreadable && p.recent[11].coreAdvisory == nil)
+        #expect(!p.recent[12].fixedHintUnreadable && p.recent[12].coreAdvisory == CoreAdvisory(ranges: [AffectedRange(fixed: "1.2")], fixed: []))
         let again = try JSONDecoder().decode(ProjectResponse.self, from: JSONEncoder().encode(p))     // the cache's copy
         #expect(again.recent == p.recent)
-        #expect(again.recent.map(\.rangesUnreadable) == [false, false, false, false, true, true, true, true, false, true])
+        #expect(again.recent.map(\.rangesUnreadable) == [false, false, false, false, true, true, true, true, false, true, false, false, false])
+        #expect(again.recent.map(\.fixedHintUnreadable) == [false, false, false, false, false, false, false, false, false, false, true, true, false])
     }
 
     @Test func aRangeReadsOnlyItsThreeBoundsAsStrings() throws {
@@ -124,7 +133,7 @@ import Testing
         #expect(range(#"{"introduced":"1.0","fixed":"2.0","last_affected":"1.9"}"#) == AffectedRange(introduced: "1.0", fixed: "2.0", lastAffected: "1.9"))
         #expect(range(#"{"introduced":""}"#) == AffectedRange(introduced: ""))          // a present bound, even empty
         #expect(range("{}") == AffectedRange())
-        for bad in [#"{"introduced":"1.0","limit":"2.0"}"#, #"{"fixed":null}"#, #"{"fixed":2}"#, #"{"lastAffected":"1.0"}"#,
+        for bad in [#"{"introduced":"1.0","limit":"2.0"}"#, #"{"fixed":null}"#, #"{"fixed":2}"#, #"{"fixed":true}"#, #"{"lastAffected":"1.0"}"#,
                     #"{"introduced":["1.0"]}"#, #""1.0""#, "null", "[]"] {
             #expect(range(bad) == nil, "\(bad)")
         }

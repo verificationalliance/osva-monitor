@@ -19,10 +19,12 @@ import OSVACore
 ///   - every path component and query value of the URLs SiteURL builds (`percentEncode`).
 ///
 /// For one package's advisories at a time, the core also decides what each says about a version (`verdicts`: inside a
-/// published range, likely affected by its first fixed versions, or neither), the upgrade that leaves every one of them
-/// (`upgrade(from:advisories:)`), and which of them an upgrade it did not pick leaves (`judge`). Only these make a
-/// `CheckedUpgrade`. `versionUncertain` names the versions whose order Maven or Composer may not share. The scan and fix
-/// paths do not ask them yet: until they do, the paths below decide as they say.
+/// published range, likely affected by its first fixed versions, or outside with evidence; this wrapper marks
+/// `.unstated` an advisory that states nothing to decide by, which is "reported, not checked"), the upgrade that leaves
+/// every one of them (`upgrade(from:advisories:)`, refused past a measured amount of work), and which of them an upgrade
+/// it did not pick leaves (`judge`). Only these make a `CheckedUpgrade` or a `Judgement`. `versionUncertain` names the
+/// versions whose order Maven or Composer may not share. The scan and fix paths do not ask them yet: until they do, the
+/// paths below decide as they say.
 ///
 /// The rest is not the core's:
 ///   - Packages checked by exact version (`api/v1/check/batch`: registry packages, project folders' lockfiles, the
@@ -143,29 +145,84 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
     public func versionUncertain(_ version: String) -> Bool {
         let bytes = Array(version.utf8)
         let answer = queue.sync { withBytes(bytes) { p, n in osva_version_uncertain(p, n) } }
-        precondition(answer >= 0, "The verified core refused a version (osva_version_uncertain returned \(answer)).")
+        precondition(answer == 0 || answer == 1, "The verified core refused a version (osva_version_uncertain returned \(answer)).")
         return answer == 1
     }
 
     // MARK: Advisories, and the upgrades that leave them (Decide.lean)
 
-    /// What one advisory says about an installed version (osva_verdicts).
-    public enum Verdict: UInt8, Sendable {
-        /// Not inside a published range, or not affected by the first fixed versions. Never evidence of a fix: an
-        /// advisory that states neither is `.clear` for every version. Ask `judge` whether a version fixes it.
-        case clear = 0
+    /// What one advisory says about an installed version.
+    public enum Verdict: Sendable, Hashable {
+        /// Outside, with evidence: the version lies in none of the advisory's published ranges or, when it publishes
+        /// none, its first fixed versions say the version is not affected (Decide.lean `clearOf`).
+        case clear
         /// Inside one of the advisory's published ranges (`verdict_inRange_sound`, `verdict_inRange_complete`).
-        case inRange = 1
+        case inRange
         /// The advisory publishes no ranges (nil or []), and its first fixed versions say the version is affected.
-        case likely = 2
+        case likely
+        /// The advisory states nothing to decide by: no ranges (nil or []) and no first fixed versions (Decide.lean's
+        /// `decided` is false). The core answers 0 for it, as for `.clear`; this wrapper tells the two apart. Such an
+        /// advisory is "reported, not checked", and is never given to `upgrade(from:advisories:)`, which finds no
+        /// upgrade for a list that holds one.
+        case unstated
     }
 
-    /// The most advisories `upgrade(from:advisories:)` asks the core about at once. osva_upgrade_for checks every
-    /// candidate against every advisory, so its cost grows with the square of their number (seconds at 1,000). One
-    /// package's advisories fit; more are refused, and their caller reports them as not checked.
-    public static let upgradeAdvisoryLimit = 200
+    /// What `upgrade(from:advisories:)` found.
+    public enum UpgradeAnswer: Sendable, Hashable {
+        /// The core's upgrade.
+        case upgrade(CheckedUpgrade)
+        /// No candidate is above the installed version and clear of every advisory, with evidence.
+        case noUpgrade
+        /// More work than `upgradeWorkLimit`: the core was not asked, so the advisories are reported, not decided.
+        case refused
 
-    /// One verdict per advisory, in order: ranges decide when an advisory has them, its first fixed versions otherwise.
+        /// The upgrade, if the core found one.
+        public var checked: CheckedUpgrade? {
+            if case .upgrade(let u) = self { return u }
+            return nil
+        }
+    }
+
+    /// A bound on the work osva_upgrade_for does for `advisories` above `installed`, in bytes compared: it checks every
+    /// candidate above `installed` (each range's fixed version and each first fixed version, repeats included) against
+    /// every version string an advisory is decided by (its ranges' bounds or, without ranges, its first fixed versions),
+    /// and each such comparison reads both strings. So: for every such pair, the two lengths plus 8 for the comparison
+    /// itself. Candidates at or below `installed` cost one comparison each and are not counted.
+    func upgradeWork(from installed: String, _ advisories: [CoreAdvisory]) -> Int {
+        var above = 0, aboveBytes = 0, strings = 0, stringBytes = 0
+        for a in advisories {
+            let ranges = a.ranges ?? []
+            for c in ranges.compactMap(\.fixed) + a.fixed where compareVersions(c, installed) > 0 {
+                above += 1; aboveBytes += c.utf8.count
+            }
+            if ranges.isEmpty {
+                strings += a.fixed.count; stringBytes += a.fixed.reduce(0) { $0 + $1.utf8.count }
+            } else {
+                for r in ranges {
+                    let bounds = [r.introduced, r.fixed, r.lastAffected].compactMap { $0 }
+                    strings += max(bounds.count, 1); stringBytes += bounds.reduce(0) { $0 + $1.utf8.count }
+                }
+            }
+        }
+        // above * (stringBytes + 8 * strings) + aboveBytes * strings, saturating
+        let (pairs, o1) = above.multipliedReportingOverflow(by: strings)
+        let (eight, o2) = pairs.multipliedReportingOverflow(by: 8)
+        let (left, o3) = above.multipliedReportingOverflow(by: stringBytes)
+        let (right, o4) = aboveBytes.multipliedReportingOverflow(by: strings)
+        let (sum1, o5) = eight.addingReportingOverflow(left)
+        let (work, o6) = sum1.addingReportingOverflow(right)
+        return o1 || o2 || o3 || o4 || o5 || o6 ? .max : work
+    }
+
+    /// The most work (`upgradeWork`) one call of `upgrade(from:advisories:)` may ask of the core. Measured on an Apple
+    /// M1 (hq-mac, 2026-11-25): at most about 50 ns per unit in the slowest shapes tried (every candidate above the
+    /// installed version and clear of every advisory, versions up to 80 bytes), so about 0.25 s at the limit; real
+    /// records do less, since most candidates fail an early check (PostgreSQL's 68 critical and high advisories: up to
+    /// 4.6 million units, 0.1 s). One package's advisories fit.
+    public static let upgradeWorkLimit = 5_000_000
+
+    /// One verdict per advisory, in order: ranges decide when an advisory has them, its first fixed versions otherwise,
+    /// and `.unstated` when it has neither.
     public func verdicts(installed: String, advisories: [CoreAdvisory]) -> [Verdict] {
         let version = Array(installed.utf8)
         let list = AdvisoryList(advisories)
@@ -176,19 +233,24 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
             }
         }
         precondition(status == 0, "The verified core refused the advisories (osva_verdicts returned \(status)).")
-        return out.prefix(advisories.count).map { byte in
-            guard let verdict = Verdict(rawValue: byte) else { preconditionFailure("osva_verdicts wrote \(byte), not 0, 1 or 2.") }
-            return verdict
+        return zip(advisories, out).map { a, byte in
+            switch byte {
+            case 0: return a.states ? .clear : .unstated
+            case 1 where a.states: return .inRange
+            case 2 where a.states: return .likely
+            default: preconditionFailure("osva_verdicts wrote \(byte) for an advisory that \(a.states ? "states" : "states nothing").")
+            }
         }
     }
 
     /// The upgrade the app suggests: the lowest release the advisories name as fixed (in their ranges, or as first
     /// fixed versions) that is above `installed` and clear of every one of them, with evidence (Decide.lean
-    /// `upgradeFor_leaves`, `upgradeFor_nearest`). An advisory that states neither ranges nor fixed versions is clear of
-    /// no version, so given one there is none. Nil when there is none, or when there are more than
-    /// `upgradeAdvisoryLimit` advisories.
-    public func upgrade(from installed: String, advisories: [CoreAdvisory]) -> CheckedUpgrade? {
-        guard advisories.count <= Self.upgradeAdvisoryLimit else { return nil }
+    /// `upgradeFor_leaves`, `upgradeFor_nearest`). Give it one package's advisories, never an `.unstated` one (with one,
+    /// there is no upgrade), and call it off the main thread. Refused, without asking the core, past `upgradeWorkLimit`.
+    /// The upgrade's `fixes` are the advisories whose verdict for `installed` is `.inRange` or `.likely`.
+    public func upgrade(from installed: String, advisories: [CoreAdvisory]) -> UpgradeAnswer {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        guard upgradeWork(from: installed, advisories) <= Self.upgradeWorkLimit else { return .refused }
         let version = Array(installed.utf8)
         let list = AdvisoryList(advisories)
         var output = [UInt8](repeating: 0, count: max(list.longestFixed, 1))
@@ -200,14 +262,19 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
             }
         }
         precondition(length >= -1, "The verified core refused the advisories (osva_upgrade_for returned \(length)).")
-        return length < 0 ? nil : CheckedUpgrade(String(decoding: output.prefix(length), as: UTF8.self))
+        guard length >= 0 else { return .noUpgrade }
+        let fixes = verdicts(installed: installed, advisories: advisories).map { $0 == .inRange || $0 == .likely }
+        return .upgrade(CheckedUpgrade(String(decoding: output.prefix(length), as: UTF8.self), fixes: fixes))
     }
 
     /// Checks an upgrade the core did not pick (the server's target, a vendor's build, pip's choice): for each
-    /// advisory, whether `candidate` is clear of it, with evidence (Decide.lean `judge_spec`). Nil when `candidate` is
-    /// not above `installed`. The judgement's upgrade is `candidate` only if it leaves at least one of the advisories
-    /// `flagged` names (by index).
-    public func judge(_ candidate: String, from installed: String, advisories: [CoreAdvisory], flagged: Set<Int>) -> Judgement? {
+    /// advisory, whether `candidate` is clear of it, with evidence (Decide.lean `judge_spec`). `flagged` says, for each
+    /// advisory in the same order, whether the app flags it. Nil when `candidate` is not above `installed`. The
+    /// judgement's upgrade is `candidate` only if it leaves at least one flagged advisory; its `fixes` are those.
+    /// Call it off the main thread.
+    public func judge(_ candidate: String, from installed: String, advisories: [CoreAdvisory], flagged: [Bool]) -> Judgement? {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        precondition(flagged.count == advisories.count, "judge needs one flag per advisory (\(flagged.count) for \(advisories.count)).")
         let version = Array(installed.utf8), upgrade = Array(candidate.utf8)
         let list = AdvisoryList(advisories)
         var out = [UInt8](repeating: 0, count: max(advisories.count, 1))
@@ -221,8 +288,8 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         precondition(status == 0 || status == 1, "The verified core refused the advisories (osva_judge returned \(status)).")
         guard status == 1 else { return nil }
         let leaves = out.prefix(advisories.count).map { $0 == 1 }
-        let fixesAFlagged = flagged.contains { leaves.indices.contains($0) && leaves[$0] }
-        return Judgement(leaves: leaves, upgrade: fixesAFlagged ? CheckedUpgrade(candidate) : nil)
+        let fixes = zip(leaves, flagged).map { $0 && $1 }
+        return Judgement(leaves: leaves, upgrade: fixes.contains(true) ? CheckedUpgrade(candidate, fixes: fixes) : nil)
     }
 
     // MARK: Privacy filter
@@ -294,16 +361,6 @@ public struct AffectedRange: Codable, Sendable, Hashable {
         init(stringValue: String) { self.stringValue = stringValue }
         init?(intValue: Int) { nil }
     }
-
-    /// An advisory's or flaw's `ranges`, as the API sends them or the cache kept them: absent or null is nil; a list
-    /// that reads strictly is kept; anything else is nil and unreadable, never a wider range. `unreadableKey` is where
-    /// the cache's copy says it was unreadable.
-    static func read<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K, unreadableKey: K) -> (ranges: [AffectedRange]?, unreadable: Bool) {
-        if (try? c.decodeIfPresent(Bool.self, forKey: unreadableKey)) == true { return (nil, true) }
-        guard c.contains(key), (try? c.decodeNil(forKey: key)) != true else { return (nil, false) }
-        guard let ranges = try? c.decode([AffectedRange].self, forKey: key) else { return (nil, true) }
-        return (ranges, false)
-    }
 }
 
 /// One advisory as the core weighs it: the ranges the site publishes for it (nil: none it can read; [] reads the same),
@@ -313,32 +370,63 @@ public struct CoreAdvisory: Sendable, Hashable {
     public var fixed: [String]
 
     public init(ranges: [AffectedRange]?, fixed: [String]) { self.ranges = ranges; self.fixed = fixed }
+
+    /// It states something to decide by: published ranges, or else first fixed versions (Decide.lean `decided`).
+    var states: Bool { !(ranges ?? []).isEmpty || !fixed.isEmpty }
 }
 
 /// A version the core has checked as an upgrade: `Core.upgrade(from:advisories:)` picked it, or `Core.judge` found it
-/// above the installed version and clear of an advisory the app flags. Only Core.swift can make one, so a version the
-/// app suggests can only come from the core.
+/// above the installed version and clear of an advisory the app flags. Its storage is private and its initialisers
+/// file-private, so only Core.swift can make one, and a version the app suggests can only come from the core.
 public struct CheckedUpgrade: Sendable, Hashable {
+    /// The ways a checked version may be shown: the version itself, written as its ecosystem writes it.
+    public enum Display: Sendable, Hashable {
+        /// As the core checked it.
+        case asChecked
+        /// As Java names it: "8u511" for 8.0.511, the canonical form from 9 on (`JavaVersion.shown`).
+        case java
+    }
+
+    private let checked: String
+    private let style: Display
+    private let fixesByAdvisory: [Bool]
+
+    fileprivate init(_ version: String, fixes: [Bool]) { checked = version; style = .asChecked; fixesByAdvisory = fixes }
+    private init(_ other: CheckedUpgrade, style: Display) { checked = other.checked; self.style = style; fixesByAdvisory = other.fixesByAdvisory }
+
     /// The version, as the core checked it.
-    public let version: String
-    /// How the app shows it (Java's "8u511" for 8.0.511); `version` unless `displayed` says otherwise.
-    public let display: String
+    public var version: String { checked }
 
-    fileprivate init(_ version: String) { self.version = version; self.display = version }
-    private init(version: String, display: String) { self.version = version; self.display = display }
+    /// How the app shows it.
+    public var display: String {
+        switch style {
+        case .asChecked: return checked
+        case .java: return JavaVersion.shown(checked)
+        }
+    }
 
-    /// The same checked version, shown as `shown` writes it.
-    public func displayed(_ shown: (String) -> String) -> CheckedUpgrade { CheckedUpgrade(version: version, display: shown(version)) }
+    /// One per advisory the core was given, in order: whether the app flags it and the core says this version is clear
+    /// of it, with evidence. So "fixes N" is the core's count.
+    public var fixes: [Bool] { fixesByAdvisory }
+
+    /// How many advisories it fixes.
+    public var fixCount: Int { fixesByAdvisory.count(where: { $0 }) }
+
+    /// The same checked version, shown in `style`.
+    public func displayed(_ style: Display) -> CheckedUpgrade { CheckedUpgrade(self, style: style) }
 }
 
-/// The core's answer about a candidate upgrade above the installed version.
+/// The core's answer about a candidate upgrade above the installed version. Only Core.swift can make one.
 public struct Judgement: Sendable, Equatable {
-    /// One per advisory, in order: whether the candidate is clear of it, with evidence.
-    public let leaves: [Bool]
-    /// The candidate, when it leaves at least one flagged advisory; nil when it leaves none of them.
-    public let upgrade: CheckedUpgrade?
+    private let answers: [Bool]
+    private let checked: CheckedUpgrade?
 
-    fileprivate init(leaves: [Bool], upgrade: CheckedUpgrade?) { self.leaves = leaves; self.upgrade = upgrade }
+    fileprivate init(leaves: [Bool], upgrade: CheckedUpgrade?) { answers = leaves; checked = upgrade }
+
+    /// One per advisory, in order: whether the candidate is clear of it, with evidence.
+    public var leaves: [Bool] { answers }
+    /// The candidate, when it leaves at least one flagged advisory; nil when it leaves none of them.
+    public var upgrade: CheckedUpgrade? { checked }
 }
 
 /// Ranges laid out the way osva_affected_ranges wants them: their bounds in one buffer, an osva_range per range pointing
