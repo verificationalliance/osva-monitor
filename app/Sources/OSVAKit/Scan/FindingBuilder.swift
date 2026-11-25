@@ -138,7 +138,7 @@ public struct FindingBuilder: Sendable {
     static func unresolved(_ check: BatchCheck, upgrade: CheckedUpgrade?, python: String?, onThisMac: Bool) -> [UnresolvedFlaw] {
         let all = check.notFixed.map { n in
             let elsewhere = n.reason == nil && !n.flaw.affectsThisMac
-            return UnresolvedFlaw(id: n.flaw.id, severity: Severity(api: n.flaw.severity), fixedIn: n.fixedIn?.display,
+            return UnresolvedFlaw(id: n.flaw.id, severity: Severity(api: n.flaw.severity), fixedIn: n.fixedIn?.display,   // claims-mutant: raw-fixed-in
                                   reason: n.reason.map(Self.reason) ?? (elsewhere ? .otherPlatform : .unknown),
                                   detail: n.detail ?? (elsewhere ? n.flaw.platform : nil), python: python, onThisMac: onThisMac,
                                   summary: Self.shortSummary(n.flaw.summary))
@@ -208,7 +208,7 @@ public struct FindingBuilder: Sendable {
     func packageFinding(_ package: ApprovedPackage, _ verdict: BatchResponse.Result, id: String, title: String, component: String?,
                         origins: [Origin], spelledAs: String, itemWithheld: AdvisoryCheck.Withheld? = nil) -> Finding {
         let onThisMac = package.platform == "macos"
-        let check = BatchCheck.read(verdict, installed: package.version)
+        let check = BatchCheck.read(verdict, installed: package.version, onThisMac: onThisMac)
         let state = Self.state(verdict, check, onThisMac: onThisMac)
         let malicious = state.malicious, onlyElsewhere = state.onlyElsewhere
         // The server's target only as the core confirmed it, and only if it reads as a version (BatchCheck), and

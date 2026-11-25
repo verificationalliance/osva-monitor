@@ -752,7 +752,8 @@ extension BatchCheckTests {
 
     /// Ruling 8: the server's target is judged against every flaw with published ranges, not only the ones the app
     /// flags. 2.0.0 leaves A, but lands inside B, whose range 1.0.0 is outside of: refused, as the core's own upgrade on
-    /// the project path would be. 2.1.0 leaves both. A Windows-only flaw's range counts as much.
+    /// the project path would be. 2.1.0 leaves both. As corrected: only a flaw that applies where the package runs
+    /// refuses it, so a Windows-only B never blocks software on this Mac, and still does a project folder's dependency.
     @Test func aSuggestedVersionNeverLandsInsideAnotherPublishedRange() throws {
         let a = Self.flaw("A", ranges: #"[{"fixed":"2.0.0"}]"#)
         func answer(_ target: String, platform: String? = nil) throws -> BatchResponse.Result {
@@ -771,9 +772,17 @@ extension BatchCheckTests {
         #expect(clear.upgrade?.version == "2.1.0" && clear.fixed == ["A"] && clear.judge("2.1.0")?.leaves == [true, true])
         let ok = try #require(Self.findings([try answer("2.1.0")]).first)
         #expect(ok.fixedVersion == "2.1.0" && ok.fixesCount == 1 && ok.upgradeCommand == "npm install -g p@2.1.0")
-        // another platform's range is a published range too
+        // a macOS target inside a Windows-only flaw's range is accepted, on this Mac
         let windows = BatchCheck.read(try answer("2.0.0", platform: "windows"), installed: "1.0.0")
-        #expect(windows.upgrade == nil && windows.target == .unconfirmed)
+        #expect(windows.upgrade?.version == "2.0.0" && windows.target == .confirmed && windows.fixed == ["A"] && windows.unflagged.isEmpty)
+        let w = try #require(Self.findings([try answer("2.0.0", platform: "windows")]).first)
+        #expect(w.group == .criticalHigh && w.fixedVersion == "2.0.0" && w.upgradeCommand == "npm install -g p@2.0.0")
+        // and inside a macOS flaw's range it is refused
+        let mac = BatchCheck.read(try answer("2.0.0", platform: "macos"), installed: "1.0.0")
+        #expect(mac.upgrade == nil && mac.target == .unconfirmed && mac.unflagged.map(\.id) == ["B"])
+        // a project folder's dependency runs wherever the project is deployed: every platform's range counts
+        let folder = try #require(Self.findings([try answer("2.0.0", platform: "windows")]) { _ in .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true) }.first)
+        #expect(folder.fixedVersion == nil && folder.upgradeCommand == nil)
         // a partial fix within constraints is judged the same way
         let partial = FixAdvisor.partial(try answer("2.0.0"), finding: f)
         #expect(partial == nil)

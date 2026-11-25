@@ -64,6 +64,11 @@ mutant fixed-in-for-another-flaw \
 mutant malicious-fixed-in \
   $K/Scan/FindingBuilder.swift "// claims-mutant: malicious-fixed-in" \
   "            return UnresolvedFlaw(id: r.id, severity: Severity(api: flaw?.severity), fixedIn: r.fixedIn, reason: Self.reason(r.reason),"
+mutant elsewhere-range-blocks \
+  $K/Scan/BatchCheck.swift "// claims-mutant: elsewhere-range-blocks" "        let applies = { (f: BatchResponse.Flaw) in true }"
+mutant raw-fixed-in \
+  $K/Scan/FindingBuilder.swift "// claims-mutant: raw-fixed-in" \
+  "            return UnresolvedFlaw(id: n.flaw.id, severity: Severity(api: n.flaw.severity), fixedIn: n.flaw.fixedIn.first,"
 mutant likely-names-unchecked \
   $K/Scan/FindingBuilder.swift "// claims-mutant: likely-names-unchecked" \
   "            note = Self.sentences(check.likelySentence(upgrade: upgrade?.display ?? check.likely.first?.fixedIn.last), how, more)"
@@ -154,6 +159,15 @@ mutant range-made-elsewhere \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let everything = AffectedRange()"
 mutant report-kept-elsewhere \
   $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; struct KeptReport: Codable { var report: ScanReport }"
+mutant range-bound-rewritten \
+  $K/Core.swift "    public let fixed: String?" "    public var fixed: String?" \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func widened(_ r: AffectedRange) -> AffectedRange { var w = r; w.fixed = \"999\"; return w }"
+mutant advisory-ranges-rewritten \
+  $K/Core.swift "    public let ranges: [AffectedRange]?" "    public var ranges: [AffectedRange]?" \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func cleared(_ a: CoreAdvisory) -> CoreAdvisory { var c = a; c.ranges = []; return c }"
+mutant range-rewritten-by-extension \
+  $K/Fix/FixAdvisor.swift "import Foundation" \
+  "import Foundation; extension AffectedRange { func refixed(_ v: String) -> AffectedRange { AffectedRange(introduced: introduced, fixed: v, lastAffected: lastAffected) } }"
 mutant nearest-version-back \
   $K/Core.swift "    /// The versions, oldest first." \
   "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"

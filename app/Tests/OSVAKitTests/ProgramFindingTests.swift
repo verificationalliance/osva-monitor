@@ -719,6 +719,11 @@ extension ProgramFindingTests {
         let d = try #require(findings([(old, .program(docker("docker"))), (new, .program(docker("kubectl")))]).first)
         #expect(d.note?.hasPrefix("docker and kubectl were built with golang.org/x/net 0.23.0 to 0.30.0 — no checked fixed version yet") == true,
                 "\(d.note ?? "")")
+        // a Windows-only flaw's range never blocks a program on this Mac: 0.33.0 is its fix
+        let windows = try B.result("Go", "golang.org/x/net", "v0.30.0", flaws: [netA, B.flaw("NET-W", ranges: #"[{"introduced":"0.32.0","fixed":"0.34.0"}]"#,
+                                                                                               platform: "windows")])
+        let w = try #require(findings([(old, .program(docker("docker"))), (windows, .program(docker("kubectl")))]).first)
+        #expect(w.note?.hasPrefix("docker and kubectl were built with golang.org/x/net 0.23.0 to 0.30.0 — fixed in 0.33.0") == true, "\(w.note ?? "")")
         // every part outside its published ranges: nothing to do, and the row says why
         let outside = try B.result("Go", "golang.org/x/net", "v0.40.0", flaws: [netA])
         let o = try #require(findings([(outside, .program(docker("docker")))]).first)

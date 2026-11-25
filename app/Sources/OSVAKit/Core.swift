@@ -265,11 +265,12 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
 /// but not including `fixed`, or up to and including `lastAffected` (neither: every later version).
 ///
 /// Read strictly, since a bound read wrongly widens the range: a range with any key but `introduced`, `fixed` and
-/// `last_affected`, or a bound that is not a string (null included), does not decode. `{}` is every version.
+/// `last_affected`, or a bound that is not a string (null included), does not decode. `{}` is every version. Its bounds
+/// are constants: no code can take a published range, move its `fixed`, and ask the core about the result (ClaimsTests).
 public struct AffectedRange: Codable, Sendable, Hashable {
-    public var introduced: String?
-    public var fixed: String?
-    public var lastAffected: String?
+    public let introduced: String?
+    public let fixed: String?
+    public let lastAffected: String?
 
     public init(introduced: String? = nil, fixed: String? = nil, lastAffected: String? = nil) {
         self.introduced = introduced; self.fixed = fixed; self.lastAffected = lastAffected
@@ -299,10 +300,10 @@ public struct AffectedRange: Codable, Sendable, Hashable {
 }
 
 /// One advisory as the core weighs it: the ranges the site publishes for it (nil: none it can read; [] reads the same),
-/// and the first fixed versions its issuer names, which decide only without ranges.
+/// and the first fixed versions its issuer names, which decide only without ranges. Constants, as a range's bounds are.
 public struct CoreAdvisory: Sendable, Hashable {
-    public var ranges: [AffectedRange]?
-    public var fixed: [String]
+    public let ranges: [AffectedRange]?
+    public let fixed: [String]
 
     public init(ranges: [AffectedRange]?, fixed: [String]) { self.ranges = ranges; self.fixed = fixed }
 

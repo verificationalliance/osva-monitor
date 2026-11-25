@@ -124,6 +124,22 @@ import SwiftUI
         #expect(!content(listed).subline.contains("lower-severity"))
     }
 
+    /// The "Other" heading's number is the hero's "lower-severity findings": rows listed with nothing to do on this Mac
+    /// are shown in Other, and counted in neither.
+    @Test func theOtherHeadingCountsWhatTheHeroCounts() {
+        func content(_ findings: [Finding]) -> PopoverContent { PopoverContent(report: PreviewData.report(findings: findings), isScanning: false, now: now) }
+        let other = PreviewData.findings.filter { $0.group == .other }
+        let listed = PreviewData.crowdedFindings.filter { $0.title == "numeric" || $0.title == "win-path" }
+        for (findings, lower) in [(other, 3), (other + listed, 3), (listed, 0)] {
+            let c = content(findings)
+            let section = c.sections.first { $0.group == .other }
+            #expect(section?.findings.count == findings.count && section?.count == lower, "\(findings.map(\.title))")
+            #expect(c.subline.contains(PopoverContent.unbroken("\(lower) lower-severity finding")) == (lower > 0), "\(c.subline)")
+        }
+        // the crowded panel: its Other holds only listed rows, so its heading shows no number
+        #expect(PopoverContent(report: PreviewData.crowdedReport(), isScanning: false, now: now).sections.first { $0.group == .other }?.count == 0)
+    }
+
     @MainActor @Test func whatNothingChecksIsNoRecord() {
         #expect(GroupContainer<EmptyView>.Heading.noRecord.title == "No record")
         #expect(GroupContainer<EmptyView>.Heading.findings(.likely).title == "Not checked against published ranges")
