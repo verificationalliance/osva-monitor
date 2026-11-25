@@ -111,22 +111,23 @@ with a throwaway key and a feed served from the Mac itself, and checks that a ch
 
 ## Proved, not only tested
 
-The decisions where a bug would mislead you are written in [Lean 4](https://lean-lang.org/), a programming language
-that is also a proof assistant. Next to the code are theorems about it. Lean checks each proof for every possible
-input, not for a sample of them, and refuses to build if one is missing or wrong.
+Four kinds of decision, where a bug would mislead you, are made by a core written in [Lean 4](https://lean-lang.org/),
+a programming language that is also a proof assistant. Next to the code are theorems about it. Lean checks each proof
+for every possible input, not for a sample of them, and refuses to build if one is missing or wrong. Not every such
+decision in the app goes through the core: which do, and which do not, is said below.
 
 <p align="center">
   <img src="docs/how-it-is-proved.svg" width="860" alt="Lean source with 31 theorems is compiled to C and linked into the app through a small C bridge; Lean checks every proof">
 </p>
 
-These decisions are proved:
+These decisions of the core are proved:
 
-| What the app decides | What is guaranteed, for every input |
+| What the core decides | What is guaranteed, for every input |
 |---|---|
 | Which of two versions is newer (`1.0rc1 < 1.0 < 1.0.post1 < 1.0.1`, `10.6p1 < 10.6p2`) | The order never contradicts itself: reflexive, antisymmetric, transitive |
 | Whether your version is affected, given the versions the issuer lists as affected (PostgreSQL: 16 up to 16.15, 17 up to 17.11) | Your version is flagged if and only if it is in one of those ranges. The upgrade it suggests is newer than yours and in none of them |
 | The same, for an advisory that names only the fixed version on each release branch | A warning always comes with a newer version to upgrade to. A version at or past its own branch's fix is never flagged. A version newer than every fix is never flagged |
-| Which package names may be sent | A name is sent only if it is byte for byte in the public index |
+| Which package names may be sent | The filter passes a name only if it is byte for byte in the public index |
 | How a name is put into a URL | The result never contains `/ ? # @ :`, and decoding it gives the name back, so two names never collide |
 
 This is the guarantee about affected ranges, as Lean states it
@@ -139,12 +140,21 @@ theorem affectedIn_sound {v : Bytes} {rs : List Range}
     ∃ r ∈ rs, InRange v r
 ```
 
-In words: if the app says your version `v` is affected, then `v` is in one of the ranges the issuer published. A
-companion theorem says the converse, so a version outside every range is never flagged. Both hold for every version
-string, including the strange ones nobody thought to test.
+In words: if the core's range check says your version `v` is affected, then `v` is in one of the ranges it was given,
+the issuer's ranges as the site publishes them. A companion theorem says the converse, so a version outside every
+range is never flagged by it. Both hold for every version string, including the strange ones nobody thought to test.
 
 When an issuer's record cannot be read as ranges exactly (a range given as commits, or one that contradicts its own
 fixes), the site says so, and the app falls back to the fixed version on each release branch.
+
+**What goes through the core, and what does not.** The core decides for the advisories in a project's or a product's
+record: Homebrew formulae and casks, MacPorts, Nix and conda packages, apps and the libraries they bundle, Java
+runtimes, and the site's "patch these first" list. Packages checked by their exact version (registry packages, the
+lockfiles in project folders, the Electron inside apps, and the packages inside Go and Rust programs and pipx and uv
+tools) are flagged on the server's verdict, and the upgrade shown is the server's plan, which the app checks only for
+reading as a version. An advisory without readable ranges is decided by its first fixed versions, and the upgrade then
+is the nearest of them, which is not proved to leave every range behind. The core encodes the names in the URLs the
+app builds for the site; the names in an exact-version check travel in the request's JSON body.
 
 **The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the
 app. There is no hand-written Swift copy that could drift away from what was proved. About 130 lines of C pass
@@ -154,10 +164,10 @@ bytes between Swift and Lean. That bridge is the only unproved code on the path,
 then confirms that they rest only on Lean's three standard axioms (no `sorry`, nothing assumed without proof) and runs
 the bridge's tests. CI does the same on every push.
 
-**What is not proved.** The Lean compiler and runtime, the C bridge, and the rest of the app: reading Homebrew,
-lockfiles and Pythons, the network, the interface. Those are covered by tests. The data comes from OSV,
-the GitHub Advisory Database and NVD. The proofs say the app reasons correctly about that data, not that the data is
-right.
+**What is not proved.** The Lean compiler and runtime, the C bridge, the server's verdicts and upgrade plans, and the
+rest of the app: reading Homebrew, lockfiles and Pythons, the network, the interface. Those are covered by tests. The
+data comes from OSV, the GitHub Advisory Database and NVD. The proofs say the core reasons correctly about the data it
+is given, not that the data is right.
 
 The server the app talks to uses the same version order, and its implementation is tested against this Lean core on
 30,000 version pairs.
@@ -165,7 +175,7 @@ The server the app talks to uses the same version order, and its implementation 
 ## Build
 
 You need macOS 26, Xcode 26 or later, and [elan](https://github.com/leanprover/elan). The Lean version is pinned in
-`core/lean-toolchain`.
+`core/lean-toolchain`; `build-app.sh` builds the core with that toolchain, and links the app with its runtime.
 
 ```sh
 ./scripts/check-core.sh   # re-check every proof, audit the axioms, test the bridge

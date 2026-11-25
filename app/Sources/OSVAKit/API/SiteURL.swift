@@ -1,7 +1,9 @@
 import Foundation
 
-/// Every URL the app opens or requests: the fixed base https://verificationalliance.org/ plus path components (and
-/// query values) encoded by the verified core, so that a package name can never change which resource is asked for.
+/// The URLs the app builds for the site, its API requests and its links to the site's pages: the fixed base
+/// https://verificationalliance.org/ plus path components (and query values) encoded by the verified core, so that a
+/// package name can never change which resource is asked for. Not every URL is one of these: the update feed is
+/// Sparkle's (Info.plist), and a product's own page is the link its record gives (`ProductResponse.sourceURL`).
 public enum SiteURL {
     public static let base = "https://verificationalliance.org/"
 

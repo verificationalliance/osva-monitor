@@ -9,7 +9,10 @@
 # follows from it (1.2.3 is 1002003), so a higher version is always a newer build; BUILD_NUMBER overrides it. A
 # Developer ID build needs the version's entry in app/Sources/OSVAMonitorUI/Resources/CHANGELOG.md, which the app shows
 # as What's New.
-# OUT_DIR changes where the app goes; SWIFTPM_FLAGS passes extra flags to `swift build`.
+# OUT_DIR changes where the app goes; SWIFTPM_FLAGS passes extra flags to `swift build`, never with DEVELOPER_ID (a flag
+# could add inputs to the link).
+# The core is built with the Lean toolchain core/lean-toolchain names, run through elan (not whatever `lake` comes first
+# on PATH), and app/Package.swift links the Lean runtime from that toolchain; the build stops if they are not the same.
 # SIGNING_KEYCHAIN (and SIGNING_KEYCHAIN_PASSWORD_FILE) name a dedicated keychain holding the identity and the notary
 # profile: it is unlocked and appended to the search list only while signing (codesign needs that to build the
 # certificate chain), then the search list is restored exactly and the keychain locked again.
@@ -39,17 +42,37 @@ swift_flags=(${SWIFTPM_FLAGS:-})
 if [ -n "${DEVELOPER_ID:-}" ]; then
   [ -z "${SPARKLE_PUBLIC_KEY:-}" ] || die "SPARKLE_PUBLIC_KEY is for test builds; a Developer ID build trusts only the real update key"
   [ -z "${UPDATE_TESTING:-}" ] || die "UPDATE_TESTING is for test builds, never signed with the Developer ID"
-  [[ " ${swift_flags[*]-} " != *OSVA_UPDATE_TESTING* ]] || die "OSVA_UPDATE_TESTING in SWIFTPM_FLAGS: not with DEVELOPER_ID"
+  [ -z "${SWIFTPM_FLAGS:-}" ] || die "SWIFTPM_FLAGS is for test builds; a Developer ID build takes no extra swift build flags"
   changelog="$app_src/Sources/OSVAMonitorUI/Resources/CHANGELOG.md"
   [ "$(grep -c -x "## $version" "$changelog" || true)" = 1 ] || die "CHANGELOG.md has no entry for $version, so What's New would show nothing"
 fi
 [ "${UPDATE_TESTING:-}" != 1 ] || swift_flags+=(-Xswiftc -DOSVA_UPDATE_TESTING)
 
+# The app's executable has the core inside it, from libosvaCore_OSVACore.a (app/Package.swift). It must not load the
+# core from a dylib: that would be whatever file is at the dylib's path when the app runs, not code inside the app.
+check_core_inside() {
+  local loads
+  loads="$(otool -L "$1")" || die "otool cannot read $1"
+  if grep -i -E '^[[:space:]].*osvacore' <<<"$loads" >&2; then
+    die "$1 loads the verified core from a dylib (above) instead of having it inside, from libosvaCore_OSVACore.a"
+  fi
+}
+
 if [ -z "${SIGN_APP:-}" ]; then
-echo "1. verified core (lake build OSVACore:static)"
-lake="$(command -v lake || echo "$HOME/.elan/bin/lake")"
+toolchain="$(tr -d '[:space:]' < "$here/core/lean-toolchain")"
+echo "1. verified core (lake build OSVACore:static, with $toolchain)"
+[[ "$toolchain" == leanprover/lean4:v* ]] || die "core/lean-toolchain does not name a Lean release: $toolchain"
+elan="$(command -v elan || echo "${ELAN_HOME:-$HOME/.elan}/bin/elan")"
+[ -x "$elan" ] || die "no elan, which runs the toolchain core/lean-toolchain names (https://github.com/leanprover/elan)"
+lake_version="$("$elan" run --install "$toolchain" lake --version)" || die "elan cannot run $toolchain"
+[[ "$lake_version" == *"(Lean version ${toolchain#*:v})" ]] || die "$toolchain runs a lake of another Lean: $lake_version"
+# The directory app/Package.swift links the Lean runtime from, worked out as it does: it must be this toolchain's.
+runtime_dir="${ELAN_HOME:-$HOME/.elan}/toolchains/$(sed -e 's|/|--|g' -e 's|:|---|g' <<<"$toolchain")"
+lean_prefix="$("$elan" run "$toolchain" lean --print-prefix)" || die "elan cannot run $toolchain"
+[ -d "$runtime_dir" ] && [ "$(cd "$runtime_dir" && pwd -P)" = "$(cd "$lean_prefix" && pwd -P)" ] \
+  || die "app/Package.swift would link the Lean runtime from $runtime_dir, but $toolchain is $lean_prefix"
 # Built for the app's deployment target, so the linker does not see objects newer than the app.
-(cd "$here/core" && MACOSX_DEPLOYMENT_TARGET="$min_macos" "$lake" build OSVACore:static)
+(cd "$here/core" && MACOSX_DEPLOYMENT_TARGET="$min_macos" "$elan" run "$toolchain" lake build OSVACore:static)
 
 echo "2. release build"
 (cd "$app_src" && swift build -c release --product OSVAMonitor ${swift_flags[@]+"${swift_flags[@]}"})
@@ -58,6 +81,7 @@ bin_dir="$(cd "$app_src" && swift build -c release --show-bin-path ${swift_flags
 if [ "${UPDATE_TESTING:-}" != 1 ] && grep -q -a OSVA_UPDATE_FEED "$bin_dir/OSVAMonitor"; then
   die "this build has the test-only feed override compiled in; remove .build and build again"
 fi
+check_core_inside "$bin_dir/OSVAMonitor"
 
 echo "3. bundle"
 rm -rf "$app"
@@ -123,6 +147,7 @@ else
   done
   [ -z "$(got NSAppTransportSecurity)" ] || die "SIGN_APP is a test build (it allows local networking)"
   ! grep -q -a OSVA_UPDATE_FEED "$SIGN_APP/Contents/MacOS/OSVAMonitor" || die "SIGN_APP is a test build (it has the feed override)"
+  check_core_inside "$SIGN_APP/Contents/MacOS/OSVAMonitor"
   rm -rf "$app"; mkdir -p "$out_dir"; ditto "$SIGN_APP" "$app"
 fi
 

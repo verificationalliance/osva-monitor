@@ -1,12 +1,36 @@
 import Foundation
 import OSVACore
 
-/// The only door to the verified core (`Sources/OSVACore`, declared in `osva_core.h`).
+/// The only door to the verified core (`Sources/OSVACore`, declared in `osva_core.h`): the app calls the core here and
+/// nowhere else.
 ///
 /// Four kinds of decision would mislead the person using OSVA Monitor if they were wrong: which of two versions is
 /// newer, whether an installed version is affected by an advisory (and which upgrade clears it), which installed
-/// packages may be named to the server, and how a name is written into a URL. The verified core makes all four, and
-/// nothing else in the app compares versions, decides affectedness, filters the inventory or percent-encodes.
+/// packages may be named to the server, and how a name is written into a URL. The core makes them where this file's
+/// callers ask it to:
+///   - version order (`compareVersions` and the helpers built on it);
+///   - whether a version is affected by an advisory in a project's or product's record, by the issuer's ranges
+///     (`affectedness(installed:ranges:)`) or, for an advisory without ranges, by its first fixed versions
+///     (`affectedness(installed:fixedVersions:)`), and the upgrade that lies in none of the ranges
+///     (`upgrade(from:ranges:)`): AdvisoryCheck, for Homebrew, MacPorts, Nix and conda packages, apps and the
+///     libraries they bundle, and Java runtimes, and IssueCheck, for the site's "patch these first" list;
+///   - which installed packages, projects and products may be named to the server (`select`: PrivacyFilter), and
+///     which extensions are on the malicious list (BundleCheck);
+///   - every path component and query value of the URLs SiteURL builds (`percentEncode`).
+///
+/// The rest is not the core's:
+///   - Packages checked by exact version (`api/v1/check/batch`: registry packages, project folders' lockfiles, the
+///     Electron inside apps, the packages inside Go and Rust programs and pipx and uv tools) are flagged on the
+///     server's verdict, and their upgrade is the server's `plan.target`, which the app checks only for reading as a
+///     version (FixSafety). FixAdvisor's partial fixes are the server's plans too.
+///   - Only `upgrade(from:ranges:)` is proved to leave every range it is given behind. Without ranges the upgrade is
+///     the nearest first fixed version above the installed one (`nearestVersion`); AdvisoryCheck proposes the newest
+///     of the two paths' upgrades (`newestVersion`), and JavaCheck, when there is none, the vendor's own fixed build.
+///   - An advisory whose ranges cannot be read is taken as having none (`ProjectResponse.Advisory`), so its first
+///     fixed versions decide.
+///   - The names in the body of `api/v1/check/batch` are written by JSONEncoder; the core encodes only URLs.
+///   - Which Python or Homebrew folder is newest is read by `localizedStandardCompare` (PythonSource,
+///     HomebrewReceipts), and the release tool orders its own versions (OSVARelease's Appcast).
 ///
 /// The core asks to be started once and called from one thread at a time, so this wrapper starts it when first used
 /// and makes every call on one serial queue.

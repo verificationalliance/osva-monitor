@@ -7,8 +7,10 @@
 // Targets
 //   OSVACore       C. The verified core: version order, affectedness, the privacy filter, URL encoding.
 //   OSVAKit        What the app knows how to do: take inventory (Homebrew, Electron apps, global packages, project
-//                  folders), download the public index, ask the API, and turn answers into findings. Every decision
-//                  of the four kinds above goes through Sources/OSVAKit/Core.swift and nowhere else.
+//                  folders), download the public index, ask the API, and turn answers into findings. It calls the
+//                  core only through Sources/OSVAKit/Core.swift, but not every decision of the four kinds above is
+//                  the core's: packages checked by exact version are flagged, and their upgrades chosen, by the
+//                  server. Core.swift says which decisions are which.
 //   OSVAMonitorUI  SwiftUI views and the app model, and the app's changelog (Resources/CHANGELOG.md, What's New).
 //   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
 //   osva-scan      One scan from the command line, with the same code the app runs.
@@ -23,20 +25,23 @@ import PackageDescription
 // of ../core/include/osva_core.h (a test fails if the two differ), and its one source, Sources/OSVACore/osva_shim.c,
 // is a link to ../core/ffi/osva_shim.c, the only unproved code between the app and the theorems. It links:
 //   - the core itself, ../core/.lake/build/lib/libosvaCore_OSVACore.a, made by `lake build OSVACore:static` in ../core
-//     (../scripts/build-app.sh does this first);
+//     (../scripts/build-app.sh does this first). The archive is named by its path, not with -l: given
+//     -losvaCore_OSVACore, the linker would take a libosvaCore_OSVACore.dylib beside it (`lake build OSVACore:shared`
+//     makes one) over the archive, and the app would load the core from that file at run time;
 //   - the Lean runtime and libraries of the toolchain ../core/lean-toolchain names, found in elan's toolchains
-//     directory ($ELAN_HOME, else ~/.elan), or in $OSVA_LEAN_TOOLCHAIN when that is set.
+//     directory ($ELAN_HOME, else ~/.elan). ../scripts/build-app.sh builds the core with that same toolchain and
+//     refuses to build if this directory is not that toolchain's.
 // The link line is the one ../scripts/check-core.sh uses on macOS.
 
 let coreDirectory = Context.packageDirectory + "/../core"
 
-/// The Lean toolchain's directory: "leanprover/lean4:v4.36.0" is ~/.elan/toolchains/leanprover--lean4---v4.36.0.
+/// The Lean toolchain's directory, from ../core/lean-toolchain alone: "leanprover/lean4:v4.36.0" is
+/// ~/.elan/toolchains/leanprover--lean4---v4.36.0. ../scripts/build-app.sh works it out the same way.
 let leanToolchain: String = {
-    if let explicit = Context.environment["OSVA_LEAN_TOOLCHAIN"], !explicit.isEmpty { return explicit }
     let name = ((try? String(contentsOfFile: coreDirectory + "/lean-toolchain", encoding: .utf8)) ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .replacingOccurrences(of: ":", with: "---").replacingOccurrences(of: "/", with: "--")
-    let elan = Context.environment["ELAN_HOME"] ?? ((Context.environment["HOME"] ?? "~") + "/.elan")
+    let elan = Context.environment["ELAN_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? ((Context.environment["HOME"] ?? "~") + "/.elan")
     return elan + "/toolchains/" + name
 }()
 
@@ -47,7 +52,7 @@ let verifiedCore: Target = .target(
     publicHeadersPath: "include",
     cSettings: [.unsafeFlags(["-isystem", leanToolchain + "/include"])],     // Lean's header is not ours to warn about
     linkerSettings: [.unsafeFlags([
-        "-L", coreDirectory + "/.lake/build/lib", "-losvaCore_OSVACore",
+        coreDirectory + "/.lake/build/lib/libosvaCore_OSVACore.a",              // by its path, so never a dylib of it
         "-L", leanToolchain + "/lib/lean", "-lStd", "-lInit", "-lleanrt", "-lcadical",
         "-L", leanToolchain + "/lib", "-lc++", "-lgmp", "-luv",
     ])]
