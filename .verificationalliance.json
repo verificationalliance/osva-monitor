@@ -6,6 +6,6 @@
   "claims": [
     {"says": "The core's range check flags a version only if it falls inside a published range.", "theorem": "OSVA.affectedIn_sound", "about": "code"},
     {"says": "Every upgrade the core's range check suggests is outside every affected range.", "theorem": "OSVA.upgradeIn_clears", "about": "code"},
-    {"says": "The core's URL encoding never outputs a delimiter.", "theorem": "OSVA.encode_no_delimiters", "about": "code"}
+    {"says": "The core's URL encoding never outputs /, ?, #, @ or :.", "theorem": "OSVA.encode_no_delimiters", "about": "code"}
   ]
 }
