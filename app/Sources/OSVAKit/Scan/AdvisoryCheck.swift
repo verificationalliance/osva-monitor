@@ -5,12 +5,17 @@ import Foundation
 /// the libraries they bundle (products), and for Java runtimes. Only critical and high advisories, and any exploited in
 /// the wild, are weighed (`FindingBuilder.weighed`).
 ///
-/// The verified core decides each weighed advisory (`Core.verdicts`, Decide.lean), and `Hit.basis` records how:
+/// The verified core decides each weighed advisory (`Core.verdicts`, Decide.lean) from what can be read of it
+/// (`weighedAs`), and `Hit.basis` records how:
 ///   - `.ranges`: the version lies inside one of the ranges the site publishes for it (`.inRange`): **affected**;
 ///   - `.firstFixed`: it publishes no ranges (nil or []), and its first fixed versions say the version is affected
 ///     (`.likely`): **likely affected**, never counted;
-///   - `.unreadable`: its ranges or first fixed versions could not be read, and the first fixed versions it has say
-///     the version is affected: **reported, not checked**.
+///   - `.unreadable`: its ranges could not be read, and its first fixed versions say the version is affected:
+///     **reported, not checked**;
+///   - `.unstated`: nothing the core can decide by can be read of it, neither ranges nor first fixed versions: **not
+///     checked**, whatever the version. One exploited in the wild or critical (`urgent`) is never dropped: it is said
+///     and marked, and makes a reported finding when nothing else does. The others are counted in a finding's note,
+///     and make none of their own, so that records with no data do not fill the panel.
 /// The finding is affected when any advisory is, else likely, else reported (`check`), and is shown for those hits
 /// only (`shown`); the others are said in its note, and the most urgent of them kept as `notChecked`.
 ///
@@ -19,7 +24,7 @@ import Foundation
 /// flaw that starts later. It is shown only when it reads as a version (FixSafety); one the core was not asked for
 /// (more work than it may take) or that does not read as one is `withheld`, and then no command runs for it either.
 public struct AdvisoryCheck: Sendable {
-    public enum Basis: Sendable, Equatable { case ranges, firstFixed, unreadable }
+    public enum Basis: Sendable, Equatable { case ranges, firstFixed, unreadable, unstated }
 
     public struct Hit: Sendable {
         public var advisory: ProjectResponse.Advisory
@@ -45,18 +50,26 @@ public struct AdvisoryCheck: Sendable {
     /// line, never the fix). Nil when one of them has no end: then nothing is fixed yet.
     public var lastAffected: String? = nil
 
-    /// Every advisory that affects the version, likely affects it, or is reported.
-    public var advisories: [ProjectResponse.Advisory] { hits.map(\.advisory) }
+    /// Exploited in the wild, or critical.
+    static func urgent(_ a: ProjectResponse.Advisory) -> Bool { a.kev || Severity(api: a.severity) == .critical }
+
+    /// The advisories the finding names: every one that affects the version, likely affects it or is reported, and
+    /// those that state nothing when urgent. The others that state nothing are only counted.
+    public var advisories: [ProjectResponse.Advisory] { hits.filter { $0.basis != .unstated || Self.urgent($0.advisory) }.map(\.advisory) }
 
     /// Affected when the published ranges of any advisory hold the version, else likely, else reported.
     public var check: Finding.Check {
         hits.contains { $0.basis == .ranges } ? .affected : hits.contains { $0.basis == .firstFixed } ? .likely : .reported
     }
 
-    /// The hits the finding is shown for: its affected ones, else its likely ones, else its reported ones.
+    /// The hits the finding is shown for: its affected ones, else its likely ones, else its reported ones and the
+    /// urgent ones that state nothing.
     public var shown: [Hit] {
-        let basis: Basis = check == .affected ? .ranges : check == .likely ? .firstFixed : .unreadable
-        return hits.filter { $0.basis == basis }
+        switch check {
+        case .affected: return hits.filter { $0.basis == .ranges }
+        case .likely: return hits.filter { $0.basis == .firstFixed }
+        case .reported: return hits.filter { $0.basis == .unreadable || ($0.basis == .unstated && Self.urgent($0.advisory)) }
+        }
     }
 
     public var flawCount: Int { shown.count }
@@ -72,8 +85,8 @@ public struct AdvisoryCheck: Sendable {
         }
     }
 
-    /// The most urgent advisory not checked against published ranges (likely or reported), when it is exploited in the
-    /// wild or critical.
+    /// The most urgent advisory not checked against published ranges (likely, reported, or stating nothing), when it is
+    /// exploited in the wild or critical.
     public var notChecked: Finding.NotChecked? { Self.alert(hits.filter { $0.basis != .ranges }) }
 
     /// What the finding says about how it was decided.
@@ -91,6 +104,11 @@ public struct AdvisoryCheck: Sendable {
         case nil: why = nil
         }
         let likely = hits.filter { $0.basis == .firstFixed }, unread = hits.filter { $0.basis == .unreadable }
+        let unstated = hits.filter { $0.basis == .unstated }
+        let moreUnread = Self.more(unread.count, "is reported, not checked", "are reported, not checked", naming: Self.alert(unread))
+        func moreUnstated(_ hs: [Hit]) -> String? {
+            Self.more(hs.count, "states no affected versions; not checked", "state no affected versions; not checked", naming: Self.alert(hs))
+        }
         switch check {
         case .affected:
             let lead: String
@@ -103,20 +121,26 @@ public struct AdvisoryCheck: Sendable {
             } else { lead = "The issuer lists \(v) as affected. No fixed release yet." }
             return FindingBuilder.sentences(lead, Self.more(likely.count, "without published ranges likely affects it too",
                                                                   "without published ranges likely affect it too", naming: Self.alert(likely)),
-                                            Self.more(unread.count, "is reported, not checked", "are reported, not checked", naming: Self.alert(unread)))
+                                            moreUnread, moreUnstated(unstated))
         case .likely:
             let lead: String
             if let t, let formula { lead = "Likely affected: the site publishes no affected ranges; the issuer's fix, \(t), is not a \(formula) release." }
             else if let t { lead = "Likely affected: the site publishes no affected ranges, and the issuer names \(t) as fixed." }
             else if let why { lead = "Likely affected: the site publishes no affected ranges. " + why }
             else { lead = "Likely affected: the site publishes no affected ranges; no fixed version clears it." }
-            return FindingBuilder.sentences(lead, Self.more(unread.count, "is reported, not checked", "are reported, not checked",
-                                                                  naming: Self.alert(unread)))
+            return FindingBuilder.sentences(lead, moreUnread, moreUnstated(unstated))
         case .reported:
-            let worst = Self.mostUrgent(unread)
-            let more = unread.count - 1
-            return "Reported by the site, not checked: the app could not read its affected ranges for \(worst?.advisory.id ?? "it")"
-                + (more > 0 ? " (and \(more) more)." : ".")
+            let reported = self.shown, worst = Self.mostUrgent(reported)
+            let id = worst?.advisory.id ?? "it"
+            let why: String
+            switch (worst?.basis, worst?.advisory) {
+            case let (.unstated?, a?) where a.fixedHintUnreadable && !a.rangesUnreadable: why = "the app could not read the fixed versions it names for \(id)"
+            case let (.unstated?, a?) where !a.rangesUnreadable: why = "it publishes no affected versions for \(id)"
+            default: why = "the app could not read its affected ranges for \(id)"
+            }
+            let more = reported.count - 1
+            return FindingBuilder.sentences("Reported by the site, not checked: \(why)" + (more > 0 ? " (and \(more) more)." : "."),
+                                            moreUnstated(unstated.filter { !Self.urgent($0.advisory) }))
         }
     }
 
@@ -131,10 +155,10 @@ public struct AdvisoryCheck: Sendable {
     static let notChecked = "No checked fixed version yet; see the site."
     static let notAVersion = "The server named a fixed version the app does not accept as a version; see the site."
 
-    /// The advisory as the core weighs it: its ranges and first fixed versions, or, when either could not be read, its
-    /// first fixed versions alone ([] when those could not be read), which then decide only whether it is reported.
+    /// The advisory as the core weighs it: what can be read of it. Ranges that read decide; ranges that do not read are
+    /// none, and then its first fixed versions decide, unless they do not read either ([]), and it states nothing.
     static func weighedAs(_ a: ProjectResponse.Advisory) -> CoreAdvisory {
-        a.coreAdvisory ?? CoreAdvisory(ranges: nil, fixed: a.fixedHint)
+        CoreAdvisory(ranges: a.rangesUnreadable ? nil : a.ranges, fixed: a.fixedHintUnreadable ? [] : a.fixedHint)
     }
 
     /// "1 more advisory without published ranges likely affects it too: B, critical.", "2 more advisories are
@@ -175,8 +199,18 @@ public struct AdvisoryCheck: Sendable {
         }
     }
 
-    /// Nil when no weighed advisory affects `installed`, likely affects it, or is reported for it. Call it off the main
-    /// thread: it asks the core for the upgrade.
+    /// The newest last affected version of the published ranges holding `installed` among these hits, when every one of
+    /// those ranges ends at one (each range asked of the core alone).
+    static func lastAffected(_ installed: String, _ hits: [Hit]) -> String? {
+        let core = Core.shared
+        let holding = hits.filter { $0.basis == .ranges }.compactMap { weighedAs($0.advisory).ranges }.flatMap { $0 }
+            .filter { core.affectedness(installed: installed, ranges: [$0]) == .affected }
+        guard !holding.isEmpty, holding.allSatisfy({ $0.fixed == nil && $0.lastAffected != nil }) else { return nil }
+        return core.newestVersion(holding.compactMap(\.lastAffected))
+    }
+
+    /// Nil when no weighed advisory affects `installed`, likely affects it, or is reported for it, and none that states
+    /// nothing is urgent. Call it off the main thread: it asks the core for the upgrade.
     public static func decide(_ installed: String, _ recent: [ProjectResponse.Advisory]) -> AdvisoryCheck? {
         let core = Core.shared
         let weighed = recent.filter(FindingBuilder.weighed)
@@ -185,20 +219,46 @@ public struct AdvisoryCheck: Sendable {
         for (a, v) in zip(weighed, core.verdicts(installed: installed, advisories: advisories)) {
             switch v {
             case .inRange: hits.append(Hit(advisory: a, basis: .ranges))
-            case .likely: hits.append(Hit(advisory: a, basis: a.coreAdvisory == nil ? .unreadable : .firstFixed))
-            case .clear, .unstated: break
+            case .likely: hits.append(Hit(advisory: a, basis: a.rangesUnreadable ? .unreadable : .firstFixed))
+            case .unstated: hits.append(Hit(advisory: a, basis: .unstated))
+            case .clear: break
             }
         }
-        guard !hits.isEmpty else { return nil }
+        guard hits.contains(where: { $0.basis != .unstated || urgent($0.advisory) }) else { return nil }
         var d = AdvisoryCheck(installed: installed, hits: hits, target: nil)
         guard d.check != .reported else { return d }                            // reported: no version, no command
         (d.target, d.withheld) = shown(core.upgrade(from: installed, advisories: advisories))
-        if d.target == nil && d.withheld == nil {
-            // the ranges this version lies in, each asked of the core alone
-            let holding = hits.filter { $0.basis == .ranges }.compactMap(\.advisory.ranges).flatMap { $0 }
-                .filter { core.affectedness(installed: installed, ranges: [$0]) == .affected }
-            if !holding.isEmpty, holding.allSatisfy({ $0.fixed == nil && $0.lastAffected != nil }) { d.lastAffected = core.newestVersion(holding.compactMap(\.lastAffected)) }
+        if d.target == nil && d.withheld == nil { d.lastAffected = lastAffected(installed, hits) }
+        return d
+    }
+
+    /// This decision with a "patch these first" item whose published ranges hold the version (`IssueCheck.verdict` is
+    /// `.affected`): the item is counted as an affected advisory, at the item's severity and exploited when it is, unless
+    /// its advisory is one already, which then takes the item's word. The upgrade stays only when the core finds it
+    /// clear of the item's published ranges too; otherwise it is the item's (`IssueCheck.fix`), or none. Call it off the
+    /// main thread.
+    func promoted(by issue: StateResponse.BigIssue, _ item: IssueCheck) -> AdvisoryCheck {
+        let holding = item.holding(installed)
+        guard let first = holding.first else { return self }
+        var d = self
+        func raised(_ a: ProjectResponse.Advisory) -> ProjectResponse.Advisory {
+            var a = a
+            a.kev = a.kev || issue.exploited
+            if let s = Severity(api: issue.severity), Severity(api: a.severity).map({ s > $0 }) ?? true { a.severity = s.rawValue }
+            return a
         }
+        if let k = d.hits.firstIndex(where: { h in h.basis == .ranges && holding.contains { $0.id == h.advisory.id } }) {
+            d.hits[k].advisory = raised(d.hits[k].advisory)
+        } else {
+            d.hits.removeAll { h in holding.contains { $0.id == h.advisory.id } }
+            d.hits.append(Hit(advisory: raised(first), basis: .ranges))
+        }
+        if let t = d.target, item.leaves(t.version, from: installed) {
+            // the finding's own upgrade leaves the item too
+        } else {
+            (d.target, d.withheld) = item.fix(installed)
+        }
+        d.lastAffected = d.target == nil && d.withheld == nil ? Self.lastAffected(installed, d.hits) : nil
         return d
     }
 }
@@ -209,8 +269,10 @@ public struct AdvisoryCheck: Sendable {
 /// weighed advisories (`upgrade`).
 struct IssueCheck {
     private let core = Core.shared
-    /// The advisories on the item that have published ranges, as the core weighs them.
-    let ranged: [CoreAdvisory]
+    /// The advisories of the project's record on the item that have published ranges the app can read.
+    let rangedAdvisories: [ProjectResponse.Advisory]
+    /// Those, as the core weighs them.
+    var ranged: [CoreAdvisory] { rangedAdvisories.map(AdvisoryCheck.weighedAs) }
     /// Every id on the item is an advisory of the project's record with published ranges: they alone decide.
     let covered: Bool
     let fixedIn: [String]
@@ -219,20 +281,33 @@ struct IssueCheck {
 
     init(_ issue: StateResponse.BigIssue, project: ProjectResponse?) {
         let listed = project?.recent.filter { a in issue.ids.contains(a.id) || a.cve.map(issue.ids.contains) == true } ?? []
-        let withRanges = listed.filter { !($0.coreAdvisory?.ranges ?? []).isEmpty }
+        let withRanges = listed.filter { !(AdvisoryCheck.weighedAs($0).ranges ?? []).isEmpty }
         let coveredIDs = Set(withRanges.flatMap { [$0.id] + ($0.cve.map { [$0] } ?? []) })
-        ranged = withRanges.compactMap(\.coreAdvisory)
+        rangedAdvisories = withRanges
         covered = !withRanges.isEmpty && withRanges.count == listed.count && issue.ids.allSatisfy(coveredIDs.contains)
         fixedIn = issue.fixedIn
         weighed = (project?.recent ?? []).filter(FindingBuilder.weighed).map(AdvisoryCheck.weighedAs)
     }
 
+    /// The advisories on the item whose published ranges hold `installed`.
+    func holding(_ installed: String) -> [ProjectResponse.Advisory] {
+        zip(rangedAdvisories, core.verdicts(installed: installed, advisories: ranged)).filter { $0.1 == .inRange }.map(\.0)
+    }
+
     /// `.affected` when an advisory on the item has published ranges that hold `installed`; `.likely` when the item
     /// has an advisory without them and its first fixed versions say `installed` is affected; else nil.
     func verdict(_ installed: String) -> Finding.Check? {
-        if core.verdicts(installed: installed, advisories: ranged).contains(.inRange) { return .affected }
+        if !holding(installed).isEmpty { return .affected }
         guard !covered else { return nil }
         return core.verdicts(installed: installed, advisories: [CoreAdvisory(ranges: nil, fixed: fixedIn)]) == [.likely] ? .likely : nil
+    }
+
+    /// Whether the core finds `candidate` above `installed` and clear of every advisory on the item that has published
+    /// ranges (Decide.lean `judge_spec`). Call it off the main thread.
+    func leaves(_ candidate: String, from installed: String) -> Bool {
+        guard FixSafety.isSafeVersion(candidate),
+              let j = core.judge(candidate, from: installed, advisories: ranged, flagged: [Bool](repeating: true, count: ranged.count)) else { return false }
+        return j.leaves.allSatisfy { $0 }
     }
 
     /// The core's upgrade over the item's advisories and the project's weighed ones, each once (so the work the core may
@@ -246,15 +321,16 @@ struct IssueCheck {
     /// That upgrade, as a finding may show it (`AdvisoryCheck.shown`).
     func fix(_ installed: String) -> (upgrade: CheckedUpgrade?, withheld: AdvisoryCheck.Withheld?) { AdvisoryCheck.shown(upgrade(installed)) }
 
-    /// The note of a finding the item makes, on the item's own verdict.
-    func note(_ verdict: Finding.Check, installed: String, fix: (upgrade: CheckedUpgrade?, withheld: AdvisoryCheck.Withheld?),
-              showing shown: (String) -> String = { $0 }) -> String {
-        let why = fix.withheld.map { $0 == .refused ? AdvisoryCheck.notChecked : AdvisoryCheck.notAVersion }
-        let t = fix.upgrade.map { shown($0.version) }, v = shown(installed)
+    /// The note of a finding on the item's own verdict, with its version as shown (nil: none), why there is none when the
+    /// core withheld it, and the versioned formula the version is not a release of (`offLine`), when it is not one.
+    static func note(_ verdict: Finding.Check, installed v: String, upgrade t: String?, withheld: AdvisoryCheck.Withheld?, offLine formula: String? = nil) -> String {
+        let why = withheld.map { $0 == .refused ? AdvisoryCheck.notChecked : AdvisoryCheck.notAVersion }
         if verdict == .affected {
+            if let t, let formula { return "The issuer lists \(v) as affected; its fix, \(t), is not a \(formula) release." }
             if let t { return "The issuer lists \(v) as affected and \(t) as fixed." }
             return "The issuer lists \(v) as affected. " + (why ?? "No fixed release yet.")
         }
+        if let t, let formula { return "Likely affected: the site publishes no affected ranges; the issuer's fix, \(t), is not a \(formula) release." }
         if let t { return "Likely affected: the site publishes no affected ranges, and the issuer names \(t) as fixed." }
         return why.map { "Likely affected: the site publishes no affected ranges. " + $0 }
             ?? "Likely affected: the site publishes no affected ranges; no fixed version clears it."

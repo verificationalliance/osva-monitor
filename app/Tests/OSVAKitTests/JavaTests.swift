@@ -268,21 +268,28 @@ enum JDK {
         let runtimes = [JDK.runtime("17.0.20"), JDK.runtime("17.0.21"), JDK.runtime("17.0.22"), JDK.runtime("11.0.25"),
                         JDK.runtime("1.8.0_511", .oracle), JDK.runtime("1.8.0_512", .oracle), JDK.runtime("21.0.5", .zulu)]
         let check = JavaCheck.match(runtimes, index: Make.index)
-        let f = check.findings(products: [:], projects: ["openjdk": JDK.postFix])
+        let all = check.findings(products: [:], projects: ["openjdk": JDK.postFix])
+        // the record states nothing for 14 of its weighed advisories, two of them critical: every runtime has those
+        // reported, and the others are not "affected" by them
+        #expect(all.filter { $0.group == .reported }.map { "\($0.title) \($0.installedVersion)" } == ["Java (Temurin) 17.0.22", "Java (Temurin) 11.0.25", "Java (Oracle) 8u512"])
+        #expect(all.allSatisfy { $0.notChecked == Finding.NotChecked(id: "CVE-2026-114820", exploited: false, critical: true) })
+        let f = all.filter { $0.group != .reported }
         #expect(f.map { "\($0.title) \($0.installedVersion)" } == ["Java (Temurin) 17.0.20", "Java (Temurin) 17.0.21", "Java (Oracle) 8u511", "Java (Zulu) 21.0.5"])
         for finding in f {
-            #expect(finding.advisoryIDs == ["CVE-2026-114938"] && finding.severity == .high && finding.group == .criticalHigh && !finding.exploited)
+            #expect(finding.advisoryIDs == ["CVE-2026-114938", "CVE-2026-114820", "CVE-2026-91403"] && finding.severity == .high && finding.group == .criticalHigh
+                    && !finding.exploited && finding.flawCount == 1)
             #expect(finding.fixedVersion == nil && finding.subject == .project(slug: "openjdk", name: "OpenJDK", installedAs: "java"))
             #expect(finding.pageURL == SiteURL.projectPage(slug: "openjdk"))
             #expect(!(finding.note ?? "").contains("-XX:") && !(finding.note ?? "").lowercased().contains("workaround"))   // nothing invented
         }
         let temurin = f[0]
-        #expect(temurin.note == "The issuer lists 17.0.20 as affected, up to 17.0.21.0.3; it names no fixed release. "
+        #expect(temurin.note == "The issuer lists 17.0.20 as affected, up to 17.0.21.0.3; it names no fixed release. 14 more advisories state no affected versions; not checked, among them CVE-2026-114820, critical. "
                 + "Install the newest Java 17 update from adoptium.net.")
         #expect(temurin.upgradeCommand == nil && temurin.commandInputs == nil && temurin.grade == "C")
         #expect(temurin.originSummary == "JDK in /Library/Java/JavaVirtualMachines")
         let oracle = f[2]
-        #expect(oracle.note == "The issuer lists 8u511 as the newest affected version; it names no fixed release. Install the newest Java 8 update from oracle.com.")
+        #expect(oracle.note == "The issuer lists 8u511 as the newest affected version; it names no fixed release. 14 more advisories state no affected versions; not checked, among them CVE-2026-114820, critical. "
+                + "Install the newest Java 8 update from oracle.com.")
         #expect(oracle.grade == nil && oracle.verification == .none)                    // OpenJDK's grade is not Oracle's
         #expect(check.notChecked(products: [:], projects: ["openjdk": JDK.postFix]).isEmpty)
 
@@ -309,12 +316,15 @@ enum JDK {
         let runtimes = [runtime("27.0.1", .corretto, "Corretto-27.0.1.1.4"), runtime("27.0.1", .corretto, "Corretto-27.0.1.1.5"),
                         runtime("27.0.1", .corretto, "Corretto-27.0.1.1.3"), runtime("27.0.1", .corretto, nil),
                         runtime("17.0.20", .corretto, "Corretto-17.0.20.8.1"), runtime("27.0.1", .temurin, "Temurin-27.0.1+9")]
-        let f = JavaCheck.match(runtimes, index: Make.index).findings(products: [:], projects: ["openjdk": record])
-        // at or above the build Amazon lists: not affected by that advisory; below it, or unknown, or another line, or another vendor: affected
+        let all = JavaCheck.match(runtimes, index: Make.index).findings(products: [:], projects: ["openjdk": record])
+        // at or above the build Amazon lists: not affected by that advisory (only the record's advisories that state
+        // nothing are reported); below it, or unknown, or another line, or another vendor: affected
+        #expect(all.filter { $0.group == .reported }.count == 2)
+        let f = all.filter { $0.group != .reported }
         #expect(f.map { "\($0.title) \($0.origins.first.flatMap { if case let .javaRuntime(r) = $0 { return r.implementorVersion ?? "-" }; return nil } ?? "")" }
                 == ["Java (Corretto) Corretto-27.0.1.1.3", "Java (Corretto) -", "Java (Corretto) Corretto-17.0.20.8.1", "Java (Temurin) Temurin-27.0.1+9"])
         let below = f[0]
-        #expect(below.fixedVersion == "27.0.1.1.4" && below.note == "The issuer lists 27.0.1 as affected, up to 27.0.1.0.3; it names no fixed release. "
+        #expect(below.fixedVersion == "27.0.1.1.4" && below.note == "The issuer lists 27.0.1 as affected, up to 27.0.1.0.3; it names no fixed release. 14 more advisories state no affected versions; not checked, among them CVE-2026-114820, critical. "
                 + "Amazon Corretto's changelog lists the fix in Corretto 27.0.1.1.4. Install the newest Java 27 update from corretto.aws.")
         #expect(f.dropFirst().allSatisfy { $0.fixedVersion == nil && $0.note?.contains("changelog") == false })
         // what the vendor's build already fixes is said beside what still counts
@@ -348,6 +358,33 @@ enum JDK {
         #expect(f.advisoryIDs.contains("CVE-2026-114938") && f.fixedVersion == nil && f.note?.contains("changelog") == false)
     }
 
+    /// The live record (2026-11-19) states nothing for most of Java 8's advisories ("version '8u511-b32' is not a
+    /// version"): openjdk@8 8u502 is never left with nothing to say about CVE-2026-114820, which is critical.
+    @Test func anOpenJDKAdvisoryThatStatesNothingIsNeverDropped() throws {
+        let item = HomebrewItem(kind: .formula, name: "openjdk@8", version: "1.8.0-502", urls: ["https://openjdk.org/"])
+        let project = try #require(ProjectMatcher.project(for: item, in: Make.index))
+        let f = try #require(FindingBuilder(index: Make.index).findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)],
+                                                                        projects: ["openjdk": JDK.live], bigIssues: []).first)
+        #expect(f.group == .reported && f.installedVersion == "8u502" && f.flawCount == 2 && f.severity == .critical)
+        #expect(f.fixedVersion == nil && f.upgradeCommand == nil && f.advisoryIDs == ["CVE-2026-114820", "CVE-2026-91403"])
+        #expect(f.notChecked == Finding.NotChecked(id: "CVE-2026-114820", exploited: false, critical: true))
+        #expect(f.note == "Reported by the site, not checked: it publishes no affected versions for CVE-2026-114820 (and 1 more). "
+                + "13 more advisories state no affected versions; not checked.")
+    }
+
+    /// MC: a vendor's build is never named for a finding that is only reported.
+    @Test func aVendorBuildIsNeverNamedForAReportedFinding() throws {
+        let record = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
+            {"slug":"openjdk","name":"OpenJDK","recent":[{"id":"CVE-U","sev":"HIGH","fixed_hint":["27.0.1.1.2"],"ranges":[{"introduced":"27","limit":"x"}],
+             "fixed_builds":[{"dist":"Amazon Corretto","build":"27.0.1.1.4"}]}]}
+            """#.utf8))
+        var r = JDK.runtime("27.0.1", .corretto, path: "/Library/Java/JavaVirtualMachines/Corretto-27.0.1.1.3.jdk")
+        r.implementorVersion = "Corretto-27.0.1.1.3"
+        #expect(JavaCheck.vendorFixes(r, record.recent).fix == "27.0.1.1.4")
+        let f = try #require(JavaCheck.match([r], index: Make.index).findings(products: [:], projects: ["openjdk": record]).first)
+        #expect(f.group == .reported && f.fixedVersion == nil && f.note?.contains("changelog") == false)
+    }
+
     /// GraalVM is listed as not checked, with why, never against OpenJDK's advisories; so is a runtime whose record
     /// could not be read.
     @Test func graalVMIsNotCheckedAndSaysWhy() {
@@ -371,8 +408,10 @@ enum JDK {
         }
         let affected = try #require(brew("1.8.0-511").first)
         #expect(affected.id == "brew|openjdk@8|1.8.0-511" && affected.installedVersion == "8u511" && affected.originSummary == "Homebrew openjdk@8")
-        #expect(affected.note == "The issuer lists 8u511 as the newest affected version; it names no fixed release." && affected.upgradeCommand == "brew upgrade openjdk@8")
-        #expect(brew("1.8.0-512").isEmpty)
+        #expect(affected.note == "The issuer lists 8u511 as the newest affected version; it names no fixed release. 14 more advisories state no affected versions; not checked, among them CVE-2026-114820, critical."
+                && affected.upgradeCommand == "brew upgrade openjdk@8")
+        // past it, only the record's critical advisories that state nothing: reported, no version, no command
+        #expect(brew("1.8.0-512").map(\.group) == [.reported] && brew("1.8.0-512").first?.upgradeCommand == nil)
         // Homebrew's own versions are compared in that form too, and said as Java says them
         let plan = FixPlan.Homebrew(brew: "/opt/homebrew/bin/brew", name: "openjdk@8", cask: false, versionIsTheFix: true, label: "openjdk@8")
         #expect(HomebrewAvailability.decide(HomebrewInfo(name: "openjdk@8", stable: "1.8.0-512", installed: "1.8.0-511"), for: plan, fixedVersion: "8u512")
@@ -517,9 +556,10 @@ enum JDK {
         let report = await scanner.scan()
         #expect(report.problems.isEmpty, "\(report.problems)")
         #expect(report.findings.map { "\($0.title) \($0.installedVersion)" }.sorted()
-                == ["Java (Corretto) 17.0.20", "Java (OpenJDK) 21.0.2", "Java (Oracle) 8u511", "Java (Temurin) 17.0.20", "Java (Temurin) 17.0.9",
-                    "Java (Zulu) 21.0.5"])
-        // Corretto 8 is 8u514, past the last affected 8u511
+                == ["Java (Corretto) 17.0.20", "Java (Corretto) 8u514", "Java (OpenJDK) 21.0.2", "Java (Oracle) 8u511", "Java (Temurin) 17.0.20",
+                    "Java (Temurin) 17.0.9", "Java (Zulu) 21.0.5"])
+        // Corretto 8 is 8u514, past the last affected 8u511: only the record's advisories that state nothing are reported
+        #expect(report.findings.first { $0.installedVersion == "8u514" }?.group == .reported)
         #expect(report.findings.first { $0.installedVersion == "17.0.20" && $0.title == "Java (Temurin)" }?.upgradeCommand == "brew upgrade --cask temurin@17")
         #expect(report.findings.allSatisfy { $0.provenance?.first?.path != nil })
 
@@ -553,8 +593,10 @@ enum JDK {
         #expect(finding.title == "Java (Temurin)" && finding.installedVersion == "17.0.20")
 
         write(JDK.release("17.0.22"), to: bundle.appendingPathComponent("Contents/Home/release"))
+        // past the range, it is not "fixed": the record's critical advisories that state nothing are still reported
         let (fixedReport, fixed) = await scanner.recheck(finding, in: report)
-        #expect(fixed == .fixed(now: "17.0.22") && fixedReport.findings.isEmpty)
+        guard case let .notChecked(now) = fixed else { Issue.record("\(fixed)"); return }
+        #expect(now.installedVersion == "17.0.22" && now.group == .reported && fixedReport.findings.map(\.id) == [now.id])
 
         write(JDK.release("17.0.21"), to: bundle.appendingPathComponent("Contents/Home/release"))
         guard case let .stillAffected(still) = await scanner.recheck(finding, in: report).outcome else { Issue.record("not still affected"); return }

@@ -198,6 +198,9 @@ public struct Finding: Identifiable, Hashable, Codable, Sendable {
     public var provenance: [Provenance]? = nil
     /// An exploited or critical flaw the app did not check against published ranges (nil in reports saved before).
     public var notChecked: NotChecked? = nil
+    /// A program's finding whose every flaw is of another platform: listed, nothing to do on this Mac (nil otherwise,
+    /// and in reports saved before). It never weighs in the app's finding it is folded into.
+    public var onlyElsewhere: Bool? = nil
 
     public init(id: String, group: Group, subject: Subject, title: String, component: String? = nil, installedVersion: String, fixedVersion: String?,
                 severity: Severity?, advisoryIDs: [String], flawCount: Int, exploited: Bool, malicious: Bool,

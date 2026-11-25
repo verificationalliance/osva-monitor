@@ -78,7 +78,7 @@ import Testing
                          projects: ["nginx": Self.nginx])
         #expect(f.map(\.id) == ["brew|nginx|1.30.2"])                             // one finding for the formula
         let n = try #require(f.first)
-        #expect(n.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed. nginx-exporter 1.30.2 was built with Go 1.22.3, whose stdlib has 74 known flaws.")
+        #expect(n.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed. 13 more advisories state no affected versions; not checked, among them CVE-2026-42533, critical. nginx-exporter 1.30.2 was built with Go 1.22.3, whose stdlib has 74 known flaws.")
         // nginx's record publishes no ranges, so its 10 advisories are likely: the stdlib's checked flaws decide the count
         #expect(n.flawCount == 74 && n.group == .criticalHigh && n.upgradeCommand == "brew upgrade nginx")
     }
@@ -169,10 +169,12 @@ import Testing
         let state = try JSONDecoder().decode(StateResponse.self, from: Fixture.data("api/state.json"))
         let f = findings([], projects: ["nginx": Self.nginx], managed: [port, nix, patched].map { .init(package: $0, project: project) },
                          bigIssues: state.bigIssues)
-        #expect(f.count == 2)                                                          // 1.31.9 is at its branch's fix
-        let mp = try #require(f.first { $0.origins == [.macports(port: "nginx")] })
+        // 1.31.9 is at its branch's fix: only the record's critical advisories that state nothing are reported
+        #expect(f.count == 3 && f.first { $0.installedVersion == "1.31.9" }?.group == .reported)
+        let mp = try #require(f.first { $0.origins == [.macports(port: "nginx")] && $0.installedVersion == "1.30.2" })
         #expect(mp.title == "nginx" && mp.fixedVersion == "1.30.7" && mp.upgradeCommand == "sudo port upgrade nginx")
-        #expect(mp.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed. Run sudo port selfupdate first, so MacPorts knows the newest version.")
+        #expect(mp.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed. 13 more advisories state no affected versions; not checked, among them CVE-2026-42533, critical."
+                + " Run sudo port selfupdate first, so MacPorts knows the newest version.")
         #expect(mp.bigIssue != nil && mp.originSummary == "MacPorts nginx")
         let n = try #require(f.first { $0.origins.first?.kind == .nix })
         #expect(n.fixedVersion == "1.31.9" && n.upgradeCommand == "nix profile upgrade nginx")
@@ -530,5 +532,50 @@ extension ProgramFindingTests {
         let d = try #require(findings([(old, .program(docker("docker"))), (new, .program(docker("kubectl")))]).first)
         #expect(d.note?.hasPrefix("docker and kubectl were built with golang.org/x/net 0.23.0 to 0.40.0 — fixed in 0.33.0, and 1 more reported, not checked.")
                 == true, "\(d.note ?? "")")
+    }
+
+    /// I1, P2: a part whose flaws are all of another platform never decides a program, nor takes over a finding it is
+    /// folded into.
+    @Test func aPartWithFlawsOnlyElsewhereNeverTakesOver() throws {
+        let windows = try B.result("Go", "stdlib", "1.22.3", flaws: [B.flaw("GO-W", ranges: #"[{"fixed":"1.22.4"}]"#, severity: "CRITICAL",
+                                                                             platform: "windows")], plan: B.plan("1.22.4"))
+        // into nginx's likely project finding: it stays as it was, the program said
+        let exporter = BuiltProgram(language: .go, path: "/opt/homebrew/bin/nginx-exporter", name: "nginx-exporter", version: "1.30.2", place: .homebrew,
+                                    formula: "nginx", package: nil, toolchain: "1.22.3")
+        let brew = FindingBuilder.BrewMatch(item: HomebrewItem(kind: .formula, name: "nginx", version: "1.30.2", urls: []), project: Self.index.project(slug: "nginx")!)
+        let alone = try #require(findings([InstalledPackage](), brew: [brew], projects: ["nginx": Self.nginx]).first)
+        let n = try #require(findings([(windows, .program(exporter))], brew: [brew], projects: ["nginx": Self.nginx]).first)
+        #expect(alone.group == .likely && n.group == .likely && n.flawCount == alone.flawCount && n.severity == alone.severity && n.exploited == alone.exploited)
+        // its own finding: listed, nothing to do on this Mac
+        let docker = BuiltProgram(language: .go, path: "/usr/local/bin/docker", name: "docker", version: nil, place: .app, formula: nil, package: nil,
+                                  toolchain: nil, app: "Docker", cask: nil)
+        let program = try #require(findings([(windows, .program(docker))]).first)
+        #expect(program.group == .other && program.onlyElsewhere == true && program.upgradeCommand == nil)
+        // into an app's likely finding: it stays as it was
+        let app = Finding(id: "product|docker|4.41.2", group: .likely, subject: .product(key: "docker", name: "Docker"), title: "Docker",
+                          installedVersion: "4.41.2", fixedVersion: "4.86.0", severity: .critical, advisoryIDs: ["CVE-1"], flawCount: 6, exploited: true,
+                          malicious: false, note: "Likely affected: the site publishes no affected ranges, and the issuer names 4.86.0 as fixed.", bigIssue: nil,
+                          origins: [.application(name: "Docker", bundlePath: "/Applications/Docker.app", caskToken: nil)], pageURL: SiteURL.home,
+                          upgradeCommand: nil, verification: .none, grade: nil)
+        let d = try #require(FindingBuilder.foldingProgramsIntoApps([program, app]).first)
+        #expect(d.id == app.id && d.group == .likely && d.flawCount == 6 && d.severity == .critical && d.exploited)
+        // a program with a likely part and a part whose flaws are only elsewhere is likely, counted by its likely part
+        let likelyPart = try B.result("Go", "golang.org/x/net", "v0.23.0", flaws: [B.flaw("NET-L", fixedIn: #"["0.62.0"]"#)], plan: B.plan(nil))
+        let both = try #require(findings([(windows, .program(Self.gh)), (likelyPart, .program(Self.gh))]).first)
+        #expect(both.group == .likely && both.flawCount == 1 && both.severity == .high && both.onlyElsewhere == nil)
+    }
+
+    /// MB: a likely project finding a checked part decides takes the part's word on exploitation too.
+    @Test func aCheckedPartDecidesWhetherALikelyProjectIsExploited() throws {
+        let kev = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
+            {"slug":"nginx","name":"nginx","recent":[{"id":"CVE-N","sev":"HIGH","kev":true,"fixed_hint":["1.30.7"],"ranges":null}]}
+            """#.utf8))
+        let exporter = BuiltProgram(language: .go, path: "/opt/homebrew/bin/nginx-exporter", name: "nginx-exporter", version: "1.30.2", place: .homebrew,
+                                    formula: "nginx", package: nil, toolchain: "1.22.3")
+        let brew = FindingBuilder.BrewMatch(item: HomebrewItem(kind: .formula, name: "nginx", version: "1.30.2", urls: []), project: Self.index.project(slug: "nginx")!)
+        let alone = try #require(findings([InstalledPackage](), brew: [brew], projects: ["nginx": kev]).first)
+        #expect(alone.group == .likely && alone.exploited)
+        let n = try #require(findings([(try Self.stdlib(), .program(exporter))], brew: [brew], projects: ["nginx": kev]).first)
+        #expect(n.group == .other && !n.exploited && n.notChecked?.exploited == true)
     }
 }
