@@ -265,3 +265,54 @@ extension BatchCheck {
         return " (\(id), \(alert.words))"
     }
 }
+
+// MARK: A "patch these first" item in a package's answer
+
+extension BatchCheck {
+    /// `verdict` with a "patch these first" item the core finds affected (`IssueCheck.verdict`) as one of its flaws, so
+    /// that the finding is decided with it like any other: the listed flaw that is the item (by id or alias), decided by
+    /// the published ranges of the item's advisories (`ranges`) unless its own already hold the version, at the item's
+    /// severity and exploited when the item is; else the item as a flaw of its own. The answer's target is `target`:
+    /// the core judges it against every flaw, the item's included.
+    static func promoting(_ verdict: BatchResponse.Result, by issue: StateResponse.BigIssue, ranges: [AffectedRange], target: String?,
+                          installed: String) -> BatchResponse.Result {
+        var v = verdict
+        let item = BatchResponse.Flaw(item: issue, ranges: ranges)
+        if let k = v.flaws.firstIndex(where: { f in !f.malicious && ([f.id] + f.aliases).contains(where: issue.ids.contains) }) {
+            var f = v.flaws[k]
+            let holds = f.coreAdvisory.map { Core.shared.verdicts(installed: installed, advisories: [$0]) == [.inRange] } ?? false
+            if !holds {
+                f.ranges = ranges; f.rangesUnreadable = false; f.rangesNote = nil
+                if f.fixedInUnreadable { f.fixedIn = []; f.fixedInUnreadable = false }
+            }
+            if let s = Severity(api: issue.severity), Severity(api: f.severity).map({ s > $0 }) ?? true { f.severity = issue.severity }
+            if issue.exploited && f.exploitedSince == nil { f.exploitedSince = item.exploitedSince }
+            v.flaws[k] = f
+        } else {
+            v.flaws.append(item)
+            v.distinctFlaws += 1
+        }
+        v.advisories += issue.ids.filter { !v.advisories.contains($0) }
+        var plan = v.plan ?? BatchResponse.Plan(target: nil, remaining: [])
+        plan.target = target
+        v.plan = plan
+        return v
+    }
+}
+
+extension BatchResponse.Flaw {
+    /// A "patch these first" item as a flaw: the published ranges of its advisories, its severity, exploited when it is.
+    init(item issue: StateResponse.BigIssue, ranges: [AffectedRange]) {
+        id = issue.ids.first ?? issue.name; aliases = Array(issue.ids.dropFirst()); severity = issue.severity
+        summary = issue.title.isEmpty ? nil : issue.title
+        fixedIn = []; fixedInUnreadable = false; fixForYou = nil; platform = nil
+        exploitedSince = issue.exploited ? (issue.date.isEmpty ? "yes" : issue.date) : nil
+        malicious = false; self.ranges = ranges; rangesNote = nil; rangesUnreadable = false
+    }
+}
+
+extension BatchResponse.Plan {
+    init(target: String?, remaining: [Remaining]) {
+        self.target = target; fixes = []; self.remaining = remaining; requiresPython = nil; newestInstallable = nil
+    }
+}

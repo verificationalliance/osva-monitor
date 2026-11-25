@@ -593,4 +593,69 @@ extension BatchCheckTests {
         let marked = try #require(Self.findings([reported], index: Fixture.index, bigIssues: [issue]) { _ in app }.first)
         #expect(marked.group == .reported && marked.fixedVersion == nil && marked.notChecked?.exploited == true)
     }
+
+    /// The review of #20 and #21: a package's finding an item promotes is made again from its answer with the item in it,
+    /// so the version, "fixes N" and what it does not fix are the core's.
+    static func electronItem(exploited: Bool = true, severity: String = "CRITICAL") throws -> StateResponse.BigIssue {
+        try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data(#"""
+            {"name":"Electron","slug":"electron","severity":"\#(severity)","exploited":\#(exploited),"date":"2026-11-01","ids":["CVE-EL"],
+             "fixed_in":["28.3.2"],"title":"Electron's renderer escapes"}
+            """#.utf8))
+    }
+    static let electronRecord = try! JSONDecoder().decode(ProjectResponse.self, from: Data(#"""
+        {"slug":"electron","name":"Electron","recent":[{"id":"CVE-EL","sev":"HIGH","ranges":[{"introduced":"28.0.0","fixed":"28.3.2"}]}]}
+        """#.utf8))
+    static let slack = Origin.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack")
+
+    @Test func aPromotedPackageFindingIsJudgedAgainstAllItsFlaws() throws {
+        // N1, scenario 1: A fixed in 28.2.0, BB in 28.3.0, target 28.2.0; the item's range moves the version to 28.3.2,
+        // which leaves all three
+        let a = Self.flaw("A", ranges: #"[{"fixed":"28.2.0"}]"#), bb = Self.flaw("BB", ranges: #"[{"fixed":"28.3.0"}]"#)
+        let before = try #require(Self.findings([try Self.result("npm", "electron", "28.1.0", flaws: [a, bb], plan: Self.plan("28.2.0"))],
+                                                index: Fixture.index) { _ in Self.slack }.first)
+        #expect(before.fixedVersion == "28.2.0" && before.fixesCount == 1 && before.unresolved.map(\.id) == ["BB"])
+        let one = try #require(Self.findings([try Self.result("npm", "electron", "28.1.0", flaws: [a, bb], plan: Self.plan("28.2.0"))], index: Fixture.index,
+                                             bigIssues: [try Self.electronItem()], projects: ["electron": Self.electronRecord]) { _ in Self.slack }.first)
+        #expect(one.group == .exploited && one.fixedVersion == "28.3.2" && one.flawCount == 3 && one.fixesCount == 3 && one.unresolved.isEmpty)
+        #expect(one.note?.hasPrefix("The issuer lists 28.1.0 as affected and 28.3.2 as fixed.") == true && one.upgradeCommand == "brew upgrade --cask slack")
+        // scenario 2: A has a second range, [28.3.0, 28.3.5): 28.3.2 does not leave it, and the row says so
+        let a2 = Self.flaw("A", ranges: #"[{"fixed":"28.2.0"},{"introduced":"28.3.0","fixed":"28.3.5"}]"#)
+        let two = try #require(Self.findings([try Self.result("npm", "electron", "28.1.0", flaws: [a2, bb], plan: Self.plan("28.2.0"))], index: Fixture.index,
+                                             bigIssues: [try Self.electronItem()], projects: ["electron": Self.electronRecord]) { _ in Self.slack }.first)
+        #expect(two.fixedVersion == "28.3.2" && two.fixesCount == 2 && two.unresolved.map(\.id) == ["A"])
+        #expect(two.unresolved.first?.explanation == "Not fixed by this upgrade")
+    }
+
+    /// An Electron finding an item made, without a batch answer, is made again by a later item the core finds affected.
+    @Test func anElectronFindingAnItemMadeIsMadeAgainByTheNext() throws {
+        let first = try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data(#"""
+            {"name":"Electron","slug":"electron","severity":"HIGH","exploited":true,"ids":["CVE-OTHER"],"fixed_in":["28.2.0"],"title":"Another"}
+            """#.utf8))
+        let approved = PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "electron", version: "28.1.0", origin: Self.slack)]).approved
+        let f = try #require(FindingBuilder(index: Fixture.index).findings(approved: approved, verdicts: [:], brew: [], projects: ["electron": Self.electronRecord],
+                                                                          bigIssues: [first, try Self.electronItem()]).first)
+        #expect(f.group == .exploited && f.fixedVersion == "28.3.2" && f.upgradeCommand == "brew upgrade --cask slack")
+        #expect(f.note == "The issuer lists 28.1.0 as affected and 28.3.2 as fixed. 1 more advisory without published ranges likely affects it too: CVE-OTHER, exploited in the wild.")
+    }
+
+    /// n1: a likely finding the item promotes keeps its other sentences, and names its most urgent likely flaw.
+    @Test func aPromotedLikelyFindingKeepsWhatItSaid() throws {
+        let likely = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-L", fixedIn: #"["28.2.0"]"#, severity: "CRITICAL"),
+                                                                          Self.flaw("CVE-R", ranges: #"[{"fixed":"20.0.0"}]"#)], plan: Self.plan("28.2.0"))
+        let f = try #require(Self.findings([likely], index: Fixture.index, bigIssues: [try Self.electronItem()],
+                                           projects: ["electron": Self.electronRecord]) { _ in Self.slack }.first)
+        #expect(f.group == .exploited && f.fixedVersion == "28.3.2" && f.flawCount == 1)
+        #expect(f.note == "The issuer lists 28.1.0 as affected and 28.3.2 as fixed. 1 more flaw without published ranges likely affects it too: CVE-L, critical. "
+                + "1 more flaw is reported, not checked.")
+        #expect(f.notChecked == Alert(id: "CVE-L", exploited: false, critical: true))
+    }
+
+    /// MX5 (a package): an item that is not exploited, on a likely finding whose own flaw is: critical and high, not
+    /// exploited, and the mark kept.
+    @Test func anUnexploitedItemNeverMakesAPackageExploited() throws {
+        let likely = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-X", fixedIn: #"["28.2.0"]"#, exploited: true)], plan: Self.plan("28.2.0"))
+        let f = try #require(Self.findings([likely], index: Fixture.index, bigIssues: [try Self.electronItem(exploited: false, severity: "HIGH")],
+                                           projects: ["electron": Self.electronRecord]) { _ in Self.slack }.first)
+        #expect(f.group == .criticalHigh && !f.exploited && f.notChecked == Alert(id: "CVE-X", exploited: true, critical: false))
+    }
 }
