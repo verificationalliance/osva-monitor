@@ -699,19 +699,8 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         return (scanner, runner, transport, later)
     }
 
-    /// nginx's recorded advisories without those that state nothing (13 of them, five critical, which no version
-    /// leaves: `aRecheckIsNeverFixedOverAnUrgentAdvisoryThatStatesNothing`).
-    static var nginxStating: Data {
-        var json = try! JSONSerialization.jsonObject(with: Fixture.data("api/project-nginx.json")) as! [String: Any]
-        json["recent"] = (json["recent"] as! [[String: Any]]).filter { a in
-            !((a["ranges"] as? [Any])?.isEmpty ?? true) || !((a["fixed_hint"] as? [Any])?.isEmpty ?? true)
-        }
-        return try! JSONSerialization.data(withJSONObject: json)
-    }
-
     @Test func aHomebrewUpgradeThatReachedTheFixIsFixed() async throws {
-        let (scanner, runner, transport, later) = setUp()
-        later.lock.withLock { later.nginx = Self.nginxStating }
+        let (scanner, runner, transport, _) = setUp()
         let report = await scanner.scan()
         let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
         let asked = transport.requests.count
@@ -736,19 +725,24 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         #expect(updated.findings.filter { $0.title == "nginx" }.map(\.id) == ["brew|nginx|1.30.5"])
     }
 
-    /// An upgrade that leaves every advisory with published ranges is not "fixed" while an urgent one states nothing.
-    @Test func aRecheckIsNeverFixedOverAnUrgentAdvisoryThatStatesNothing() async throws {
-        let (scanner, runner, _, later) = setUp()
-        later.lock.withLock {
-            later.nginx = Data(#"{"slug":"nginx","name":"nginx","recent":[{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.30.7"}]},{"id":"CVE-S","sev":"CRITICAL","ranges":null}]}"#.utf8)
+    /// An upgrade that leaves every advisory with published ranges is not "fixed" while one exploited in the wild states
+    /// nothing; one that is only critical does not stop it.
+    @Test func aRecheckIsNeverFixedOverAnExploitedAdvisoryThatStatesNothing() async throws {
+        func recheck(_ unstated: String) async throws -> OSVAKit.Scanner.Recheck {
+            let (scanner, runner, _, later) = setUp()
+            later.lock.withLock {
+                later.nginx = Data(#"{"slug":"nginx","name":"nginx","recent":[{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.30.7"}]},\#(unstated)]}"#.utf8)
+            }
+            let report = await scanner.scan()
+            let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
+            #expect(nginx.group == .criticalHigh && nginx.notChecked?.id == "CVE-S")
+            runner.set(Self.brewKey, Self.nginx("1.30.7_1"))
+            return await scanner.recheck(nginx, in: report).outcome
         }
-        let report = await scanner.scan()
-        let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
-        #expect(nginx.group == .criticalHigh && nginx.notChecked?.id == "CVE-S")
-        runner.set(Self.brewKey, Self.nginx("1.30.7_1"))
-        let (_, outcome) = await scanner.recheck(nginx, in: report)
-        guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
+        let exploited = try await recheck(#"{"id":"CVE-S","sev":"HIGH","kev":true,"ranges":null}"#)
+        guard case let .notChecked(now) = exploited else { Issue.record("\(exploited)"); return }
         #expect(now.group == .reported && now.notChecked?.id == "CVE-S" && now.fixedVersion == nil)
+        #expect(try await recheck(#"{"id":"CVE-S","sev":"CRITICAL","ranges":null}"#) == .fixed(now: "1.30.7"))
     }
 
     @Test func aPackageIsAskedAboutAloneAndAfresh() async throws {

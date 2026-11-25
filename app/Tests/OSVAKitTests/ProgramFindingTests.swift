@@ -169,9 +169,8 @@ import Testing
         let state = try JSONDecoder().decode(StateResponse.self, from: Fixture.data("api/state.json"))
         let f = findings([], projects: ["nginx": Self.nginx], managed: [port, nix, patched].map { .init(package: $0, project: project) },
                          bigIssues: state.bigIssues)
-        // 1.31.9 is at its branch's fix: only the record's critical advisories that state nothing are reported
-        #expect(f.count == 3 && f.first { $0.installedVersion == "1.31.9" }?.group == .reported)
-        let mp = try #require(f.first { $0.origins == [.macports(port: "nginx")] && $0.installedVersion == "1.30.2" })
+        #expect(f.count == 2)                                                          // 1.31.9 is at its branch's fix
+        let mp = try #require(f.first { $0.origins == [.macports(port: "nginx")] })
         #expect(mp.title == "nginx" && mp.fixedVersion == "1.30.7" && mp.upgradeCommand == "sudo port upgrade nginx")
         #expect(mp.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.30.7 as fixed. 13 more advisories state no affected versions; not checked, among them CVE-2026-42533, critical."
                 + " Run sudo port selfupdate first, so MacPorts knows the newest version.")

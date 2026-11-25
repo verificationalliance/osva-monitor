@@ -400,40 +400,51 @@ extension RangesTests {
 /// The review of #19: advisories that state nothing are never dropped when urgent, and an item that promotes a finding
 /// brings its version and its sentence with it.
 extension RangesTests {
-    @Test func anAdvisoryThatStatesNothingIsNeverDroppedWhenUrgent() throws {
-        // P1: a critical advisory with no ranges and no fixed versions, alone: a reported finding for it
-        let p1 = try record("nginx", [#"{"id":"CVE-S","sev":"CRITICAL","fixed_hint":[],"ranges":null}"#])
-        let f = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": p1]).first)
-        #expect(f.group == .reported && f.flawCount == 1 && f.severity == .critical && f.fixedVersion == nil && f.upgradeCommand == nil)
-        #expect(f.advisoryIDs == ["CVE-S"] && f.notChecked == Finding.NotChecked(id: "CVE-S", exploited: false, critical: true))
-        #expect(f.note == "Reported by the site, not checked: it publishes no affected versions for CVE-S." && report([f]).actionCount == 0)
-        // exploited in the wild the same
-        let kev = try record("nginx", [#"{"id":"CVE-K","sev":"HIGH","kev":true,"ranges":null}"#])
-        #expect(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": kev]).first?.notChecked == Finding.NotChecked(id: "CVE-K", exploited: true, critical: false))
-        // a high one alone makes none: records with no data do not fill the panel
-        let quiet = try record("nginx", [#"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
-        #expect(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": quiet]).isEmpty)
-        // a reported finding counts the others
-        let two = try record("nginx", [#"{"id":"CVE-S","sev":"CRITICAL","ranges":null}"#, #"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
-        let r = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": two]).first)
-        #expect(r.advisoryIDs == ["CVE-S"] && r.flawCount == 1)
-        #expect(r.note == "Reported by the site, not checked: it publishes no affected versions for CVE-S. 1 more advisory states no affected versions; not checked.")
-        // beside an affected advisory, all are said, and the urgent one named and marked
-        let mixed = try record("nginx", [#"{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.31.9"}]}"#, #"{"id":"CVE-S","sev":"CRITICAL","ranges":null}"#,
-                                         #"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
-        let g = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": mixed]).first)
-        #expect(g.group == .criticalHigh && g.flawCount == 1 && g.fixedVersion == "1.31.9" && g.advisoryIDs == ["CVE-A", "CVE-S"])
-        #expect(g.note == "The issuer lists 1.31.5 as affected and 1.31.9 as fixed. 2 more advisories state no affected versions; not checked, among them CVE-S, critical.")
-        #expect(g.notChecked == Finding.NotChecked(id: "CVE-S", exploited: false, critical: true))
+    @Test func anExploitedAdvisoryThatStatesNothingMakesAReportedFinding() throws {
+        // P1: an advisory exploited in the wild with no ranges and no fixed versions, alone: a reported finding for it
+        let kev = try record("nginx", [#"{"id":"CVE-K","sev":"HIGH","kev":true,"fixed_hint":[],"ranges":null}"#])
+        let f = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": kev]).first)
+        #expect(f.group == .reported && f.flawCount == 1 && f.exploited && f.fixedVersion == nil && f.upgradeCommand == nil)
+        #expect(f.advisoryIDs == ["CVE-K"] && f.notChecked == Finding.NotChecked(id: "CVE-K", exploited: true, critical: false))
+        #expect(f.note == "Reported by the site, not checked: it publishes no affected versions for CVE-K." && report([f]).actionCount == 0)
+        // the critical and the other advisories that state nothing beside it are counted, the critical one named
+        let more = try record("nginx", [#"{"id":"CVE-K","sev":"HIGH","kev":true,"ranges":null}"#, #"{"id":"CVE-C","sev":"CRITICAL","ranges":null}"#,
+                                        #"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
+        let g = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": more]).first)
+        #expect(g.group == .reported && g.flawCount == 1 && g.advisoryIDs == ["CVE-K", "CVE-C"])
+        #expect(g.note == "Reported by the site, not checked: it publishes no affected versions for CVE-K. "
+                + "2 more advisories state no affected versions; not checked, among them CVE-C, critical.")
         // ranges that cannot be read and no fixed versions: said as unreadable
-        let unread = try record("nginx", [#"{"id":"CVE-U","sev":"CRITICAL","ranges":[{"introduced":"1.0","limit":"2.0"}]}"#])
+        let unread = try record("nginx", [#"{"id":"CVE-U","sev":"HIGH","kev":true,"ranges":[{"introduced":"1.0","limit":"2.0"}]}"#])
         #expect(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": unread]).first?.note
                 == "Reported by the site, not checked: the app could not read its affected ranges for CVE-U.")
         // a product's record the same
-        let zoom = try JSONDecoder().decode(ProductResponse.self, from: Data(#"{"key":"zoom","name":"Zoom Workplace","recent":[{"id":"ZSB-S","sev":"CRITICAL"}]}"#.utf8))
+        let zoom = try JSONDecoder().decode(ProductResponse.self, from: Data(#"{"key":"zoom","name":"Zoom Workplace","recent":[{"id":"ZSB-K","sev":"HIGH","kev":true}]}"#.utf8))
         let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.6.10", bundleVersion: nil, caskToken: "zoom")
         let z = try #require(BundleCheck.match(Inventory(apps: [app]), index: Make.index).findings(products: ["zoom": zoom], projects: [:]).first)
-        #expect(z.group == .reported && z.upgradeCommand == nil && z.notChecked?.critical == true)
+        #expect(z.group == .reported && z.upgradeCommand == nil && z.notChecked?.exploited == true)
+    }
+
+    @Test func aCriticalAdvisoryThatStatesNothingMakesNoFindingAlone() throws {
+        // evidence about no version in particular: on the site, never a finding of its own
+        let critical = try record("nginx", [#"{"id":"CVE-C","sev":"CRITICAL","fixed_hint":[],"ranges":null}"#, #"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
+        #expect(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": critical]).isEmpty)
+        let zoom = try JSONDecoder().decode(ProductResponse.self, from: Data(#"{"key":"zoom","name":"Zoom Workplace","recent":[{"id":"ZSB-C","sev":"CRITICAL"}]}"#.utf8))
+        let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.6.10", bundleVersion: nil, caskToken: "zoom")
+        #expect(BundleCheck.match(Inventory(apps: [app]), index: Make.index).findings(products: ["zoom": zoom], projects: [:]).isEmpty)
+    }
+
+    @Test func aCriticalAdvisoryThatStatesNothingIsNamedBesideAFinding() throws {
+        let mixed = try record("nginx", [#"{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.31.9"}]}"#, #"{"id":"CVE-C","sev":"CRITICAL","ranges":null}"#,
+                                         #"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
+        let g = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": mixed]).first)
+        #expect(g.group == .criticalHigh && g.flawCount == 1 && g.fixedVersion == "1.31.9" && g.advisoryIDs == ["CVE-A", "CVE-C"])
+        #expect(g.note == "The issuer lists 1.31.5 as affected and 1.31.9 as fixed. 2 more advisories state no affected versions; not checked, among them CVE-C, critical.")
+        #expect(g.notChecked == Finding.NotChecked(id: "CVE-C", exploited: false, critical: true))
+        // a high one that states nothing beside it is only counted
+        let high = try record("nginx", [#"{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.31.9"}]}"#, #"{"id":"CVE-H","sev":"HIGH","ranges":null}"#])
+        let h = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": high]).first)
+        #expect(h.note == "The issuer lists 1.31.5 as affected and 1.31.9 as fixed. 1 more advisory states no affected versions; not checked." && h.notChecked == nil)
     }
 
     @Test func rangesThatReadDecideBesideFixedVersionsThatDoNot() throws {
@@ -443,7 +454,7 @@ extension RangesTests {
         let f = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": p]).first)
         #expect(f.group == .criticalHigh && f.fixedVersion == "1.31.9" && f.note == "The issuer lists 1.31.5 as affected and 1.31.9 as fixed.")
         // without ranges, fixed versions that do not read state nothing
-        let q = try record("nginx", [#"{"id":"CVE-F","sev":"CRITICAL","fixed_hint":"1.31.9","ranges":null}"#])
+        let q = try record("nginx", [#"{"id":"CVE-F","sev":"HIGH","kev":true,"fixed_hint":"1.31.9","ranges":null}"#])
         #expect(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": q]).first?.note
                 == "Reported by the site, not checked: the app could not read the fixed versions it names for CVE-F.")
     }
