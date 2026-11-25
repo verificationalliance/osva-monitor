@@ -179,11 +179,14 @@ import Testing
          {"id":"CVE-2019-10906","fixed_in":["2.10.1"],"ranges":[{"fixed":"2.10.1"}],"ranges_note":null},
          {"id":"GHSA-new","fixed_in":["3.1.5"],"ranges":null,"ranges_note":"no record states version ranges"},
          {"id":"CVE-2020-28493","fixed_in":["2.11.3"]},
-         {"id":"CVE-2024-22195","fixed_in":["3.1.3"],"ranges":[{"introduced":"1","x":"2"}]}]}]}
+         {"id":"CVE-2024-22195","fixed_in":["3.1.3"],"ranges":[{"introduced":"1","x":"2"}]},
+         {"id":"CVE-2024-34064","fixed_in":"3.1.4","ranges":[{"fixed":"3.1.4"}]},
+         {"id":"CVE-2024-56201","fixed_in":["3.1.5",null],"ranges":[{"fixed":"3.1.5"}]},
+         {"id":"CVE-2025-27516","ranges":[{"fixed":"3.1.6"}]}]}]}
         """#
         let r = try JSONDecoder().decode(BatchResponse.self, from: Data(json.utf8))
         let f = try #require(r.packages.first).flaws
-        try #require(f.count == 4)
+        try #require(f.count == 7)
         #expect(f[0].ranges == [AffectedRange(fixed: "2.10.1")] && f[0].rangesNote == nil && !f[0].rangesUnreadable)
         #expect(f[0].coreAdvisory == CoreAdvisory(ranges: [AffectedRange(fixed: "2.10.1")], fixed: ["2.10.1"]))
         #expect(f[1].ranges == nil && f[1].rangesNote == "no record states version ranges" && !f[1].rangesUnreadable)
@@ -191,10 +194,16 @@ import Testing
         #expect(f[2].ranges == nil && f[2].rangesNote == nil && !f[2].rangesUnreadable)       // a 0.5.1-era answer
         #expect(f[2].coreAdvisory == CoreAdvisory(ranges: nil, fixed: ["2.11.3"]))
         #expect(f[3].ranges == nil && f[3].rangesUnreadable && f[3].coreAdvisory == nil)      // never a wider range
+        // fixed_in reads as strictly: a list that does not read is unreadable, never []
+        #expect(f[0...3].allSatisfy { !$0.fixedInUnreadable })
+        #expect(f[4].fixedInUnreadable && f[4].fixedIn == [] && f[4].coreAdvisory == nil)
+        #expect(f[5].fixedInUnreadable && f[5].coreAdvisory == nil)
+        #expect(!f[6].fixedInUnreadable && f[6].coreAdvisory == CoreAdvisory(ranges: [AffectedRange(fixed: "3.1.6")], fixed: []))   // none stated
         // the batch cache's copy reads back the same, unreadable included
         let again = try JSONDecoder().decode([BatchResponse.Result].self, from: JSONEncoder().encode(r.packages))
         #expect(again == r.packages)
-        #expect(again.first?.flaws.map(\.rangesUnreadable) == [false, false, false, true])
+        #expect(again.first?.flaws.map(\.rangesUnreadable) == [false, false, false, true, false, false, false])
+        #expect(again.first?.flaws.map(\.fixedInUnreadable) == [false, false, false, false, true, true, false])
     }
 
     @Test func projects() throws {
