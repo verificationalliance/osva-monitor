@@ -9,9 +9,12 @@ enum Fixture {
     static let lockfiles: URL = {
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("osva-lockfiles-\(UUID().uuidString)", isDirectory: true)
         let source = root.appendingPathComponent("lockfiles", isDirectory: true)
-        let files = FileManager.default.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey])!
-        for case let file as URL in files where (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
-            let relative = String(file.path.dropFirst(source.path.count + 1))
+        // Paths relative to `source`, from the enumerator itself: the URLs it gives have symlinks resolved, so under /tmp
+        // or /var they start /private/… while `source` does not, and cutting `source.path` off them would be off.
+        let files = FileManager.default.enumerator(atPath: source.path)!
+        for case let relative as String in files {
+            let file = source.appendingPathComponent(relative)
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
             let name = relative.hasSuffix(".fixture") ? String(relative.dropLast(".fixture".count)) : relative
             let target = copy.appendingPathComponent(name)
             try! FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
