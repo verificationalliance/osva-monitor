@@ -103,6 +103,24 @@ mutant settable-advice \
   $K/Scan/UpgradeCommand.swift "        public fileprivate(set) var command: String?" "        public var command: String?"
 mutant settable-note \
   $K/Model/Finding.swift "    public private(set) var note: String?" "    public var note: String?"
+mutant generic-redecode \
+  $K/Fix/FixAdvisor.swift "import Foundation" \
+  "import Foundation; func redecode<T: Codable>(_ value: T, _ edit: (inout [String: Any]) -> Void) -> T { var j = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as! [String: Any]; edit(&j); return try! JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: j)) }; func forged(_ f: Finding) -> Finding { redecode(f) { \$0[\"fixedVersion\"] = \"9.9\" } }"
+mutant generic-redecode-plist \
+  $K/Fix/FixAdvisor.swift "import Foundation" \
+  "import Foundation; func redecode<T: Codable>(_ value: T, _ edit: (inout [String: Any]) -> Void) -> T { var p = try! PropertyListSerialization.propertyList(from: PropertyListEncoder().encode(value), format: nil) as! [String: Any]; edit(&p); return try! PropertyListDecoder().decode(T.self, from: PropertyListSerialization.data(fromPropertyList: p, format: .binary, options: 0)) }; func forged(_ f: Finding) -> Finding { redecode(f) { \$0[\"fixedVersion\"] = \"9.9\" } }"
+mutant decode-on-an-unknown-line \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func reread<T: Decodable>(_ type: T.Type, _ data: Data) -> T? { try? JSONDecoder().decode(type, from: data) }"
+mutant dictionary-made-json \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func json(_ fields: [String: Any]) -> Data? { try? JSONSerialization.data(withJSONObject: fields) }"
+mutant a-decoder-of-its-own \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; protocol LooseDecoder: Decoder {}"
+mutant value-from-a-decoder \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func make<T: Decodable>(_ type: T.Type, _ decoder: Decoder) throws -> T { try T(from: decoder) }"
+mutant version-key-elsewhere \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; let commandKey = \"upgradeCommand\""
+mutant target-key-written \
+  $K/Fix/FixAdvisor.swift "import Foundation" "import Foundation; func retarget(_ inputs: inout [String: Any]) { inputs[\"target\"] = \"9.9\" }"
 mutant nearest-version-back \
   $K/Core.swift "    /// The versions, oldest first." \
   "    public func nearestVersion(in versions: [String], above version: String) -> String? { sortedVersions(versions.filter { compareVersions(\$0, version) > 0 }).first }"
