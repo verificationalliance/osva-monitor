@@ -8,6 +8,12 @@ go on over indented lines). At most six lines, each short and plain: what change
 their words, not ours. docs/release-notes/<version>.md, the notes in Sparkle's update window, has the same lines;
 ChangelogTests checks both, and that scripts/build-app.sh's version has an entry.
 
+## 0.6.0
+
+- Says a package is affected only when its version is inside a range the site publishes.
+- Lists what the site reports without ranges under “Not checked against published ranges”.
+- Suggests an upgrade only when the app’s proved core confirms what it fixes.
+
 ## 0.5.1
 
 - Checks every Java on the Mac: Temurin, Oracle, Zulu, Corretto, IntelliJ's and SDKMAN's JDKs.
