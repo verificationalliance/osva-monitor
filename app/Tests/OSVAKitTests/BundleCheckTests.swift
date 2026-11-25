@@ -166,7 +166,7 @@ import Testing
     }
 
     @Test func eachExtensionThatBundlesAPackageIsItsOwnFinding() throws {
-        let batch = try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-malicious.json"))
+        let batch = try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-plan.json"))
         func ext(_ id: String, _ name: String) -> Origin { .addOn(host: .vscode, id: id, name: name, profile: nil, path: "/u/.vscode/extensions/\(id)") }
         let installed = [
             InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20", origin: ext("eamodio.gitlens", "GitLens")),
@@ -177,8 +177,9 @@ import Testing
         #expect(selection.approved.count == 2 && selection.approved.keys.allSatisfy { $0.platform == "macos" })   // one question per version
         let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in batch.packages.first { $0.name == a.name }.map { (a, $0) } })
         let f = FindingOrder.sorted(FindingBuilder(index: Fixture.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: []))
-        #expect(f.map { "\($0.title) · \($0.versionLabel) · \($0.group)" } == ["GitLens · axios 1.14.1 · malicious", "GitLens · lodash 4.17.20 · criticalHigh",
-                                                                                "Other · lodash 4.17.20 · criticalHigh"])
+        #expect(f.map { "\($0.title) · \($0.versionLabel) · \($0.group)" } == ["GitLens · axios 1.14.1 · malicious",
+                                                                                "GitLens · lodash 4.17.20 → 4.17.21 · criticalHigh",
+                                                                                "Other · lodash 4.17.20 → 4.17.21 · criticalHigh"])
         #expect(f[0].upgradeCommand == "code --uninstall-extension eamodio.gitlens" && f[0].note == "Remove it, then rotate every secret it could read.")
         #expect(f[1].upgradeCommand == nil && f[1].note == "Update GitLens in VS Code: it ships its own lodash.")
         #expect(f[1].originSummary == "VS Code extension · eamodio.gitlens")
@@ -229,7 +230,7 @@ import Testing
             "criticalHigh · zoom.us · Sparkle 1.24.0 → 2.7.3",
             "criticalHigh · zoom.us · Python 3.11.15 → 3.14.11",
             "criticalHigh · zoom.us · 6.6.10 → 6.6.12",
-            "criticalHigh · Prettier · lodash 4.17.20",
+            "reported · Prettier · lodash 4.17.20",                                // 0.5.1's answer lists no flaws: not checked
         ])
         #expect(report.inventory.reports.map(\.detail).contains("2 apps"))
         #expect(report.inventory.reports.map(\.detail).contains("3 extensions in VS Code, Chrome"))

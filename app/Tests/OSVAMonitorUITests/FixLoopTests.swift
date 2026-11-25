@@ -44,7 +44,7 @@ import OSVAKit
                 var packages: [String] = []
                 for (name, version, fixed) in [("lodash", "4.17.20", "4.17.21"), ("chalk", "4.0.0", "4.1.2")]
                 where asked.contains(#""name":"\#(name)","platform":"macos","version":"\#(version)""#) {
-                    packages.append(#"{"ecosystem":"npm","name":"\#(name)","version":"\#(version)","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(fixed)"]}],"plan":{"target":"\#(fixed)","fixes":["GHSA-x"],"remaining":[]}}"#)
+                    packages.append(#"{"ecosystem":"npm","name":"\#(name)","version":"\#(version)","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-x"],"flaws":[{"id":"GHSA-x","severity":"HIGH","fixed_in":["\#(fixed)"],"ranges":[{"fixed":"\#(fixed)"}]}],"plan":{"target":"\#(fixed)","fixes":["GHSA-x"],"remaining":[]}}"#)
                 }
                 body = Data(#"{"checked":1,"packages":[\#(packages.joined(separator: ","))]}"#.utf8)
             default: body = Data("{}".utf8)

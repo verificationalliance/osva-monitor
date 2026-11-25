@@ -23,6 +23,10 @@ public actor Scanner {
         public static let state: TimeInterval = 3600
     }
 
+    /// Where exact-version answers are cached. Answers saved by 0.5.1 and before ("batch") have no ranges, so they are
+    /// never read as checked answers: a scan asks again and keeps the new answer here.
+    static let batchCache = "batch-v2"
+
     private let configuration: ScanConfiguration
     private let indexStore: IndexStore
     private let api: APIClient
@@ -91,7 +95,7 @@ public actor Scanner {
         var verdicts: [ApprovedPackage: BatchResponse.Result] = [:]
         var toAsk: [ApprovedPackage] = []
         for p in packages {
-            if let cached = cache.readJSON(CachedVerdict.self, "batch", p.cacheKey, maxAge: Freshness.batchVerdict) {
+            if let cached = cache.readJSON(CachedVerdict.self, Self.batchCache, p.cacheKey, maxAge: Freshness.batchVerdict) {
                 if let r = cached.result { verdicts[p] = r }
                 fromCache.append(p.sentDescription)
             } else {
@@ -108,7 +112,7 @@ public actor Scanner {
                 for p in chunk {
                     let r = byKey[p.versionKey]
                     if let r { verdicts[p] = r }
-                    cache.writeJSON(CachedVerdict(result: r), "batch", p.cacheKey)
+                    cache.writeJSON(CachedVerdict(result: r), Self.batchCache, p.cacheKey)
                 }
             } catch {
                 problems.append("Exact-version check: \(error.localizedDescription)")
@@ -271,7 +275,7 @@ public actor Scanner {
                     let byKey = Dictionary(results.map { ("\($0.ecosystem)\u{1F}\($0.name)\u{1F}\($0.version)", $0) }, uniquingKeysWith: { a, _ in a })
                     for p in chunk {
                         if let r = byKey[p.versionKey] { verdicts[p] = r }
-                        cache.writeJSON(CachedVerdict(result: byKey[p.versionKey]), "batch", p.cacheKey)
+                        cache.writeJSON(CachedVerdict(result: byKey[p.versionKey]), Self.batchCache, p.cacheKey)
                     }
                 } catch {
                     return (report, .couldNotCheck(error.localizedDescription))

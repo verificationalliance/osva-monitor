@@ -21,16 +21,17 @@ import OSVACore
 /// For one package's advisories at a time, the core also decides what each says about a version (`verdicts`: inside a
 /// published range, likely affected by its first fixed versions, or outside with evidence; this wrapper marks
 /// `.unstated` an advisory that states nothing to decide by, which is "reported, not checked"), the upgrade that leaves
-/// every one of them (`upgrade(from:advisories:)`, refused past a measured amount of work), and which of them an upgrade
-/// it did not pick leaves (`judge`). Only these make a `CheckedUpgrade` or a `Judgement`. `versionUncertain` names the
-/// versions whose order Maven or Composer may not share. The scan and fix paths do not ask them yet: until they do, the
-/// paths below decide as they say.
+/// every one of them that states something (`upgrade(from:advisories:)`, refused past a measured amount of work), and
+/// which of them an upgrade it did not pick leaves (`judge`). Only these make a `CheckedUpgrade` or a `Judgement`.
+/// `versionUncertain` names the versions whose order Maven or Composer may not share. Packages checked by exact version
+/// (`api/v1/check/batch`: registry packages, project folders' lockfiles, the Electron inside apps, the packages inside
+/// Go and Rust programs and pipx and uv tools) ask them (BatchCheck): a flaw is affected only inside its published
+/// ranges, and the server's `plan.target` is shown only when `judge` confirms it. The project, product and fix paths do
+/// not ask them yet: until they do, the paths below decide as they say.
 ///
 /// The rest is not the core's:
-///   - Packages checked by exact version (`api/v1/check/batch`: registry packages, project folders' lockfiles, the
-///     Electron inside apps, the packages inside Go and Rust programs and pipx and uv tools) are flagged on the
-///     server's verdict, and their upgrade is the server's `plan.target`, which the app checks only for reading as a
-///     version (FixSafety). FixAdvisor's partial fixes are the server's plans too.
+///   - FixAdvisor's partial fixes and pip's resolved versions are the server's plans, which the app checks only for
+///     reading as versions (FixSafety).
 ///   - Only `upgrade(from:ranges:)` is proved to leave every range it is given behind. Without ranges the upgrade is
 ///     the nearest first fixed version above the installed one (`nearestVersion`); AdvisoryCheck proposes the newest
 ///     of the two paths' upgrades (`newestVersion`), and JavaCheck, when there is none, the vendor's own fixed build.
@@ -162,8 +163,8 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         case likely
         /// The advisory states nothing to decide by: no ranges (nil or []) and no first fixed versions (Decide.lean's
         /// `decided` is false). The core answers 0 for it, as for `.clear`; this wrapper tells the two apart. Such an
-        /// advisory is "reported, not checked", and is never given to `upgrade(from:advisories:)`, which finds no
-        /// upgrade for a list that holds one.
+        /// advisory is "reported, not checked": `upgrade(from:advisories:)` leaves it out (the core would find no upgrade
+        /// for a list that holds one) and never counts it among the fixes, and `judge` never says it is left.
         case unstated
     }
 
@@ -175,19 +176,15 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
         case noUpgrade
         /// More work than `upgradeWorkLimit`: the core was not asked, so the advisories are reported, not decided.
         case refused
-
-        /// The upgrade, if the core found one.
-        public var checked: CheckedUpgrade? {
-            if case .upgrade(let u) = self { return u }
-            return nil
-        }
     }
 
     /// A bound on the work osva_upgrade_for does for `advisories` above `installed`, in bytes compared: it checks every
     /// candidate above `installed` (each range's fixed version and each first fixed version, repeats included) against
     /// every version string an advisory is decided by (its ranges' bounds or, without ranges, its first fixed versions),
     /// and each such comparison reads both strings. So: for every such pair, the two lengths plus 8 for the comparison
-    /// itself. Candidates at or below `installed` cost one comparison each and are not counted.
+    /// itself. A first fixed version counts twice, as the core reads it twice (Affected.lean `affected`: once for a fix
+    /// above the candidate, once for one on its branch at or below it). Candidates at or below `installed` cost one
+    /// comparison each and are not counted.
     func upgradeWork(from installed: String, _ advisories: [CoreAdvisory]) -> Int {
         var above = 0, aboveBytes = 0, strings = 0, stringBytes = 0
         for a in advisories {
@@ -196,7 +193,7 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
                 above += 1; aboveBytes += c.utf8.count
             }
             if ranges.isEmpty {
-                strings += a.fixed.count; stringBytes += a.fixed.reduce(0) { $0 + $1.utf8.count }
+                strings += 2 * a.fixed.count; stringBytes += 2 * a.fixed.reduce(0) { $0 + $1.utf8.count }
             } else {
                 for r in ranges {
                     let bounds = [r.introduced, r.fixed, r.lastAffected].compactMap { $0 }
@@ -215,10 +212,11 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
     }
 
     /// The most work (`upgradeWork`) one call of `upgrade(from:advisories:)` may ask of the core. Measured on an Apple
-    /// M1 (hq-mac, 2026-11-25): at most about 50 ns per unit in the slowest shapes tried (every candidate above the
-    /// installed version and clear of every advisory, versions up to 80 bytes), so about 0.25 s at the limit; real
-    /// records do less, since most candidates fail an early check (PostgreSQL's 68 critical and high advisories: up to
-    /// 4.6 million units, 0.1 s). One package's advisories fit.
+    /// M1 (hq-mac, 2026-11-25) in the slowest shapes tried (every candidate above the installed version and clear of
+    /// every advisory, versions up to 80 bytes): 37-59 ns per unit for ranges, and 78-86 ns per unit for first fixed
+    /// versions counted once, so 39-43 ns now that they count twice. About 0.25 s at the limit, 0.3 s in the slowest
+    /// shape; real records do less, since most candidates fail an early check (PostgreSQL's 68 critical and high
+    /// advisories: up to 4.6 million units, 0.1 s). One package's advisories fit.
     public static let upgradeWorkLimit = 5_000_000
 
     /// One verdict per advisory, in order: ranges decide when an advisory has them, its first fixed versions otherwise,
@@ -244,15 +242,17 @@ public final class Core: @unchecked Sendable {   // the only state is the serial
     }
 
     /// The upgrade the app suggests: the lowest release the advisories name as fixed (in their ranges, or as first
-    /// fixed versions) that is above `installed` and clear of every one of them, with evidence (Decide.lean
-    /// `upgradeFor_leaves`, `upgradeFor_nearest`). Give it one package's advisories, never an `.unstated` one (with one,
-    /// there is no upgrade), and call it off the main thread. Refused, without asking the core, past `upgradeWorkLimit`.
-    /// The upgrade's `fixes` are the advisories whose verdict for `installed` is `.inRange` or `.likely`.
+    /// fixed versions) that is above `installed` and clear of every one of them that states something, with evidence
+    /// (Decide.lean `upgradeFor_leaves`, `upgradeFor_nearest`). An `.unstated` advisory is left out, so that it cannot
+    /// block every upgrade, and is never among the fixes: it stays reported. Give it one package's advisories, and call
+    /// it off the main thread. Refused, without asking the core, past `upgradeWorkLimit`. The upgrade's `fixes` are the
+    /// advisories whose verdict for `installed` is `.inRange` or `.likely`.
     public func upgrade(from installed: String, advisories: [CoreAdvisory]) -> UpgradeAnswer {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        guard upgradeWork(from: installed, advisories) <= Self.upgradeWorkLimit else { return .refused }
+        let stated = advisories.filter(\.states)                // the core finds no upgrade for a list with an unstated one
+        guard upgradeWork(from: installed, stated) <= Self.upgradeWorkLimit else { return .refused }
         let version = Array(installed.utf8)
-        let list = AdvisoryList(advisories)
+        let list = AdvisoryList(stated)
         var output = [UInt8](repeating: 0, count: max(list.longestFixed, 1))
         let length = queue.sync {
             withBytes(version) { pv, nv in

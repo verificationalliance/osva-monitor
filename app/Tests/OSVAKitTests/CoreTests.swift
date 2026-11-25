@@ -112,15 +112,15 @@ import OSVACore
     }
 
     @Test func theCoresUpgradeLeavesEveryAdvisory() throws {
-        let up = try #require(core.upgrade(from: "16.14", advisories: [pg, ff1620]).checked)
+        let up = try #require(found(core.upgrade(from: "16.14", advisories: [pg, ff1620])))
         #expect(up.version == "16.20" && up.display == "16.20")
         #expect(up.fixes == [true, true] && up.fixCount == 2)                     // both flag 16.14, and 16.20 leaves both
         #expect(core.upgrade(from: "2.0", advisories: [CoreAdvisory(ranges: [AffectedRange(introduced: "1.5")], fixed: [])]) == .noUpgrade)
         #expect(core.upgrade(from: "1.0", advisories: []) == .noUpgrade)
         // each advisory's first fixed versions are its own
-        let nginxUp = try #require(core.upgrade(from: "1.31.5", advisories: [ff10, nginx]).checked)
+        let nginxUp = try #require(found(core.upgrade(from: "1.31.5", advisories: [ff10, nginx])))
         #expect(nginxUp.version == "1.31.9" && nginxUp.fixes == [false, true])   // 1.0 never flagged 1.31.5
-        #expect(core.upgrade(from: "1.30.2", advisories: [ff10, nginx]).checked?.version == "1.30.7")
+        #expect(found(core.upgrade(from: "1.30.2", advisories: [ff10, nginx]))?.version == "1.30.7")
     }
 
     @Test func judgeSaysWhichAdvisoriesAnUpgradeLeaves() throws {
@@ -151,8 +151,19 @@ import OSVACore
         #expect(core.verdicts(installed: "1.0", advisories: [silent, empty, ff10]) == [.unstated, .unstated, .clear])
         let j = try #require(core.judge("2.0", from: "1.0", advisories: [silent, nginx], flagged: [true, false]))
         #expect(j.leaves == [false, true] && j.upgrade == nil)
-        #expect(core.upgrade(from: "1.31.5", advisories: [nginx, silent]) == .noUpgrade)
-        #expect(core.upgrade(from: "1.31.5", advisories: [nginx]).checked?.version == "1.31.9")
+        #expect(found(core.upgrade(from: "1.31.5", advisories: [nginx]))?.version == "1.31.9")
+    }
+
+    @Test func theUpgradeLeavesOutAnAdvisoryThatStatesNothing() throws {
+        // one silent advisory must not block every upgrade: upgrade leaves it out, and it is never among the fixes
+        let silent = CoreAdvisory(ranges: nil, fixed: []), empty = CoreAdvisory(ranges: [], fixed: [])
+        let up = try #require(found(core.upgrade(from: "1.31.5", advisories: [nginx, silent])))
+        #expect(up.version == "1.31.9" && up.fixes == [true, false] && up.fixCount == 1)
+        let mixed = try #require(found(core.upgrade(from: "16.14", advisories: [silent, pg, empty, ff1620])))
+        #expect(mixed.version == "16.20" && mixed.fixes == [false, true, false, true])
+        #expect(core.upgrade(from: "1.0", advisories: [silent, empty]) == .noUpgrade)
+        // judge already says so: a silent advisory is never left
+        #expect(core.judge("1.31.9", from: "1.31.5", advisories: [nginx, silent], flagged: [true, true])?.leaves == [true, false])
     }
 
     @Test func theUpgradeRefusesMoreWorkThanItsLimit() {
@@ -161,7 +172,13 @@ import OSVACore
         let a = CoreAdvisory(ranges: [AffectedRange(introduced: "1", fixed: "2"), AffectedRange(introduced: "3")], fixed: ["4", "5"])
         #expect(core.upgradeWork(from: "0", [a]) == 3 * 3 + 3 * 3 + 8 * 3 * 3)       // candidates 2, 4, 5; bounds 1, 2, 3
         #expect(core.upgradeWork(from: "4", [a]) == 1 * 3 + 1 * 3 + 8 * 1 * 3)       // only 5 is above 4
-        #expect(core.upgradeWork(from: "0", [CoreAdvisory(ranges: nil, fixed: ["10", "20"])]) == 2 * 4 + 4 * 2 + 8 * 2 * 2)
+        // first fixed versions count twice: the core reads each of them twice (Affected.lean's `affected`: a fix above,
+        // then one on the same branch), and was measured at 78-86 ns a unit for them against 37-59 for ranges
+        #expect(core.upgradeWork(from: "0", [CoreAdvisory(ranges: nil, fixed: ["10", "20"])]) == 2 * (2 * 4 + 4 * 2 + 8 * 2 * 2))
+        #expect(core.upgradeWork(from: "0", [CoreAdvisory(ranges: [], fixed: ["10", "20"])]) == 2 * (2 * 4 + 4 * 2 + 8 * 2 * 2))   // [] reads as none
+        // only the strings of the advisory without ranges count twice: candidates 2, 10, 20; strings 2 (ranged), then 10, 20 twice
+        let both = [CoreAdvisory(ranges: [AffectedRange(fixed: "2")], fixed: []), CoreAdvisory(ranges: nil, fixed: ["10", "20"])]
+        #expect(core.upgradeWork(from: "0", both) == 3 * (1 + 8 * 1 + 2 * 4 + 8 * 2 * 2) + 5 * (1 + 2 * 2))
         #expect(core.upgradeWork(from: "0", [CoreAdvisory(ranges: [AffectedRange()], fixed: ["7"])]) == 1 * 0 + 1 * 1 + 8 * 1 * 1)
         #expect(core.upgradeWork(from: "0", []) == 0 && core.upgradeWork(from: "0", [CoreAdvisory(ranges: nil, fixed: [])]) == 0)
         let one = CoreAdvisory(ranges: [AffectedRange(fixed: "2.0")], fixed: [])     // n of these: n candidates, n bounds
@@ -170,10 +187,9 @@ import OSVACore
         var n = Int((Double(Core.upgradeWorkLimit) / 14).squareRoot())
         while work(n + 1) <= Core.upgradeWorkLimit { n += 1 }
         while work(n) > Core.upgradeWorkLimit { n -= 1 }
-        #expect(core.upgrade(from: "1.0", advisories: Array(repeating: one, count: n)).checked?.version == "2.0")
+        #expect(found(core.upgrade(from: "1.0", advisories: Array(repeating: one, count: n)))?.version == "2.0")
         #expect(core.upgrade(from: "1.0", advisories: Array(repeating: one, count: n + 1)) == .refused)
         #expect(core.upgrade(from: "2.0", advisories: Array(repeating: one, count: n + 1)) == .noUpgrade)   // nothing above 2.0
-        #expect(Core.UpgradeAnswer.refused.checked == nil && Core.UpgradeAnswer.noUpgrade.checked == nil)
     }
 
     @Test func verdictsAgreeWithTheReferenceOnASample() {
@@ -190,7 +206,7 @@ import OSVACore
             for advisories in [whole, split, whole + firstFixed, firstFixed + split] {
                 for v in versions {
                     #expect(core.verdicts(installed: v, advisories: advisories) == advisories.map { reference($0, v) }, "\(v) in \(advisories)")
-                    guard let u = core.upgrade(from: v, advisories: advisories).checked else { continue }
+                    guard let u = found(core.upgrade(from: v, advisories: advisories)) else { continue }
                     #expect(core.compareVersions(v, u.version) < 0, "\(v) → \(u.version)")
                     #expect(advisories.allSatisfy { reference($0, u.version) == .clear }, "\(v) → \(u.version) in \(advisories)")
                     #expect(u.fixes == advisories.map { reference($0, v) != .clear })
@@ -222,6 +238,14 @@ import OSVACore
             .filter { try String(contentsOf: $0, encoding: .utf8).contains(pattern) }
             .map(\.lastPathComponent)
         #expect(offenders == [])
+    }
+
+    /// The upgrade, when the core found one. A switch, so that a refusal is never read as "no upgrade" unseen.
+    func found(_ answer: Core.UpgradeAnswer) -> CheckedUpgrade? {
+        switch answer {
+        case let .upgrade(u): return u
+        case .noUpgrade, .refused: return nil
+        }
     }
 
     @Test func privacyFilterMatchesBytesExactly() {

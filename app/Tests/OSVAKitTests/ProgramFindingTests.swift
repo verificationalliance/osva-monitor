@@ -2,14 +2,15 @@ import Foundation
 import Testing
 @testable import OSVAKit
 
-/// Findings for programs, tools and managed packages, from a live answer recorded on 2026-11-19 (Go stdlib 1.22.3,
-/// golang.org/x/net v0.23.0, golang.org/x/text v0.3.7, time 0.1.43, black, requests and pyyaml).
+/// Findings for programs, tools and managed packages, from a live answer recorded on 2026-11-25, with the ranges the
+/// site publishes (Go stdlib 1.22.3, golang.org/x/net v0.23.0, golang.org/x/text v0.3.7, golang.org/x/sys v0.35.0,
+/// time 0.1.43, black, requests and pyyaml). The 2026-11-19 answer, without ranges, stands for an older server.
 @Suite struct ProgramFindingTests {
     static let index = PublicIndex(generatedAt: "T", packages: [
         (.go, "golang.org/x/net"), (.go, "golang.org/x/text"), (.go, "stdlib"), (.crates, "time"),
         (.pypi, "black"), (.pypi, "requests"), (.pypi, "pyyaml"), (.pypi, "click"),
     ], projects: Fixture.index.projects, managed: [("macports", "nginx", "nginx"), ("nix", "nginx", "nginx"), ("conda", "openssl", "openssl")])
-    static let batch = try! JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-programs-live-2026-11-19.json"))
+    static let batch = try! JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-programs-live-2026-11-25.json"))
     static let nginx = try! JSONDecoder().decode(ProjectResponse.self, from: Fixture.data("api/project-nginx.json"))
 
     static let gh = BuiltProgram(language: .go, path: "/opt/homebrew/bin/gh", name: "gh", version: "2.62.0", place: .homebrew, formula: "gh",
@@ -28,6 +29,24 @@ import Testing
                                                           bigIssues: bigIssues, managed: managed)
     }
 
+    /// gh, black with requests, fd and a conda pyyaml, answered by the 2026-11-19 server, which sent no ranges.
+    static func oldServerProgramFindings() -> [Finding] {
+        let fd = BuiltProgram(language: .rust, path: "/Users/ana/.cargo/bin/fd", name: "fd", version: "10.5.2", place: .cargoInstall, formula: nil,
+                              package: "fd-find", module: "fd-find", toolchain: nil)
+        let env = CondaEnvironment(prefix: "/Users/ana/miniforge3", name: "base", named: true, tool: .conda, python: "3.11.5")
+        let installed = [("golang.org/x/net", "v0.23.0"), ("golang.org/x/text", "v0.3.7"), ("stdlib", "1.22.3")].map {
+            InstalledPackage(ecosystem: .go, name: $0.0, version: $0.1, origin: .program(gh))
+        } + [("black", "24.1.0"), ("requests", "2.25.0")].map { InstalledPackage(ecosystem: .pypi, name: $0.0, version: $0.1, origin: .pythonTool(black)) }
+          + [InstalledPackage(ecosystem: .crates, name: "time", version: "0.1.43", origin: .program(fd)),
+             InstalledPackage(ecosystem: .pypi, name: "pyyaml", version: "5.3", origin: .conda(env: env))]
+        let old = try! JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-programs-live-2026-11-19.json"))
+        let selection = PrivacyFilter(index: index).approve(installed)
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in
+            old.packages.first { $0.ecosystem == a.ecosystem.rawValue && $0.name == a.name && $0.version == a.version }.map { (a, $0) }
+        })
+        return FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: [])
+    }
+
     func program(_ p: BuiltProgram, _ modules: [(String, String)]) -> [InstalledPackage] {
         modules.map { InstalledPackage(ecosystem: p.language == .go ? .go : .crates, name: $0.0, version: $0.1, origin: .program(p)) }
     }
@@ -41,10 +60,13 @@ import Testing
         #expect(gh.shownVersions == "golang.org/x/net 0.23.0 → 0.62.0")             // the worst part, versions as people write them
         #expect(gh.note == "gh 2.62.0 was built with golang.org/x/net 0.23.0 — fixed in 0.62.0 · built with golang.org/x/text 0.3.7 — fixed in 0.41.0"
                 + " · built with Go 1.22.3, whose stdlib has 74 known flaws. If brew says gh is up to date, the fix waits for Homebrew's next build of it.")
-        #expect(gh.flawCount == 20 + 3 + 74)                                       // 40 listed stdlib flaws, 2 Windows-only, 36 unlisted
+        #expect(gh.flawCount == 20 + 3 + 74)                                       // 76 stdlib flaws, 2 of them Windows-only
         #expect(gh.upgradeCommand == "brew upgrade gh")
         #expect(gh.originSummary == "Homebrew gh · Go program")
-        #expect(gh.unresolved.isEmpty)                                             // its Windows-only flaws do not affect this Mac
+        // its Windows-only flaws do not affect this Mac; the site publishes three of Go's as affected from 1.24.0-0 on,
+        // with no end (BatchCheckTests/theLiveAnswersAreCheckedAgainstTheirRanges), so Go 1.26.11 is not said to fix them
+        #expect(gh.unresolved.map(\.id) == ["CVE-2024-45336", "CVE-2024-45341", "CVE-2025-22866"])
+        #expect(gh.unresolved.allSatisfy { $0.explanation == "Not fixed by this upgrade" && $0.severity == .moderate })
         #expect(gh.pageURL.absoluteString == "https://verificationalliance.org/#/check/pkg/Go/golang.org%2Fx%2Fnet@v0.23.0")
     }
 
@@ -78,8 +100,10 @@ import Testing
         let fd = BuiltProgram(language: .rust, path: "/Users/ana/.cargo/bin/fd", name: "fd", version: "10.5.2", place: .cargoInstall, formula: nil,
                               package: "fd-find", module: "fd-find", toolchain: nil)
         let f = try #require(findings(program(fd, [("time", "0.1.43"), ("libc", "0.2.191")])).first)
-        #expect(f.title == "fd" && f.shownVersions == "time 0.1.43 → 0.2.0" && f.group == .other)
-        #expect(f.note == "fd 10.5.2 was built with time 0.1.43 — fixed in 0.2.0. Builds fd again from its newest release, with the newest compatible crates.")
+        // the site publishes no ranges for time's flaw (its record names 0.2.0 fixed and affected), so its first fixed
+        // versions decide: likely affected, and the core confirms the server's 0.2.23 clears it
+        #expect(f.title == "fd" && f.shownVersions == "time 0.1.43 → 0.2.23" && f.group == .likely)
+        #expect(f.note == "fd 10.5.2 was built with time 0.1.43 — fixed in 0.2.23. Builds fd again from its newest release, with the newest compatible crates.")
         #expect(f.upgradeCommand == "cargo install --force fd-find" && f.fixesCount == 1)
     }
 
@@ -96,6 +120,27 @@ import Testing
         var uv = Self.black; uv.manager = .uv; uv.venv = "/Users/ana/.local/share/uv/tools/black"
         let u = try #require(findings(installed.map { InstalledPackage(ecosystem: $0.ecosystem, name: $0.name, version: $0.version, origin: .pythonTool(uv)) }).first)
         #expect(u.upgradeCommand == "uv tool upgrade black" && u.originSummary == "uv tool · Python 3.12.4")
+    }
+
+    @Test func aProgramsSentenceSaysWhatTheCoreConfirms() throws {
+        // black's target leaves one of its two flaws; the server's target for click is inside click's range; requests has
+        // only a flaw that states nothing to check by
+        typealias B = BatchCheckTests
+        let black = try B.result("black", "24.1.0", flaws: [B.flaw("BL-A", ranges: #"[{"fixed":"26.0"}]"#, severity: "CRITICAL"), B.flaw("BL-B", ranges: "[{}]")],
+                                 plan: B.plan("26.0", remaining: #"[{"id":"BL-B","fixed_in":null,"reason":"no-fix"}]"#))
+        let click = try B.result("click", "8.1.3", flaws: [B.flaw("CL", ranges: #"[{"fixed":"9.0"}]"#)], plan: B.plan("8.5"))
+        let requests = try B.result("requests", "2.25.0", flaws: [B.flaw("RQ", severity: "CRITICAL", exploited: true)], plan: B.plan("2.33.0"))
+        let installed = [("black", "24.1.0"), ("click", "8.1.3"), ("requests", "2.25.0")].map {
+            InstalledPackage(ecosystem: .pypi, name: $0.0, version: $0.1, origin: .pythonTool(Self.black))
+        }
+        let selection = PrivacyFilter(index: Self.index).approve(installed)
+        let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in [black, click, requests].first { $0.name == a.name }.map { (a, $0) } })
+        let f = try #require(FindingBuilder(index: Self.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:],
+                                                                        bigIssues: []).first)
+        #expect(f.note?.hasPrefix("black 24.1.0 has 2 known flaws — partly fixed in 26.0 · uses click 8.1.3 — no fixed release yet"
+                                  + " · uses requests 2.25.0 — reported, not checked.") == true, "\(f.note ?? "")")
+        // counted and weighed by what the core checked: requests' critical, exploited flaw is said, not counted
+        #expect(f.group == .criticalHigh && f.flawCount == 3 && f.severity == .critical && !f.exploited && f.fixedVersion == "26.0")
     }
 
     @Test func aToolsOwnPackageOnlyIsUpgradedWithPipx() {
@@ -213,7 +258,7 @@ import Testing
         let transport = RecordedTransport { request, _ in
             switch request.url!.path {
             case "/data/app-index.tsv": return .init(status: 200, body: Data(index.utf8))
-            case "/api/v1/check/batch": return .init(status: 200, body: Fixture.data("api/check-batch-programs-live-2026-11-19.json"))
+            case "/api/v1/check/batch": return .init(status: 200, body: Fixture.data("api/check-batch-programs-live-2026-11-25.json"))
             case "/api/v1/state": return .init(status: 200, body: Fixture.data("api/state.json"))
             case "/api/v1/project/nginx": return .init(status: 200, body: Fixture.data("api/project-nginx.json"))
             case "/api/v1/project/openssl": return .init(status: 200, body: Fixture.data("api/project-openssl.json"))

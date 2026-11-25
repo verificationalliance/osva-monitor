@@ -91,11 +91,12 @@ import Testing
     }
 
     @Test func theLiveAnswerForAppleSetuptools() throws {
-        // Recorded from production on 2026-11-19: setuptools 58.0.4 with Python 3.9.6 on macOS.
+        // Recorded from production on 2026-11-25, with ranges: setuptools 58.0.4 with Python 3.9.6 on macOS. Every flaw
+        // is inside its published ranges; the core confirms 78.1.1 leaves three of them, and 83.0.0 and 84.1.0 the others.
         let f = try findings([
             InstalledPackage(ecosystem: .pypi, name: "setuptools", version: "58.0.4", origin: .pip(python: Fixture.applePython, user: false, formula: nil)),
             InstalledPackage(ecosystem: .npm, name: "minimist", version: "0.0.8", origin: .folder(root: "/w", lockfile: "/w/package-lock.json", direct: false)),
-        ], batch: "api/check-batch-live-2026-11-19.json")
+        ], batch: "api/check-batch-live-2026-11-25.json")
         let setuptools = try #require(f.first { $0.title == "setuptools" })
         #expect(setuptools.fixedVersion == "78.1.1" && setuptools.fixesCount == 3 && setuptools.flawCount == 4)
         #expect(setuptools.upgradeCommand == "/usr/bin/python3 -m pip install --user --upgrade setuptools==78.1.1")
@@ -106,13 +107,36 @@ import Testing
     }
 
     @Test func anOldAnswerWithoutAPlanStillGivesFindings() throws {
+        // No flaws listed, no plan: every flaw is past the list, so the finding is reported, not checked, and kept
         let f = try findings([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20", origin: .npmGlobal(npm: "npm"))],
                              batch: "api/check-batch-malicious.json")
-        #expect(f.first?.group == .criticalHigh && f.first?.fixedVersion == nil && f.first?.flawCount == 4)
+        #expect(f.first?.group == .reported && f.first?.fixedVersion == nil && f.first?.flawCount == 4 && f.first?.upgradeCommand == nil)
+        #expect(f.first?.note == "Reported by the site, not checked: 4 flaws are not listed.")
+    }
+
+    /// The 2026-11-19 captures come from a server without ranges (0.5.1's, or one rolled back): no flaw can be checked
+    /// against a published range, so nothing is affected, and every finding it gave before is still there.
+    @Test func anOldServersAnswerFlagsNothingAndHidesNothing() throws {
+        let f = try findings([
+            InstalledPackage(ecosystem: .npm, name: "axios", version: "1.14.1", origin: .folder(root: "/w", lockfile: "/w/package-lock.json", direct: true)),
+            InstalledPackage(ecosystem: .npm, name: "minimist", version: "0.0.8", origin: .folder(root: "/w", lockfile: "/w/package-lock.json", direct: false)),
+            InstalledPackage(ecosystem: .pypi, name: "pyyaml", version: "5.3", origin: .pip(python: Fixture.applePython, user: false, formula: nil)),
+            InstalledPackage(ecosystem: .pypi, name: "setuptools", version: "58.0.4", origin: .pip(python: Fixture.applePython, user: false, formula: nil)),
+        ], batch: "api/check-batch-live-2026-11-19.json")
+        // the ids this build's parent (core-decisions 0b64486) gave for the same answer, recorded on hq-mac before the change
+        #expect(Set(f.map(\.id)) == ["pkg|npm|axios|1.14.1", "pkg|npm|minimist|0.0.8", "pkg|PyPI|pyyaml|5.3|py3.9.6", "pkg|PyPI|setuptools|58.0.4|py3.9.6"])
+        #expect(f.filter(\.group.needsAction).map(\.id) == ["pkg|npm|axios|1.14.1"])      // malware is flagged from its record
+        #expect(f.filter { !$0.malicious }.allSatisfy { $0.group == .likely || $0.group == .reported })
+        // and the programs' parts
+        let programs = ProgramFindingTests.oldServerProgramFindings()
+        #expect(Set(programs.map(\.id)) == ["tool|pipx|/Users/ana/.local/pipx/venvs/black|24.1.0", "prog|brew|gh|2.62.0", "pkg|PyPI|pyyaml|5.3|py3.11.5",
+                                            "prog|prog|/Users/ana/.cargo/bin/fd"])
+        #expect(programs.allSatisfy { $0.group.isNotChecked })
     }
 
     @Test func eachElectronAppIsItsOwnFinding() throws {
-        let batch = try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch.json"))
+        let json = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"electron","version":"28.1.0","distinct_flaws":1,"worst_severity":"HIGH","advisories":["GHSA-E"],"flaws":[{"id":"CVE-E","severity":"HIGH","fixed_in":["28.3.2"],"ranges":[{"introduced":"28.0.0","fixed":"28.3.2"}]}],"plan":{"target":"28.3.2","fixes":["CVE-E"],"remaining":[]}}]}"#
+        let batch = try JSONDecoder().decode(BatchResponse.self, from: Data(json.utf8))
         let installed = [
             InstalledPackage(ecosystem: .npm, name: "electron", version: "28.1.0", origin: .electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack")),
             InstalledPackage(ecosystem: .npm, name: "electron", version: "28.1.0", origin: .electronApp(name: "Notion", bundlePath: "/Applications/Notion.app", caskToken: nil)),
@@ -122,7 +146,7 @@ import Testing
         let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.map { a in (a, batch.packages.first { $0.name == "electron" }!) })
         let f = FindingBuilder(index: index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: [])
         #expect(f.map(\.title) == ["Notion", "Slack"])                         // ...and one finding per app
-        #expect(f.allSatisfy { $0.component == "Electron" && $0.installedVersion == "28.1.0" })
+        #expect(f.allSatisfy { $0.component == "Electron" && $0.installedVersion == "28.1.0" && $0.fixedVersion == "28.3.2" && $0.group == .criticalHigh })
         #expect(f.map(\.upgradeCommand) == [nil, "brew upgrade --cask slack"])
         #expect(f.map(\.originSummary) == ["App in /Applications", "App in /Applications · Homebrew cask"])   // not the title again
     }
@@ -274,6 +298,33 @@ import Testing
         #expect(again.sent.withheld == report.sent.withheld)
     }
 
+    /// An answer cached by 0.5.1 has no ranges: it is never read as a checked answer. The scan asks again, and keeps
+    /// the new answer under the new namespace.
+    @Test func theBatchCacheIgnoresAnswersSavedWithoutRanges() async throws {
+        let home = temporaryDirectory()
+        let support = home.appendingPathComponent("support")
+        let project = home.appendingPathComponent("code/shop")
+        let lockfile = project.appendingPathComponent("package-lock.json")
+        write(#"{"lockfileVersion":3,"packages":{"node_modules/lodash":{"version":"4.17.20"}}}"#, to: lockfile)
+        let lodash = try #require(PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20",
+                                                                                                 origin: .folder(root: project.path, lockfile: lockfile.path, direct: true))])
+            .approved.keys.first)
+        let old = try #require(try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-malicious.json")).packages
+            .first { $0.name == "lodash" })                                      // 0.5.1's answer: no flaws listed, no ranges
+        let storage = Storage(directory: support)
+        storage.cache.writeJSON(CachedVerdict(result: old), "batch", lodash.cacheKey)
+        let transport = RecordedTransport.site(batch: "api/check-batch-plan.json")
+        let scanner = Scanner(configuration: ScanConfiguration(storage: storage, tools: ToolEnvironment.fixture(home: home), folders: [project],
+                                                               applicationRoots: [home.appendingPathComponent("Applications")]),
+                              transport: transport, pause: { _ in })
+        let report = await scanner.scan()
+        #expect(report.problems.isEmpty, "\(report.problems)")
+        #expect(transport.requests.contains { $0.url?.path == "/api/v1/check/batch" } && report.sent.answeredFromCache == 0)
+        let saved = try #require(storage.cache.readJSON(CachedVerdict.self, "batch-v2", lodash.cacheKey, maxAge: 3600)?.result)
+        #expect(saved.name == "lodash" && saved.flaws.allSatisfy { $0.ranges != nil })
+        #expect(report.findings.first { $0.title == "lodash" }?.group == .criticalHigh)
+    }
+
     /// Each name once per source, sources in their usual order, Homebrew's unmatched formulae under Homebrew.
     @Test func withheldByWhereItWasFound() {
         let folder = Origin.folder(root: "/r", lockfile: "/r/package-lock.json", direct: true)
@@ -349,8 +400,9 @@ import Testing
 
 @Suite struct FlawNameTests {
     @Test func eachUnresolvedFlawIsNamedBySummaryElseByItsID() throws {
-        // The API lists at most 40 flaws per package: CVE-2 is in the plan's remaining list but not in `flaws`.
-        let json = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20","malicious":false,"distinct_flaws":3,"worst_severity":"HIGH","advisories":[],"flaws":[{"id":"CVE-1","severity":"HIGH","summary":"  Windows path escape\nvia a crafted name  ","fixed_in":["9.0.0"],"platform":"windows"},{"id":"CVE-3","severity":"HIGH","fixed_in":["4.17.21"]}],"plan":{"target":"4.17.21","fixes":["CVE-3"],"remaining":[{"id":"CVE-1","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"},{"id":"CVE-2","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"}]}}]}"#
+        // CVE-2 has no summary. The API lists at most 40 flaws per package: CVE-4 is in the plan's remaining list but not
+        // in `flaws`, so it is reported, not checked, and counted in the note rather than named.
+        let json = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20","malicious":false,"distinct_flaws":4,"worst_severity":"HIGH","advisories":[],"flaws":[{"id":"CVE-1","severity":"HIGH","summary":"  Windows path escape\nvia a crafted name  ","fixed_in":["9.0.0"],"ranges":[{"fixed":"9.0.0"}],"platform":"windows"},{"id":"CVE-2","severity":"HIGH","fixed_in":["9.0.0"],"ranges":[{"fixed":"9.0.0"}],"platform":"windows"},{"id":"CVE-3","severity":"HIGH","fixed_in":["4.17.21"],"ranges":[{"fixed":"4.17.21"}]}],"plan":{"target":"4.17.21","fixes":["CVE-3"],"remaining":[{"id":"CVE-1","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"},{"id":"CVE-2","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"},{"id":"CVE-4","fixed_in":"9.0.0","reason":"other-platform","detail":"Windows"}]}}]}"#
         let response = try JSONDecoder().decode(BatchResponse.self, from: Data(json.utf8))
         let selection = PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20",
                                                                                        origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"))])
@@ -359,6 +411,7 @@ import Testing
                                                                            bigIssues: []).first)
         #expect(f.unresolved.map(\.name) == ["Windows path escape via a crafted name", "CVE-2"])
         #expect(f.unresolved.map(\.explanation) == ["Windows only, does not affect this Mac", "Windows only, does not affect this Mac"])
+        #expect(f.fixedVersion == "4.17.21" && f.fixesCount == 1 && f.note == "1 more flaw is reported, not checked.")
         #expect(FindingBuilder.shortSummary(String(repeating: "word ", count: 40))?.hasSuffix("…") == true)
     }
 
