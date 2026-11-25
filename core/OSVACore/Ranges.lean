@@ -9,12 +9,12 @@
     affected  ⟺  v lies in some range.
 
   The theorems are the promises the app makes to the person reading its warning:
-    · with no ranges there is no answer (the app then uses the older decision, Affected.lean);
+    · with no ranges there is no answer (Decide.lean then uses the first fixed versions, Affected.lean, as "likely");
     · a warning means the version lies in one of the issuer's ranges, and every version in one is flagged;
     · a version outside every range is never flagged;
     · a warning whose range has a fixed version has that version above it to upgrade to;
-    · the upgrade the app proposes is above the installed version, lies in none of the ranges, and is the lowest such
-      fixed version.
+    · `upgradeIn` is above the installed version, lies in none of the ranges, and is the lowest such fixed version.
+      The app no longer asks it: its upgrades are Decide.lean's `upgradeFor` and `judge`.
 
   `affected` (Affected.lean) is kept for advisories that carry only first fixed versions.
 -/
@@ -95,7 +95,7 @@ def lowest : Bytes → List Bytes → Bytes
   | b, [] => b
   | b, g :: gs => lowest (if vcmp g b = .lt then g else b) gs
 
-/-- The upgrade the app proposes: the lowest fixed version above `v` that no range includes. -/
+/-- The lowest fixed version above `v` that no range includes (no export calls it: see Decide.lean's `upgradeFor`). -/
 def upgradeIn (v : Bytes) (rs : List Range) : Option Bytes :=
   match upgrades v rs with
   | [] => none

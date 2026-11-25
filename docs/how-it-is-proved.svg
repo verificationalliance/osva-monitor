@@ -24,8 +24,8 @@
   <rect class="box" x="20" y="56" width="236" height="112" rx="10"/>
   <text class="t ink" x="38" y="86">Lean 4 source</text>
   <text class="s muted" x="38" y="109">version order, “am I affected?”,</text>
-  <text class="s muted" x="38" y="128">privacy filter, URL encoding</text>
-  <text class="s clay" x="38" y="153">+ 31 theorems about them</text>
+  <text class="s muted" x="38" y="128">upgrades, privacy filter, URLs</text>
+  <text class="s clay" x="38" y="153">+ 47 theorems about them</text>
 
   <path class="arrow" d="M256 112 H 324"/><path class="head" d="M324 106 l10 6 l-10 6 z"/>
   <text class="l muted" x="294" y="100" text-anchor="middle">compiled</text>
@@ -40,7 +40,7 @@
 
   <rect class="plain" x="596" y="56" width="140" height="112" rx="10"/>
   <text class="t ink" x="614" y="86">C bridge</text>
-  <text class="s muted" x="614" y="109">~130 lines,</text>
+  <text class="s muted" x="614" y="109">~190 lines,</text>
   <text class="s muted" x="614" y="128">bytes in and out</text>
 
   <path class="arrow" d="M736 112 H 772"/><path class="head" d="M772 106 l10 6 l-10 6 z"/>

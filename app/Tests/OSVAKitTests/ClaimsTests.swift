@@ -520,8 +520,7 @@ import Testing
         }
 
         let readme = try Self.text("README.md"), prose = readme.replacing(/\s+/, with: " ")
-        for sentence in Self.readmeSentences { #expect(prose.contains(sentence), "README.md says: \(sentence)") }
-        #expect(prose.contains(Finding.Group.likely.title))
+        #expect((Self.readmeSentences + [Finding.Group.likely.title]).filter { !prose.contains($0) } == [], "what README.md does not say")
         let required = try #require(try Self.text("scripts/check-core.sh").firstMatch(of: /\[ "\$n" -lt (\d+) \]/).flatMap { Int($0.output.1) })
         #expect(audit.filter { $0.hasPrefix("#print axioms ") }.count == required)
         let counts = try (readme + Self.text("docs/how-it-is-proved.svg")).matches(of: /(\d+) (?:theorems|proofs)/).map { Int($0.output.1)! }

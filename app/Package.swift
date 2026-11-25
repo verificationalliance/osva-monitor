@@ -5,12 +5,13 @@
 // critical vulnerabilities, fixed versions, trust grades and formal verification.
 //
 // Targets
-//   OSVACore       C. The verified core: version order, affectedness, the privacy filter, URL encoding.
+//   OSVACore       C. The verified core: version order, what an advisory says about a version and which upgrade
+//                  leaves it, the privacy filter, URL encoding.
 //   OSVAKit        What the app knows how to do: take inventory (Homebrew, Electron apps, global packages, project
 //                  folders), download the public index, ask the API, and turn answers into findings. It calls the
-//                  core only through Sources/OSVAKit/Core.swift, but not every decision of the four kinds above is
-//                  the core's: packages checked by exact version are flagged, and their upgrades chosen, by the
-//                  server. Core.swift says which decisions are which.
+//                  core only through Sources/OSVAKit/Core.swift, and flags a version as affected, or names a version
+//                  to upgrade to, only from the core's answers (ClaimsTests scans for ways around it). Core.swift
+//                  says what is not the core's.
 //   OSVAMonitorUI  SwiftUI views and the app model, and the app's changelog (Resources/CHANGELOG.md, What's New).
 //   OSVAMonitor    The menu-bar app (assembled into "OSVA Monitor.app" by ../scripts/build-app.sh).
 //   osva-scan      One scan from the command line, with the same code the app runs.

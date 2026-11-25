@@ -4,8 +4,9 @@
   "modules": ["OSVACore"],
   "ships": ["OSVACore"],
   "claims": [
-    {"says": "The core's range check flags a version only if it falls inside a published range.", "theorem": "OSVA.affectedIn_sound", "about": "code"},
-    {"says": "Every upgrade the core's range check suggests is outside every affected range.", "theorem": "OSVA.upgradeIn_clears", "about": "code"},
+    {"says": "The core's advisory check flags a version as in range only if it lies inside one of the advisory's published ranges, in the core's version order.", "theorem": "OSVA.verdict_inRange_sound", "about": "code"},
+    {"says": "Every upgrade the core suggests lies outside the published ranges of every advisory it was given that publishes them, in the core's version order.", "theorem": "OSVA.upgradeFor_leaves", "about": "code"},
+    {"says": "The core says an upgrade fixes an advisory with published ranges only if the upgrade lies outside them, in the core's version order.", "theorem": "OSVA.judge_spec", "about": "code"},
     {"says": "The core's URL encoding never outputs /, ?, #, @ or :.", "theorem": "OSVA.encode_no_delimiters", "about": "code"}
   ]
 }

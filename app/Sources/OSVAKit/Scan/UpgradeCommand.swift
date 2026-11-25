@@ -7,8 +7,9 @@ import Foundation
 ///
 /// Without one, a finding gets no command but Homebrew's (`isHomebrewUpgrade`): every other command that names no
 /// version lets a registry pick it. A removal needs no version. Programs and tools are the exception ProgramFindings
-/// decides from their parts: a rebuild that names no version (`go install …@latest`, `cargo install --force`, `uv tool
-/// upgrade`) brings the program's next release, its author's choice, as `brew upgrade` brings Homebrew's.
+/// decides from their parts: a rebuild at the installed version (`go install`, `cargo install --force`, `uv tool install
+/// --force`), only when every flagged part is something the program was built with, brings newer versions of those,
+/// the tool's choice, as `brew upgrade` brings Homebrew's.
 ///
 /// Names, versions and paths come from this Mac's files, so every one is shell-quoted unless it is plainly safe.
 public enum UpgradeCommand {
