@@ -339,6 +339,22 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         #expect(accepted.blocked == nil && accepted.pins == ["demo==2.4", "dep==1.1"])
     }
 
+    /// MP2: two flaws, A fixed in 2.0, and B fixed in 2.0 but back from 2.2 to 2.4. The fix (2.0) leaves both; pip's 2.3
+    /// leaves A only. It must leave every flaw the fix leaves, not some: refused.
+    @Test func pipsVersionMustLeaveEveryFlawTheFixLeaves() async throws {
+        let folder = Self.site([("demo", "1.0", [], false), ("dep", "1.0", ["demo<2"], false)])
+        let a = BatchCheckTests.flaw("A", ranges: #"[{"fixed":"2.0"}]"#)
+        let b = BatchCheckTests.flaw("B", ranges: #"[{"fixed":"2.0"},{"introduced":"2.2","fixed":"2.4"}]"#)
+        let (tools, _) = Self.tools([folder]) { _ in ok(pipReport([("demo", "2.3", []), ("dep", "1.1", ["demo>=2"])])) }
+        let at = { (v: String) in PackageVersion(name: "demo", version: v) }
+        let server = FakeFixServer(results: [at("1.0"): try BatchCheckTests.result("demo", "1.0", flaws: [a, b]),
+                                             at("2.3"): try BatchCheckTests.result("demo", "2.3", flaws: [b])])
+        let offer = FixOffer(plan: try FixPlan.make(for: Self.finding("demo", "1.0", "2.0", flaws: 2), tools: tools, home: "/Users/ana").get(),
+                             proposal: .together(.init(package: "demo", fix: "2.0", blockers: ["dep"], python: Self.python)))
+        let p = await FixAdvisor(tools: tools, home: "/Users/ana", server: server).preview(offer)
+        #expect(p.blocked == "pip's set would install demo 2.3, which the core does not confirm fixes what 2.0 fixes")
+    }
+
     // MARK: The end state
 
     /// A pair fine alone and broken together: alpha 1.1 needs beta below 2.1, and beta goes to 2.1. Each alone passes;

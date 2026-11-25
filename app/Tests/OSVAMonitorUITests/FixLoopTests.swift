@@ -173,6 +173,23 @@ import OSVAKit
         #expect(((try? FileManager.default.contentsOfDirectory(atPath: scripts.path)) ?? []).isEmpty)
     }
 
+    /// m1: a report an older version of the app saved (0.5.1's) may hold commands no core checked. Until this version
+    /// has scanned again, no row offers a fix or a command to copy, and each says why; this version's report offers them.
+    @Test func aReportAnOlderVersionMadeOffersNothing() async throws {
+        let old = try setUp(scannedBy: "0.5.1")
+        old.model.assessAllFixes()
+        for f in old.findings {
+            let row = try #require(old.model.fixes[f.id])
+            #expect(row.availability == .withheld(AppModel.olderReport) && row.offeredFix == nil, "\(f.title)")
+            #expect(FindingRow.copyable(f, row) == nil, "\(f.title)")
+        }
+        #expect(old.model.fixAllPanel.count == 0)
+        let now = try setUp()
+        now.model.assessAllFixes()
+        try await waitUntil { now.findings.allSatisfy { now.model.fixes[$0.id]?.offeredFix != nil } }
+        #expect(now.findings.allSatisfy { now.model.fixes[$0.id]?.offeredFix != nil })
+    }
+
     @Test func nothingRunsWithoutTheReview() throws {
         let h = try setUp()
         h.model.assessFix(h.finding)

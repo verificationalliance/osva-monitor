@@ -112,12 +112,17 @@ public final class AppModel {
         updater?.start(checksDaily: checksForUpdates)
         let due = report.map { Date().timeIntervalSince($0.finishedAt) > interval } ?? true
         // A newer app scans at once, so the findings carry what it adds (0.2.0's Fix button needs a new scan).
-        let scannedByOlder = report != nil && defaults.string(forKey: Self.scannedByKey) != version
         if due || scannedByOlder { scanNow() } else { assessAllFixes() }
     }
 
     /// The app version that made the saved report.
     static let scannedByKey = "lastFullScanAppVersion"
+
+    /// The saved report was made by an older version of the app (or one from before 0.2.1, which recorded none).
+    private var scannedByOlder: Bool { report != nil && defaults.string(forKey: Self.scannedByKey) != version }
+
+    /// Why a row of such a report offers nothing yet.
+    static let olderReport = "Not offered until this version of the app has scanned again."
 
     /// Whether an earlier version ran here: the version of its last scan (recorded since 0.2.1), or a saved scan or
     /// settings file (every version).
@@ -363,6 +368,13 @@ public final class AppModel {
         guard !isShowingFixtures else { return }
         let state = fixes[finding.id] ?? FixRowState()
         guard state.availability == nil, !state.isBusy, !state.isResolved else { return }
+        // A report an older version made may hold a version or a command no core checked (0.5.1's npm @latest): no Fix
+        // button, and no command to copy, until this version's own scan (it starts at launch) has made them again.
+        if scannedByOlder {
+            fixes[finding.id, default: FixRowState()].availability = .withheld(Self.olderReport)
+            fixes[finding.id]?.hold = .blocked
+            return
+        }
         switch FixPlan.make(for: finding, tools: advisor.tools, home: advisor.home) {
         case let .failure(refusal):
             fixes[finding.id, default: FixRowState()].availability = .withheld(refusal.explanation)

@@ -127,8 +127,9 @@ public enum PipSetGuard {
     /// or nil. It is refused when what it moves brings a flaw the version before did not have (or a new package any
     /// flaw), asked of the site as a single fix's target is (`newFlaw`); and when it would install an upgrade together's
     /// package at a version the core does not confirm fixes what its fix fixes (`keepsTheFix`). `only` limits the first
-    /// to these packages (normal names); nil checks every one.
-    public static func review(_ site: PythonSite, installs: [PythonDistribution], only: Set<String>? = nil, together: [FixProposal.Together] = [],
+    /// to these packages (normal names); nil checks every one. `@concurrent`: it asks the core, which must never run on
+    /// the main actor, whatever the caller's isolation and the compiler's default.
+    @concurrent public static func review(_ site: PythonSite, installs: [PythonDistribution], only: Set<String>? = nil, together: [FixProposal.Together] = [],
                               python: PythonEnvironment, server: any FixServer) async -> Result<String?, FixServerError> {
         let moved = moves(site, installs: installs).filter { only?.contains(PythonNames.normal($0.name)) ?? true }
         var asked: [PackageVersion] = []

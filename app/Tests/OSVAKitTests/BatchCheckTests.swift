@@ -607,6 +607,29 @@ extension BatchCheckTests {
         """#.utf8))
     static let slack = Origin.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack")
 
+    /// Task 6's decision 4: an item the electron record's ranges hold promotes the app's finding, but the core will not
+    /// weigh the item's version (one that does not read as a version, or more work than it may take). The finding names
+    /// no version, never says "No fixed release yet", offers no command (not even Homebrew's cask upgrade), and says why.
+    @Test func aPromotionWhoseVersionTheCoreWithholdsGivesNoCommand() throws {
+        func promoted(_ ranges: String) throws -> Finding {
+            let record = try JSONDecoder().decode(ProjectResponse.self, from: Data(
+                #"{"slug":"electron","name":"Electron","recent":[{"id":"CVE-EL","sev":"HIGH","ranges":\#(ranges)}]}"#.utf8))
+            let reported = try Self.result("npm", "electron", "28.1.0", flaws: [Self.flaw("CVE-EL", severity: "HIGH")], plan: Self.plan("28.3.2"))
+            return try #require(Self.findings([reported], index: Fixture.index, bigIssues: [try Self.electronItem()], projects: ["electron": record]) { _ in
+                Self.slack
+            }.first)
+        }
+        let odd = try promoted(#"[{"introduced":"28.0.0","fixed":"28.3.2;reboot"}]"#)
+        #expect(odd.group == .exploited && odd.bigIssue != nil)
+        #expect(odd.fixedVersion == nil && odd.upgradeCommand == nil && odd.commandInputs == nil)
+        #expect(odd.note?.hasPrefix("The issuer lists 28.1.0 as affected. The “patch these first” list names a fixed version the app does not accept"
+                                    + " as a version; see the site.") == true, "\(odd.note ?? "")")
+        #expect(odd.note?.contains("No fixed release yet") == false)
+        let many = try promoted("[" + (0..<400).map { #"{"introduced":"28.0.0","fixed":"29.\#($0)"}"# }.joined(separator: ",") + "]")
+        #expect(many.group == .exploited && many.fixedVersion == nil && many.upgradeCommand == nil && many.commandInputs == nil)
+        #expect(many.note?.hasPrefix("The issuer lists 28.1.0 as affected. No checked fixed version yet; see the site.") == true, "\(many.note ?? "")")
+    }
+
     @Test func aPromotedPackageFindingIsJudgedAgainstAllItsFlaws() throws {
         // N1, scenario 1: A fixed in 28.2.0, BB in 28.3.0, target 28.2.0; the item's range moves the version to 28.3.2,
         // which leaves all three
