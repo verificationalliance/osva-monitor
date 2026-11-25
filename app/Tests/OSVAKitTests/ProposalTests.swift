@@ -20,23 +20,27 @@ final class ScriptedRunner: CommandRunner, @unchecked Sendable {
     }
 }
 
-/// The site, as a fix asks it: a plan within constraints, and the flaws of exact versions.
+/// The site, as a fix asks it: an answer within constraints, and the answers at exact versions.
 final class FakeFixServer: FixServer, @unchecked Sendable {
     private let lock = NSLock()
     private var _asked: [[String]] = []
-    let planned: BatchResponse.Plan?
-    let known: [PackageVersion: Set<String>]
-    init(plan: String? = nil, known: [PackageVersion: Set<String>] = [:]) {
-        planned = plan.map { try! JSONDecoder().decode(BatchResponse.Plan.self, from: Data($0.utf8)) }
-        self.known = known
+    let answer: BatchResponse.Result?
+    let known: [PackageVersion: BatchResponse.Result]
+    /// `answer`: the site's answer within constraints. `known`: the flaws (ids) the site reports at each version, with no
+    /// ranges; `results`: whole answers, which take their place.
+    init(answer: BatchResponse.Result? = nil, known: [PackageVersion: Set<String>] = [:], results: [PackageVersion: BatchResponse.Result] = [:]) {
+        self.answer = answer
+        self.known = Dictionary(uniqueKeysWithValues: known.map { v, ids in
+            (v, try! BatchCheckTests.result(v.name, v.version, flaws: ids.sorted().map { BatchCheckTests.flaw($0) }))
+        }).merging(results) { _, whole in whole }
     }
     var asked: [[String]] { lock.withLock { _asked } }
-    func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError> {
+    func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError> {
         lock.withLock { _asked.append(constraints) }
-        return .success(planned)
+        return .success(answer)
     }
-    func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError> {
-        .success(Dictionary(uniqueKeysWithValues: versions.map { ($0, known[$0] ?? []) }))
+    func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError> {
+        .success(known.filter { versions.contains($0.key) })
     }
 }
 
@@ -56,11 +60,12 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
 
     /// A pip finding in the test Python: `name` at `installed`, its fix `fixed`.
     static func finding(_ name: String, _ installed: String, _ fixed: String, flaws: Int = 1, exploited: Bool = false) -> Finding {
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: python, user: false, formula: nil), name: name, ecosystem: .pypi, target: fixed, malicious: false)
+        let upgrade = Fixture.fix(fixed, above: installed)
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: python, user: false, formula: nil), name: name, ecosystem: .pypi, target: upgrade, malicious: false)
         return Finding(id: "pkg|PyPI|\(name)|\(installed)", group: exploited ? .exploited : .criticalHigh, subject: .package(ecosystem: .pypi, name: name),
-                       title: name, installedVersion: installed, fixedVersion: fixed, severity: .high, advisoryIDs: [], flawCount: flaws,
+                       title: name, installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: flaws,
                        exploited: exploited, malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin],
-                       pageURL: SiteURL.packagePage(.pypi, name, version: installed), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                       pageURL: SiteURL.packagePage(.pypi, name, version: installed), advice: UpgradeCommand.advice(inputs),
                        verification: .none, grade: nil, commandInputs: inputs)
     }
 
@@ -140,15 +145,31 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         #expect(PythonConstraints.blocking("anyio", from: "4.11.0", to: "4.12.0", in: starlette) == nil)        // nothing holds it back
     }
 
+    /// torch 2.7.0 with whisperx past the torchaudio 2.9 boundary: the full fix (2.13.0) is blocked, and the site is asked
+    /// within "<2.9".
+    static func torchSite() -> (ToolEnvironment, Finding) {
+        let folder = Self.site([("torch", "2.7.0", [], false), ("torchaudio", "2.7.0", ["torch==2.7.0"], false),
+                                ("whisperx", "3.3.4", ["torch>=2", "torchaudio>=2"], false)])
+        return (Self.tools([folder]).0, Self.finding("torch", "2.7.0", "2.13.0", flaws: 14))
+    }
+
+    /// The site's answer for torch 2.7.0 within "<2.9": `flaws` (raw, BatchCheckTests.flaw), its plan's `target`, and g
+    /// remaining, blocked by the constraint.
+    static func torchAnswer(_ flaws: [String], target: String?) -> BatchResponse.Result {
+        try! BatchCheckTests.result("torch", "2.7.0", flaws: flaws, plan: BatchCheckTests.plan(target, remaining:
+            #"[{"id":"g","reason":"blocked-by-constraint","constraint":"<2.9","fixed_in":"2.9.0"}]"#))
+    }
+
+    /// Six flaws 2.8.0 leaves, and g, which only 2.9.0 does.
+    static let sixAndG = ["a", "b", "c", "d", "e", "f"].map { BatchCheckTests.flaw($0, ranges: #"[{"fixed":"2.8.0"}]"#) }
+        + [BatchCheckTests.flaw("g", ranges: #"[{"fixed":"2.9.0"}]"#)]
+
     /// The full fix is blocked by the boundary: the site is asked within "<2.9" and its 2.8.0 is offered as a proposal,
     /// with torchaudio moving along, saying how much it fixes and who holds the rest back. A target the local gate
     /// refuses is not offered.
     @Test func aPartialFixIsProposedWithinWhatBlocksTheFullOne() async throws {
-        let folder = Self.site([("torch", "2.7.0", [], false), ("torchaudio", "2.7.0", ["torch==2.7.0"], false),
-                                ("whisperx", "3.3.4", ["torch>=2", "torchaudio>=2"], false)])
-        let (tools, _) = Self.tools([folder])
-        let torch = Self.finding("torch", "2.7.0", "2.13.0", flaws: 14)
-        let server = FakeFixServer(plan: #"{"target":"2.8.0","fixes":["a","b","c","d","e","f"],"remaining":[{"id":"g","reason":"blocked-by-constraint","constraint":"<2.9","fixed_in":"2.9.0"}]}"#)
+        let (tools, torch) = Self.torchSite()
+        let server = FakeFixServer(answer: Self.torchAnswer(Self.sixAndG, target: "2.8.0"))
         let a = await FixAdvisor(tools: tools, home: "/Users/ana", server: server).assess(torch)
         guard case let .propose(why, offer) = a, case .partial? = offer.proposal else { Issue.record("\(a)"); return }
         #expect(why.hasPrefix("torch 2.9 goes with torchaudio 2.9"))
@@ -157,13 +178,73 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         #expect(offer.plan.command == "/opt/test/bin/python3 -m pip install --upgrade torch==2.8.0")
         #expect(offer.proposal?.line(offer.plan) == "Partly fixes: 6 of 14 flaws. whisperx needs torch below 2.9.")
         #expect(offer.proposal?.reviewLine(offer.plan) == "torch to 2.8.0 (6 of 14; whisperx needs below 2.9)")
-        #expect(FixPlan.make(for: torch, tools: tools, home: "/Users/ana", target: "2.8.0") == .success(offer.plan))   // made again the same
+        #expect(offer.partialTarget?.version == "2.8.0")
+        #expect(FixPlan.make(for: torch, tools: tools, home: "/Users/ana", target: offer.partialTarget) == .success(offer.plan))   // made again the same
 
         // a target past the boundary, or no target: nothing proposed
-        let past = FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(plan: #"{"target":"2.9.1","fixes":["a"],"remaining":[]}"#))
+        let past = FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(answer: Self.torchAnswer(Self.sixAndG, target: "2.9.1")))
         guard case .refused = await past.assess(torch) else { Issue.record("a target past the boundary was proposed"); return }
-        let none = FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(plan: #"{"target":null,"fixes":[],"remaining":[]}"#))
+        let none = FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(answer: Self.torchAnswer(Self.sixAndG, target: nil)))
         guard case .refused = await none.assess(torch) else { Issue.record("no target, yet a proposal"); return }
+    }
+
+    /// The site's partial target is proposed only when the core confirms it: 2.8.0 inside the only flaw's published range
+    /// (fixed in 3.0) is refused, whatever the plan says it fixes.
+    @Test func aPartialTargetTheCoreRejectsIsNotProposed() async {
+        let (tools, torch) = Self.torchSite()
+        let answer = Self.torchAnswer([BatchCheckTests.flaw("a", ranges: #"[{"fixed":"3.0"}]"#)], target: "2.8.0")
+        let a = await FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(answer: answer)).assess(torch)
+        guard case .refused = a else { Issue.record("a target the core rejects was proposed: \(a)"); return }
+    }
+
+    /// A target the core confirms is proposed, and "fixes" is the core's count, not the plan's list (which names two).
+    @Test func aPartialTargetTheCoreConfirmsIsProposed() async {
+        let (tools, torch) = Self.torchSite()
+        var answer = Self.torchAnswer([BatchCheckTests.flaw("a", ranges: #"[{"fixed":"2.8.0"}]"#), BatchCheckTests.flaw("g", ranges: #"[{"fixed":"2.9.0"}]"#)],
+                                      target: "2.8.0")
+        answer.plan?.fixes = ["a", "g"]
+        let a = await FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(answer: answer)).assess(torch)
+        guard case let .propose(_, offer) = a, case let .partial(p)? = offer.proposal else { Issue.record("\(a)"); return }
+        #expect(p.fixes == 1 && p.of == 14 && p.target.version == "2.8.0" && offer.plan.target == "2.8.0")
+    }
+
+    /// The partial target counts only the flaws the finding is shown for, those that can affect this Mac: one that leaves
+    /// only a Windows flaw is not proposed, and a Windows flaw it leaves is not counted.
+    @Test func aPartialFixCountsOnlyWhatAffectsThisMac() async {
+        let (tools, torch) = Self.torchSite()
+        let windows = BatchCheckTests.flaw("w", ranges: #"[{"fixed":"2.8.0"}]"#, platform: "windows")
+        let g = BatchCheckTests.flaw("g", ranges: #"[{"fixed":"2.9.0"}]"#)
+        let only = await FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(answer: Self.torchAnswer([windows, g], target: "2.8.0"))).assess(torch)
+        guard case .refused = only else { Issue.record("a target that leaves only a Windows flaw was proposed: \(only)"); return }
+        let mac = BatchCheckTests.flaw("a", ranges: #"[{"fixed":"2.8.0"}]"#)
+        let both = await FixAdvisor(tools: tools, home: "/Users/ana", server: FakeFixServer(answer: Self.torchAnswer([mac, windows, g], target: "2.8.0"))).assess(torch)
+        guard case let .propose(_, offer) = both, case let .partial(p)? = offer.proposal else { Issue.record("\(both)"); return }
+        #expect(p.fixes == 1)
+    }
+
+    /// A fix's questions get the site's whole answers, their flaws with the ranges it publishes, so the core decides
+    /// them as a scan's: the answer within constraints, and the answers at exact versions, with none for a version the
+    /// site says nothing about, or a package the public index does not list.
+    @Test func aFixAsksTheSiteForWholeAnswers() async throws {
+        let body = #"{"checked":1,"packages":[{"ecosystem":"PyPI","name":"torch","version":"2.7.0","distinct_flaws":1,"worst_severity":"HIGH","#
+            + #""advisories":["A"],"flaws":[{"id":"A","severity":"HIGH","fixed_in":["2.8.0"],"ranges":[{"fixed":"2.8.0"}]}],"#
+            + #""plan":{"target":"2.8.0","fixes":["A"],"remaining":[]}}]}"#
+        let transport = RecordedTransport { request, _ in
+            switch request.url!.path {
+            case "/data/app-index.tsv": return .init(status: 200, headers: ["ETag": "\"v1\""], body: Fixture.data("api/app-index.tsv"))
+            case "/api/v1/check/batch": return .init(status: 200, body: Data(body.utf8))
+            default: return .init(status: 404, body: Data())
+            }
+        }
+        let dir = temporaryDirectory()
+        let scanner = Scanner(configuration: ScanConfiguration(storage: Storage(directory: dir), tools: .fixture(home: dir), folders: [], applicationRoots: []),
+                              transport: transport, pause: { _ in })
+        let at = { (v: String) in PackageVersion(name: "torch", version: v) }
+        let known = try await scanner.flaws([at("2.7.0"), at("2.8.0"), PackageVersion(name: "not-in-the-index", version: "1.0")], python: Self.python).get()
+        #expect(Array(known.keys) == [at("2.7.0")])
+        #expect(known[at("2.7.0")]?.flaws.map(\.ranges) == [[AffectedRange(fixed: "2.8.0")]])
+        let answer = try await scanner.plan(Self.finding("torch", "2.7.0", "2.13.0"), within: ["<2.9"]).get()
+        #expect(answer?.flaws.map(\.ranges) == [[AffectedRange(fixed: "2.8.0")]] && answer?.plan?.unjudgedTarget == "2.8.0")
     }
 
     // MARK: Upgrade together
@@ -177,8 +258,11 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
                                                         "typing-extensions>=4.8.0", "annotated-doc>=0.0.2"]),
                                 ("prometheus-fastapi-instrumentator", "7.2.0", ["prometheus-client<1.0.0,>=0.8.0", "starlette<2.0.0,>=0.30.0"])])
         let (tools, runner) = Self.tools([Self.starletteClean]) { _ in ok(report) }
-        let server = FakeFixServer(plan: #"{"target":null,"fixes":[],"remaining":[]}"#,
-                                   known: [PackageVersion(name: "starlette", version: "0.48.0"): ["GHSA-starlette", "CVE-2026-1"]])
+        // the site's flaws at 0.48.0, with their ranges: the core confirms pip's 1.3.1 fixes what 1.3.1 fixes
+        let flaws = [BatchCheckTests.flaw("GHSA-starlette", ranges: #"[{"fixed":"1.3.1"}]"#),
+                     BatchCheckTests.flaw("CVE-2026-1", ranges: #"[{"introduced":"0.40.0","fixed":"0.49.1"}]"#)]
+        let server = FakeFixServer(answer: try BatchCheckTests.result("starlette", "0.48.0", flaws: flaws, plan: BatchCheckTests.plan(nil)),
+                                   results: [PackageVersion(name: "starlette", version: "0.48.0"): try BatchCheckTests.result("starlette", "0.48.0", flaws: flaws)])
         let advisor = FixAdvisor(tools: tools, home: "/Users/ana", server: server)
         let starlette = Self.finding("starlette", "0.48.0", "1.3.1", flaws: 6, exploited: true)
         guard case let .propose(why, offer) = await advisor.assess(starlette), case let .together(t)? = offer.proposal else { Issue.record("no proposal"); return }
@@ -234,6 +318,43 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         #expect(a == .refused("blooper-backend 0.1.0 needs starlette < 0.49 — it is a project installed for development: raise its starlette range there."))
     }
 
+    /// pip's resolver picks demo 2.3 for `demo>=2.0`, inside a range ([2.2, 2.4)) of the flaw that 2.0 leaves. It is not
+    /// a new flaw (1.0 has it too), but the set would not fix it: refused. pip's 2.4 leaves it: accepted.
+    @Test func pipsResolvedVersionMustFixWhatTheFixFixes() async throws {
+        let folder = Self.site([("demo", "1.0", [], false), ("dep", "1.0", ["demo<2"], false)])
+        let flaw = BatchCheckTests.flaw("A", ranges: #"[{"fixed":"2.0"},{"introduced":"2.2","fixed":"2.4"}]"#)
+        func preview(pipPicks own: String) async throws -> FixPreview {
+            let (tools, _) = Self.tools([folder]) { _ in ok(pipReport([("demo", own, []), ("dep", "1.1", ["demo>=2"])])) }
+            let at = { (v: String) in PackageVersion(name: "demo", version: v) }
+            let server = FakeFixServer(results: [at("1.0"): try! BatchCheckTests.result("demo", "1.0", flaws: [flaw]),
+                                                 at(own): try! BatchCheckTests.result("demo", own, flaws: own == "2.3" ? [flaw] : [])])
+            let offer = FixOffer(plan: try FixPlan.make(for: Self.finding("demo", "1.0", "2.0"), tools: tools, home: "/Users/ana").get(),
+                                 proposal: .together(.init(package: "demo", fix: "2.0", blockers: ["dep"], python: Self.python)))
+            return await FixAdvisor(tools: tools, home: "/Users/ana", server: server).preview(offer)
+        }
+        let refused = try await preview(pipPicks: "2.3")
+        #expect(refused.blocked == "pip's set would install demo 2.3, which the core does not confirm fixes what 2.0 fixes")
+        #expect(refused.pins.isEmpty)
+        let accepted = try await preview(pipPicks: "2.4")
+        #expect(accepted.blocked == nil && accepted.pins == ["demo==2.4", "dep==1.1"])
+    }
+
+    /// MP2: two flaws, A fixed in 2.0, and B fixed in 2.0 but back from 2.2 to 2.4. The fix (2.0) leaves both; pip's 2.3
+    /// leaves A only. It must leave every flaw the fix leaves, not some: refused.
+    @Test func pipsVersionMustLeaveEveryFlawTheFixLeaves() async throws {
+        let folder = Self.site([("demo", "1.0", [], false), ("dep", "1.0", ["demo<2"], false)])
+        let a = BatchCheckTests.flaw("A", ranges: #"[{"fixed":"2.0"}]"#)
+        let b = BatchCheckTests.flaw("B", ranges: #"[{"fixed":"2.0"},{"introduced":"2.2","fixed":"2.4"}]"#)
+        let (tools, _) = Self.tools([folder]) { _ in ok(pipReport([("demo", "2.3", []), ("dep", "1.1", ["demo>=2"])])) }
+        let at = { (v: String) in PackageVersion(name: "demo", version: v) }
+        let server = FakeFixServer(results: [at("1.0"): try BatchCheckTests.result("demo", "1.0", flaws: [a, b]),
+                                             at("2.3"): try BatchCheckTests.result("demo", "2.3", flaws: [b])])
+        let offer = FixOffer(plan: try FixPlan.make(for: Self.finding("demo", "1.0", "2.0", flaws: 2), tools: tools, home: "/Users/ana").get(),
+                             proposal: .together(.init(package: "demo", fix: "2.0", blockers: ["dep"], python: Self.python)))
+        let p = await FixAdvisor(tools: tools, home: "/Users/ana", server: server).preview(offer)
+        #expect(p.blocked == "pip's set would install demo 2.3, which the core does not confirm fixes what 2.0 fixes")
+    }
+
     // MARK: The end state
 
     /// A pair fine alone and broken together: alpha 1.1 needs beta below 2.1, and beta goes to 2.1. Each alone passes;
@@ -281,11 +402,12 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
     @Test func plansJoinTheirToolsCommand() {
         let tools = ToolEnvironment(base: [:], isExecutable: { _ in true })
         func plan(_ origin: Origin, _ name: String, _ eco: Ecosystem?, malicious: Bool = false) -> FixPlan {
-            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: malicious ? nil : "9.9.9", malicious: malicious)
+            let upgrade = malicious ? nil : Fixture.fix("9.9.9", above: "1.0.0")
+            let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: eco, target: upgrade, malicious: malicious)
             let f = Finding(id: name, group: .criticalHigh, subject: eco.map { .package(ecosystem: $0, name: name) } ?? .project(slug: name, name: name, installedAs: name),
-                            title: name, installedVersion: "1.0.0", fixedVersion: malicious ? nil : "9.9.9", severity: .high, advisoryIDs: [], flawCount: 1,
+                            title: name, installedVersion: "1.0.0", upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                             exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.projectPage(slug: name),
-                            upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
+                            advice: UpgradeCommand.advice(inputs), verification: .none, grade: nil, commandInputs: inputs)
             return try! FixPlan.make(for: f, tools: tools).get()
         }
         let brew = "/opt/homebrew/bin/brew"
@@ -370,11 +492,11 @@ func pipReport(_ installs: [(String, String, [String])]) -> String {
         <plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>\(version)</string></dict></plist>
         """, to: bundle.appendingPathComponent("Contents/Info.plist"))
         let origin = Origin.electronApp(name: name, bundlePath: bundle.path, caskToken: token)
-        let inputs = UpgradeCommand.Inputs(origin: origin, name: "electron", ecosystem: .npm, target: "42.11.16", malicious: false)
+        let inputs = UpgradeCommand.Inputs(origin: origin, name: "electron", ecosystem: .npm, target: Fixture.fix("42.11.16", above: electron), malicious: false)
         return Finding(id: "app|\(bundle.path)|\(electron)", group: .exploited, subject: .package(ecosystem: .npm, name: "electron"), title: name,
-                       component: "Electron", installedVersion: electron, fixedVersion: "42.11.16", severity: .high, advisoryIDs: [], flawCount: 50,
+                       component: "Electron", installedVersion: electron, upgrade: inputs.target.map { _ in Fixture.fix("42.11.16", above: electron) }, severity: .high, advisoryIDs: [], flawCount: 50,
                        exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [origin],
-                       pageURL: SiteURL.packagePage(.npm, "electron", version: electron), upgradeCommand: UpgradeCommand.advice(inputs).command,
+                       pageURL: SiteURL.packagePage(.npm, "electron", version: electron), advice: UpgradeCommand.advice(inputs),
                        verification: .none, grade: nil, commandInputs: inputs)
     }
 

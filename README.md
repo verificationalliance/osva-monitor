@@ -63,7 +63,7 @@ shows the command and runs nothing.
 - **Java runtimes** installed on their own: every JDK in /Library/Java/JavaVirtualMachines (Oracle, Temurin, Zulu,
   Corretto, Microsoft …), IntelliJ IDEA's, SDKMAN's, asdf's and mise's, by the version in each one's release file, and
   Homebrew's openjdk formulae. OpenJDK's builds and Oracle's JDK are checked against OpenJDK's advisories; GraalVM, whose
-  advisories are separate, is listed as not checked.
+  advisories are separate, is listed under *No record*.
 - **Editor and browser extensions**: VS Code, Cursor, VSCodium and Windsurf; Chrome, Brave, Edge, Arc and Vivaldi;
   Firefox. Each is checked on the Mac against the list of extensions known to be malicious, and the npm packages an
   editor extension bundles are checked like any other.
@@ -90,7 +90,7 @@ the Mac only. No file paths, no bundle identifiers, no extension IDs, no list of
 exactly what the last scan sent.
 
 Packages that are not in the index are listed as *not in the index: no known problems, not proof of safety*. Things
-the app cannot check at all are listed as *not checked*. It never calls something safe because it did not recognise
+the app cannot check at all are listed under *No record*. It never calls something safe because it did not recognise
 it.
 
 <br clear="right">
@@ -114,11 +114,10 @@ with a throwaway key and a feed served from the Mac itself, and checks that a ch
 
 Four kinds of decision, where a bug would mislead you, are made by a core written in [Lean 4](https://lean-lang.org/),
 a programming language that is also a proof assistant. Next to the code are theorems about it. Lean checks each proof
-for every possible input, not for a sample of them, and refuses to build if one is missing or wrong. Not every such
-decision in the app goes through the core: which do, and which do not, is said below.
+for every possible input, not for a sample of them, and refuses to build if one is missing or wrong.
 
 <p align="center">
-  <img src="docs/how-it-is-proved.svg" width="860" alt="Lean source with 31 theorems is compiled to C and linked into the app through a small C bridge; Lean checks every proof">
+  <img src="docs/how-it-is-proved.svg" width="860" alt="Lean source with 47 theorems is compiled to C and linked into the app through a small C bridge; Lean checks every proof">
 </p>
 
 These decisions of the core are proved:
@@ -126,52 +125,68 @@ These decisions of the core are proved:
 | What the core decides | What is guaranteed, for every input |
 |---|---|
 | Which of two versions is newer (`1.0rc1 < 1.0 < 1.0.post1 < 1.0.1`, `10.6p1 < 10.6p2`) | The order never contradicts itself: reflexive, antisymmetric, transitive |
-| Whether your version is affected, given the versions the issuer lists as affected (PostgreSQL: 16 up to 16.15, 17 up to 17.11) | Your version is flagged if and only if it is in one of those ranges. The upgrade it suggests is newer than yours and in none of them |
-| The same, for an advisory that names only the fixed version on each release branch | A warning always comes with a newer version to upgrade to. A version at or past its own branch's fix is never flagged. A version newer than every fix is never flagged |
+| Whether your version is affected by an advisory, given the ranges the site publishes for it (PostgreSQL: 16 up to 16.15, 17 up to 17.11) | It is flagged as in range if and only if it is in one of them. Without ranges, it is only ever "likely" |
+| Which upgrade to suggest, and which advisories an upgrade fixes | The upgrade it suggests is newer than yours and outside the ranges of every advisory it was given. It says an upgrade fixes an advisory only if the upgrade is outside that advisory's ranges |
 | Which package names may be sent | The filter passes a name only if it is byte for byte in the public index |
 | How a name is put into a URL | The result never contains `/ ? # @ :`, and decoding it gives the name back, so two names never collide |
 
 This is the guarantee about affected ranges, as Lean states it
-([`core/OSVACore/Ranges.lean`](core/OSVACore/Ranges.lean)):
+([`core/OSVACore/Decide.lean`](core/OSVACore/Decide.lean)):
 
 ```lean
-/-- Every warning means the version lies in one of the issuer's ranges. -/
-theorem affectedIn_sound {v : Bytes} {rs : List Range}
-    (h : affectedIn v rs = some true) :
-    ∃ r ∈ rs, InRange v r
+/-- A warning "inside a range" means the version lies in one of the advisory's published ranges. -/
+theorem verdict_inRange_sound {v : Bytes} {a : Advisory} (h : verdict v a = .inRange) :
+    ∃ rs, a.ranges = some rs ∧ ∃ r ∈ rs, InRange v r
 ```
 
-In words: if the core's range check says your version `v` is affected, then `v` is in one of the ranges it was given,
-the issuer's ranges as the site publishes them. A companion theorem says the converse, so a version outside every
-range is never flagged by it. Both hold for every version string, including the strange ones nobody thought to test.
+In words: if the core says your version `v` is inside a range of advisory `a`, then `a` has published ranges and `v` is
+in one of them. A companion theorem says the converse: a version in one of them is always flagged. Both hold for every
+version string, including the strange ones nobody thought to test.
 
-When an issuer's record cannot be read as ranges exactly (a range given as commits, or one that contradicts its own
-fixes), the site says so, and the app falls back to the fixed version on each release branch.
+**What this means for the app.**
 
-**What goes through the core, and what does not.** The core decides for the advisories in a project's or a product's
-record: Homebrew formulae and casks, MacPorts, Nix and conda packages, apps and the libraries they bundle, Java
-runtimes, and the site's "patch these first" list. Packages checked by their exact version (registry packages, the
-lockfiles in project folders, the Electron inside apps, and the packages inside Go and Rust programs and pipx and uv
-tools) are flagged on the server's verdict, and the upgrade shown is the server's plan, which the app checks only for
-reading as a version. An advisory without readable ranges is decided by its first fixed versions, and the upgrade then
-is the nearest of them, which is not proved to leave every range behind. The core encodes the names in the URLs the
-app builds for the site; the names in an exact-version check travel in the request's JSON body.
+- A version is flagged as affected only if it lies inside an affected range the site publishes for that vulnerability.
+- Every version it suggests upgrading to is newer than yours and lies outside the published ranges of every advisory
+  it says that version fixes.
+- Names in request URLs never contain /, ?, #, @ or :.
+- Malicious packages are flagged from the malware record itself.
+
+Inside and outside are in the core's version order. One exception to the second: a Go or Rust program, or a uv tool,
+may be built again at its installed version, which brings newer versions of what it was built with. That is offered
+only when every flagged package is one of those
+([`ProgramFindings.swift`](app/Sources/OSVAKit/Scan/ProgramFindings.swift)). The names in an exact-version check travel
+in the request's JSON body, not in a URL.
+
+What the core cannot check is listed apart, under *Not checked against published ranges*, and never counted. A flaw
+the site publishes no ranges for is *likely affected* when the fixed versions its issuer names say so, and a version
+shown for it is one the core checked against them. Any other flaw the core cannot check is *reported, not checked*,
+with no version and no command: no ranges and no fixed version that flags yours, ranges that cannot be read, Maven or
+Packagist versions the core may order differently, or more flaws than the server lists. An exploited or critical one
+gets an amber mark. On the project and product paths, an advisory that states no versions shows only if it is
+exploited, or beside another finding.
+
+**How the app is held to it.** In the app's code, only the verified core can make a version to upgrade to, and the
+commands are built only from such versions: the types allow nothing else, and a guard test scans the source for ways
+around them. Rebuilds, the exception above, may use the installed version. A report saved on disk is shown as it was
+saved until the app scans again. The type is `CheckedUpgrade` in `Core.swift` and the test is `ClaimsTests`;
+`scripts/claims-mutants.sh` breaks the rules one at a time and checks that the test fails. This part is held by types
+and tests, not proved in Lean.
 
 **The proved code is the code that runs.** Lean compiles the same definitions to C, and that C is linked into the
-app. There is no hand-written Swift copy that could drift away from what was proved. About 130 lines of C pass
+app. There is no hand-written Swift copy that could drift away from what was proved. About 190 lines of C pass
 bytes between Swift and Lean. That bridge is the only unproved code on the path, and it has its own tests.
 
-**Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 31 proofs again. It
+**Anyone can re-check it.** `scripts/check-core.sh` rebuilds the core, which makes Lean check all 47 proofs again. It
 then confirms that they rest only on Lean's three standard axioms (no `sorry`, nothing assumed without proof) and runs
 the bridge's tests. CI does the same on every push.
 
-**What is not proved.** The Lean compiler and runtime, the C bridge, the server's verdicts and upgrade plans, and the
-rest of the app: reading Homebrew, lockfiles and Pythons, the network, the interface. Those are covered by tests. The
-data comes from OSV, the GitHub Advisory Database and NVD. The proofs say the core reasons correctly about the data it
-is given, not that the data is right.
+**What is not proved.** The Lean compiler and runtime, the C bridge, the Swift code that sends decisions to the core,
+which advisories the server matches to a package, and the rest of the app: reading Homebrew, lockfiles and Pythons,
+the network, the interface. Those are covered by tests. The data comes from OSV, the GitHub Advisory Database and NVD.
+The proofs say the core reasons correctly about the data it is given, not that the data is right.
 
 The server the app talks to uses the same version order, and its implementation is tested against this Lean core on
-30,000 version pairs.
+106,411 version pairs.
 
 ## Build
 

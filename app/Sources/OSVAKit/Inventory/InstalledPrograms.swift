@@ -113,7 +113,7 @@ public struct ManagedPackage: Hashable, Codable, Sendable {
 }
 
 /// Something a source found and could not check at all (a Rust program without a dependency list, a conda package
-/// whose PyPI name differs from its own). Listed under "Not checked", never counted as clean.
+/// whose PyPI name differs from its own). Listed under "No record", never counted as clean.
 public struct UncheckedItem: Hashable, Codable, Sendable {
     public var kind: SourceKind
     /// The heading it is listed under: "Rust programs without a dependency list".

@@ -109,9 +109,9 @@ public struct BundleCheck: Sendable {
 
     // MARK: Findings
 
-    /// The advisories `installed` is affected by, weighed as Homebrew projects' are (critical, high, or exploited),
-    /// each decided by the verified core on the issuer's ranges when the record has them, else on its first fixed
-    /// versions (AdvisoryCheck), and the one upgrade that clears them.
+    /// The advisories `installed` is affected by, likely affected by, or reported for, weighed as Homebrew projects'
+    /// are (critical, high, or exploited) and decided by the verified core: affected only inside the ranges the record
+    /// publishes (AdvisoryCheck). The upgrade is the core's.
     static func decide(_ installed: String, _ recent: [ProjectResponse.Advisory]) -> AdvisoryCheck? {
         AdvisoryCheck.decide(installed, recent)
     }
@@ -128,21 +128,21 @@ public struct BundleCheck: Sendable {
         }
     }
 
+    /// Call it off the main thread: the core picks each upgrade (AdvisoryCheck).
     public func findings(products: [String: ProductResponse], projects: [String: ProjectResponse]) -> [Finding] {
         var out: [Finding] = []
-        func likely(_ d: AdvisoryCheck) -> String? { d.note }
 
         // An app's own version, against its product record.
         for m in apps {
             guard let version = m.version, let record = products[m.record.product], let d = Self.decide(version, record.recent) else { continue }
-            let advice = BundleAdvice.advice(for: m.app.origin, component: nil, malicious: false)
+            let advice = d.advice(BundleAdvice.advice(for: m.app.origin, component: nil, malicious: false))
             out.append(Finding(
-                id: "prod|\(m.app.path)|\(m.record.product)|\(version)", group: d.exploited ? .exploited : .criticalHigh,
+                id: "prod|\(m.app.path)|\(m.record.product)|\(version)", group: d.group,
                 subject: .product(key: m.record.product, name: record.name), title: m.app.name, installedVersion: version,
-                fixedVersion: d.target, severity: d.severity, advisoryIDs: d.advisories.map(\.id), flawCount: d.advisories.count,
-                exploited: d.exploited, malicious: false, note: [likely(d), advice.note].compactMap { $0 }.joined(separator: " "),
-                bigIssue: nil, origins: [m.app.origin], pageURL: record.sourceURL ?? SiteURL.home, upgradeCommand: advice.command,
-                verification: .none, grade: nil))
+                upgrade: d.target, severity: d.severity, advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount,
+                exploited: d.exploited, malicious: false, note: FindingBuilder.sentences(d.note, advice.note),
+                bigIssue: nil, origins: [m.app.origin], pageURL: record.sourceURL ?? SiteURL.home, advice: advice,
+                verification: .none, grade: nil, notChecked: d.notChecked))
         }
 
         // A library an app bundles: attributed to the app, since updating the app is what updates it. One finding per
@@ -163,13 +163,13 @@ public struct BundleCheck: Sendable {
                 (subject, recent, page) = (.product(key: c.found.record.product, name: r.name), r.recent, r.sourceURL ?? SiteURL.home)
             }
             guard Self.comparable(c.found, version, recent), let d = Self.decide(version, recent) else { continue }
-            let advice = BundleAdvice.advice(for: c.app.origin, component: c.found.label, malicious: false)
+            let advice = d.advice(BundleAdvice.advice(for: c.app.origin, component: c.found.label, malicious: false))
             out.append(Finding(
-                id: "comp|\(key)", group: d.exploited ? .exploited : .criticalHigh, subject: subject, title: c.app.name,
-                component: c.found.label, installedVersion: version, fixedVersion: d.target, severity: d.severity,
-                advisoryIDs: d.advisories.map(\.id), flawCount: d.advisories.count, exploited: d.exploited, malicious: false,
-                note: [likely(d), advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil, origins: [c.app.origin],
-                pageURL: page, upgradeCommand: advice.command, verification: .none, grade: nil))
+                id: "comp|\(key)", group: d.group, subject: subject, title: c.app.name,
+                component: c.found.label, installedVersion: version, upgrade: d.target, severity: d.severity,
+                advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
+                note: FindingBuilder.sentences(d.note, advice.note), bigIssue: nil, origins: [c.app.origin],
+                pageURL: page, advice: advice, verification: .none, grade: nil, notChecked: d.notChecked))
         }
 
         // An extension its store reported: malicious, removed with the editor's own command or in the browser.
@@ -187,9 +187,9 @@ public struct BundleCheck: Sendable {
             }
             out.append(Finding(
                 id: "ext|\(m.record.store)|\(m.record.id)|\(host.rawValue)", group: .malicious, subject: .addOn(store: m.record.store, id: m.record.id),
-                title: first.name, installedVersion: first.version, fixedVersion: nil, severity: nil, advisoryIDs: [], flawCount: 0,
+                title: first.name, installedVersion: first.version, upgrade: nil, severity: nil, advisoryIDs: [], flawCount: 0,
                 exploited: false, malicious: true, note: flagged + " " + what, bigIssue: nil, origins: m.copies.map(\.origin),
-                pageURL: m.record.source ?? SiteURL.home, upgradeCommand: advice.command, verification: .none, grade: nil))
+                pageURL: m.record.source ?? SiteURL.home, advice: advice, verification: .none, grade: nil))
         }
         return out
     }
@@ -238,7 +238,7 @@ public struct BundleCheck: Sendable {
                         progress: @Sendable (String) -> Void) async -> (records: [String: ProductResponse], fromCache: [String], problems: [String]) {
         var records: [String: ProductResponse] = [:], fromCache: [String] = [], problems: [String] = []
         for p in approved {
-            if let cached = cache.readJSON(CachedProduct.self, "product", p.key, maxAge: maxAge) {
+            if let cached = cache.readJSON(CachedProduct.self, Self.productCache, p.key, maxAge: maxAge) {
                 if let r = cached.record { records[p.key] = r }
                 fromCache.append(p.sentDescription)
                 continue
@@ -247,9 +247,9 @@ public struct BundleCheck: Sendable {
             do {
                 let r = try await api.product(p)
                 records[p.key] = r
-                cache.writeJSON(CachedProduct(record: r), "product", p.key)
+                cache.writeJSON(CachedProduct(record: r), Self.productCache, p.key)
             } catch APIClient.APIError.http(404, _) {
-                cache.writeJSON(CachedProduct(record: nil), "product", p.key)
+                cache.writeJSON(CachedProduct(record: nil), Self.productCache, p.key)
             } catch {
                 problems.append("Product \(p.key): \(error.localizedDescription)")
                 if error as? APIClient.APIError == .keptRateLimiting { break }
@@ -259,6 +259,10 @@ public struct BundleCheck: Sendable {
     }
 
     struct CachedProduct: Codable { var record: ProductResponse? }
+
+    /// Where product records are cached. Records saved by 0.5.1 and before ("product") were decoded leniently and saved
+    /// again as decoded, so a range they could not read may be missing from them: never read as checked records.
+    static let productCache = "product-v2"
 }
 
 extension BundleAdvice {
@@ -279,9 +283,9 @@ public enum FindingOrder {
     public static func sorted(_ findings: [Finding]) -> [Finding] {
         let base = findings.sorted(by: FindingBuilder.precedes)
         var out: [Finding] = []
-        for group in Finding.Group.allCases {
+        for group in Finding.Group.sections {
             var clusters: [String: [Finding]] = [:], order: [String] = []
-            for f in base where f.group == group {
+            for f in base where f.group.section == group {
                 let k = f.clusterKey
                 if clusters[k] == nil { order.append(k) }
                 clusters[k, default: []].append(f)

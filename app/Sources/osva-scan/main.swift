@@ -59,15 +59,16 @@ print("")
 if report.findings.isEmpty {
     print("Nothing installed matches a known malicious package or a known vulnerability in the public index.")
 } else {
-    for group in Finding.Group.allCases {
-        let items = report.findings.filter { $0.group == group }
+    for group in Finding.Group.sections {
+        let items = report.findings.filter { $0.group.section == group }
         guard !items.isEmpty else { continue }
         print("\(group.title.uppercased()) (\(items.count))")
         for f in items {
             let version = (f.component.map { "\($0) " } ?? "") + f.installedVersion + (f.fixedVersion.map { " -> \($0)" } ?? "")
             var tags: [String] = []
             if let s = f.severity { tags.append(s.label.lowercased()) }
-            if f.exploited { tags.append("exploited") }
+            if f.exploited { tags.append(f.group.isNotChecked ? "exploited, not checked" : "exploited") }
+            if let n = f.notChecked, !f.group.isNotChecked { tags.append("and a flaw \(n.words), not checked") }
             if f.flawCount > 1 { tags.append("\(f.flawCount) flaws") }
             if f.verification != .none { tags.append(f.verification == .whole ? "verified as a whole" : "verified parts") }
             if let g = f.grade { tags.append("grade \(g)") }

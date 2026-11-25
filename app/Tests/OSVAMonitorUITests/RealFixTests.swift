@@ -18,7 +18,7 @@ import OSVAKit
             case "/api/v1/check/batch":
                 // six 1.16.0 is "vulnerable" for the test, fixed in 1.17.0; anything else has nothing to report
                 let asked = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
-                let six = #"{"ecosystem":"PyPI","name":"six","version":"1.16.0","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["TEST-1"],"flaws":[{"id":"TEST-1","severity":"HIGH","fixed_in":["1.17.0"]}],"plan":{"target":"1.17.0","fixes":["TEST-1"],"remaining":[]}}"#
+                let six = #"{"ecosystem":"PyPI","name":"six","version":"1.16.0","malicious":false,"distinct_flaws":1,"worst_severity":"HIGH","advisories":["TEST-1"],"flaws":[{"id":"TEST-1","severity":"HIGH","fixed_in":["1.17.0"],"ranges":[{"fixed":"1.17.0"}]}],"plan":{"target":"1.17.0","fixes":["TEST-1"],"remaining":[]}}"#
                 body = Data((#"{"checked":1,"packages":["# + (asked.contains(#""version":"1.16.0""#) ? six : "") + "]}").utf8)
             default: body = Data("{}".utf8)
             }
@@ -62,16 +62,17 @@ import OSVAKit
         let version = try python(["-c", "import platform; print(platform.python_version())"], env: env).trimmingCharacters(in: .whitespacesAndNewlines)
         let brewPython = PythonEnvironment(executable: Self.python3, version: version, kind: .homebrew, externallyManaged: false, userSite: userSite,
                                            formula: "python@3.11")
-        let inputs = UpgradeCommand.Inputs(origin: .pip(python: brewPython, user: true, formula: nil), name: "six", ecosystem: .pypi, target: "1.17.0", malicious: false)
+        let inputs = UpgradeCommand.Inputs(origin: .pip(python: brewPython, user: true, formula: nil), name: "six", ecosystem: .pypi,
+                                           target: PreviewData.fix("1.17.0", above: "1.16.0"), malicious: false)
         let finding = Finding(id: "pkg|PyPI|six|1.16.0|py\(version)", group: .criticalHigh, subject: .package(ecosystem: .pypi, name: "six"), title: "six",
-                              installedVersion: "1.16.0", fixedVersion: "1.17.0", severity: .high, advisoryIDs: ["TEST-1"], flawCount: 1, exploited: false,
+                              installedVersion: "1.16.0", upgrade: inputs.target.map { _ in PreviewData.fix("1.17.0", above: "1.16.0") }, severity: .high, advisoryIDs: ["TEST-1"], flawCount: 1, exploited: false,
                               malicious: false, note: nil, bigIssue: nil, origins: [inputs.origin], pageURL: SiteURL.packagePage(.pypi, "six", version: "1.16.0"),
-                              upgradeCommand: UpgradeCommand.advice(inputs).command, verification: .none, grade: nil, commandInputs: inputs)
+                              advice: UpgradeCommand.advice(inputs), verification: .none, grade: nil, commandInputs: inputs)
         let storage = Storage(directory: root.appendingPathComponent("support", isDirectory: true))
         storage.save(ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(packages: [
             InstalledPackage(ecosystem: .pypi, name: "six", version: "1.16.0", origin: inputs.origin)]), findings: [finding], sent: SentRecord(),
                                 indexGeneratedAt: nil, problems: []))
-        let model = AppModel(storage: storage, notifier: Quiet(), tools: tools, transport: Site())
+        let model = AppModel(storage: storage, notifier: Quiet(), tools: tools, transport: Site(), defaults: FixLoopTests.defaults())
         func state() -> FixRowState? { model.fixes[finding.id] }
         func wait(_ what: String, _ condition: () -> Bool) async throws {
             for _ in 0..<1200 where !condition() { try await Task.sleep(for: .milliseconds(100)) }

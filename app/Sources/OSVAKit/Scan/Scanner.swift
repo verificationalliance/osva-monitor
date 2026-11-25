@@ -23,6 +23,14 @@ public actor Scanner {
         public static let state: TimeInterval = 3600
     }
 
+    /// Where exact-version answers are cached. Answers saved by 0.5.1 and before ("batch") have no ranges, so they are
+    /// never read as checked answers: a scan asks again and keeps the new answer here.
+    static let batchCache = "batch-v2"
+
+    /// Where project records are cached. Records saved by 0.5.1 and before ("project") were decoded leniently and saved
+    /// again as decoded, so a range they could not read may be missing from them: never read as checked records.
+    static let projectCache = "project-v2"
+
     private let configuration: ScanConfiguration
     private let indexStore: IndexStore
     private let api: APIClient
@@ -91,7 +99,7 @@ public actor Scanner {
         var verdicts: [ApprovedPackage: BatchResponse.Result] = [:]
         var toAsk: [ApprovedPackage] = []
         for p in packages {
-            if let cached = cache.readJSON(CachedVerdict.self, "batch", p.cacheKey, maxAge: Freshness.batchVerdict) {
+            if let cached = cache.readJSON(CachedVerdict.self, Self.batchCache, p.cacheKey, maxAge: Freshness.batchVerdict) {
                 if let r = cached.result { verdicts[p] = r }
                 fromCache.append(p.sentDescription)
             } else {
@@ -108,7 +116,7 @@ public actor Scanner {
                 for p in chunk {
                     let r = byKey[p.versionKey]
                     if let r { verdicts[p] = r }
-                    cache.writeJSON(CachedVerdict(result: r), "batch", p.cacheKey)
+                    cache.writeJSON(CachedVerdict(result: r), Self.batchCache, p.cacheKey)
                 }
             } catch {
                 problems.append("Exact-version check: \(error.localizedDescription)")
@@ -119,14 +127,14 @@ public actor Scanner {
         // 5. Projects matched from Homebrew (and those the vulnerable packages belong to are already in the answers).
         var projects: [String: ProjectResponse] = [:]
         for p in approvedProjects {
-            if let cached = cache.readJSON(ProjectResponse.self, "project", p.slug, maxAge: Freshness.project) {
+            if let cached = cache.readJSON(ProjectResponse.self, Self.projectCache, p.slug, maxAge: Freshness.project) {
                 projects[p.slug] = cached; fromCache.append(p.sentDescription); continue
             }
             progress("Reading \(p.slug)'s advisories…")
             do {
                 let r = try await api.project(p)
                 projects[p.slug] = r
-                cache.writeJSON(r, "project", p.slug)
+                cache.writeJSON(r, Self.projectCache, p.slug)
             } catch {
                 problems.append("Project \(p.slug): \(error.localizedDescription)")
                 if error as? APIClient.APIError == .keptRateLimiting { break }
@@ -200,6 +208,9 @@ public actor Scanner {
         case removed
         /// Still found: the finding as it is now.
         case stillAffected(Finding)
+        /// Still found, but only as likely affected or reported by the site: not checked against published ranges, so
+        /// neither fixed nor still affected. The finding as it is now.
+        case notChecked(Finding)
         case couldNotCheck(String)
     }
 
@@ -240,9 +251,9 @@ public actor Scanner {
             guard let project = index.project(slug: slug), let approved = PrivacyFilter(index: index).approve(projects: [slug]).first else {
                 return (report, .couldNotCheck("\(slug) is not in the public index"))
             }
-            var response = cache.readJSON(ProjectResponse.self, "project", slug, maxAge: Freshness.project)
+            var response = cache.readJSON(ProjectResponse.self, Self.projectCache, slug, maxAge: Freshness.project)
             if response == nil {
-                do { response = try await api.project(approved); cache.writeJSON(response!, "project", slug) }
+                do { response = try await api.project(approved); cache.writeJSON(response!, Self.projectCache, slug) }
                 catch { return (report, .couldNotCheck(error.localizedDescription)) }
             }
             rebuilt = builder.findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: project)], projects: [slug: response!],
@@ -271,7 +282,7 @@ public actor Scanner {
                     let byKey = Dictionary(results.map { ("\($0.ecosystem)\u{1F}\($0.name)\u{1F}\($0.version)", $0) }, uniquingKeysWith: { a, _ in a })
                     for p in chunk {
                         if let r = byKey[p.versionKey] { verdicts[p] = r }
-                        cache.writeJSON(CachedVerdict(result: byKey[p.versionKey]), "batch", p.cacheKey)
+                        cache.writeJSON(CachedVerdict(result: byKey[p.versionKey]), Self.batchCache, p.cacheKey)
                     }
                 } catch {
                     return (report, .couldNotCheck(error.localizedDescription))
@@ -287,7 +298,10 @@ public actor Scanner {
         let explained = await ProvenanceExplainer(tools: configuration.tools).explain(rebuilt, inventory: updated.inventory)
         updated = Self.replacing(finding, with: explained, in: updated)
         updated.sent.requests += await api.takeSentRequests()
-        return (updated, explained.first.map(Recheck.stillAffected) ?? .fixed(now: now))
+        // a finding listed with nothing to do on this Mac (every flaw outside its published ranges, or of another
+        // platform) is what the core found clear: fixed, never "still affected"
+        let standing = explained.filter { !$0.affectsNothingHere }
+        return (updated, standing.first.map { $0.group.isNotChecked ? .notChecked($0) : .stillAffected($0) } ?? .fixed(now: now))
     }
 
     /// What a Java runtime's re-check found: its findings now, or the answer to give instead (nil: it is gone).
@@ -308,10 +322,10 @@ public actor Scanner {
         switch m.route {
         case let .project(slug, _):
             guard let approved = filter.approve(projects: [slug]).first else { return .answer(.couldNotCheck("\(slug) is not in the public index")) }
-            if let cached = cache.readJSON(ProjectResponse.self, "project", slug, maxAge: Freshness.project) {
+            if let cached = cache.readJSON(ProjectResponse.self, Self.projectCache, slug, maxAge: Freshness.project) {
                 projects[slug] = cached
             } else {
-                do { projects[slug] = try await api.project(approved); cache.writeJSON(projects[slug]!, "project", slug) }
+                do { projects[slug] = try await api.project(approved); cache.writeJSON(projects[slug]!, Self.projectCache, slug) }
                 catch { return .answer(.couldNotCheck(error.localizedDescription)) }
             }
         case let .product(c):
@@ -464,9 +478,10 @@ struct CachedVerdict: Codable { var result: BatchResponse.Result? }
 // MARK: - What a fix asks the site
 
 extension Scanner: FixServer {
-    /// The plan for one Python package at its installed version, its target within `constraints`: a fresh answer (the
-    /// cache keeps the scan's own plans). Only a package the privacy filter passes is asked about, as in a scan.
-    public func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError> {
+    /// The answer for one Python package at its installed version, its plan's target within `constraints`: a fresh
+    /// answer (the cache keeps the scan's own plans), whole, so the core decides it as a scan's. Only a package the
+    /// privacy filter passes is asked about, as in a scan.
+    public func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError> {
         guard case .package(.pypi, _) = finding.subject, let inputs = finding.commandInputs, case .pip = inputs.origin else {
             return .failure(FixServerError("only a Python package's plan can be asked within constraints"))
         }
@@ -480,13 +495,14 @@ extension Scanner: FixServer {
         guard let approved = PrivacyFilter(index: index).approve([installed]).approved.keys.first else {
             return .failure(FixServerError("\(inputs.name) is not one the app asks about"))
         }
-        do { return .success(try await api.checkWithin(approved, constraints: constraints)?.plan) }
+        do { return .success(try await api.checkWithin(approved, constraints: constraints)) }
         catch { return .failure(FixServerError(error.localizedDescription)) }
     }
 
-    /// The flaws known at each version, asked as a scan asks (privacy filter, batches of 200), never from the cache. A
-    /// package the public index does not list has nothing reported; a version no registry would have cannot be asked.
-    public func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError> {
+    /// The answer at each version, asked as a scan asks (privacy filter, batches of 200), never from the cache. A version
+    /// the site has no answer for, or of a package the public index does not list, has nothing reported (no key); a
+    /// version no registry would have cannot be asked.
+    public func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError> {
         let index: PublicIndex
         do { index = try await indexStore.load(maxAge: Freshness.index).index }
         catch { return .failure(FixServerError("could not read the public index (\(error.localizedDescription))")) }
@@ -495,14 +511,14 @@ extension Scanner: FixServer {
             return .failure(FixServerError("\(odd.name) \(odd.version) cannot be checked"))
         }
         let selection = PrivacyFilter(index: index).approve(versions.map { InstalledPackage(ecosystem: .pypi, name: $0.name, version: $0.version, origin: origin) })
-        var out = Dictionary(uniqueKeysWithValues: Set(versions).map { ($0, Set<String>()) })
+        var out: [PackageVersion: BatchResponse.Result] = [:]
         for chunk in Self.batches(selection.approved.keys.sorted { $0.cacheKey < $1.cacheKey }) {
             do {
                 let results = try await api.checkBatch(chunk)
                 let byKey = Dictionary(results.map { ("\($0.ecosystem)\u{1F}\($0.name)\u{1F}\($0.version)", $0) }, uniquingKeysWith: { a, _ in a })
                 for p in chunk {
-                    let ids = Set((byKey[p.versionKey]?.flaws ?? []).flatMap { [$0.id] + $0.aliases })
-                    for installed in selection.approved[p] ?? [] { out[PackageVersion(name: installed.name, version: installed.version)] = ids }
+                    guard let answer = byKey[p.versionKey] else { continue }
+                    for installed in selection.approved[p] ?? [] { out[PackageVersion(name: installed.name, version: installed.version)] = answer }
                 }
             } catch {
                 return .failure(FixServerError(error.localizedDescription))

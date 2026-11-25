@@ -40,11 +40,11 @@ import Testing
             "Figma · Sparkle 1.24.0 → 2.7.3", "zoom.us · Sparkle 1.24.0 → 2.7.3", "zoom.us · 6.6.10 → 6.6.12",   // Zoom's two together
             "Sink · OpenSSL 3.0.13 → 3.0.18", "SpotifyNowPlaying · Python 3.11.15 → 3.14.11",
         ])
-        #expect(f.allSatisfy { $0.group == .criticalHigh })
+        #expect(f.allSatisfy { $0.group == .likely })                              // the records publish no ranges
 
         let zoomOwn = try #require(f.first { $0.title == "zoom.us" && $0.component == nil })
         #expect(zoomOwn.severity == .high && zoomOwn.flawCount == 1 && zoomOwn.advisoryIDs == ["ZSB-26031"])
-        #expect(zoomOwn.upgradeCommand == "brew upgrade --cask zoom" && zoomOwn.note == "Likely affected: the issuer names 6.6.12 as fixed.")
+        #expect(zoomOwn.upgradeCommand == "brew upgrade --cask zoom" && zoomOwn.note == "Likely affected: the site publishes no affected ranges, and the issuer names 6.6.12 as fixed.")
         let folder = (try #require(inventory.apps.first { $0.name == "zoom.us" }).path as NSString).deletingLastPathComponent
         #expect(zoomOwn.originSummary == "App in \(Paths.abbreviatingHome(folder)) · Homebrew cask")
         #expect(zoomOwn.pageURL.host == "www.zoom.com" && zoomOwn.pageLabel == "Open the report on www.zoom.com")
@@ -52,10 +52,10 @@ import Testing
 
         let zoomSparkle = try #require(f.first { $0.title == "zoom.us" && $0.component == "Sparkle" })
         #expect(zoomSparkle.severity == .critical && zoomSparkle.flawCount == 2)
-        #expect(zoomSparkle.note == "Likely affected: the issuer names 2.7.3 as fixed. zoom.us ships its own Sparkle: upgrading the app updates it.")
+        #expect(zoomSparkle.note == "Likely affected: the site publishes no affected ranges, and the issuer names 2.7.3 as fixed. zoom.us ships its own Sparkle: upgrading the app updates it.")
         let figma = try #require(f.first { $0.title == "Figma" })
         #expect(figma.upgradeCommand == nil)
-        #expect(figma.note == "Likely affected: the issuer names 2.7.3 as fixed. Update Figma from its own menu or its website: it ships its own Sparkle.")
+        #expect(figma.note == "Likely affected: the site publishes no affected ranges, and the issuer names 2.7.3 as fixed. Update Figma from its own menu or its website: it ships its own Sparkle.")
 
         let python = try #require(f.first { $0.component == "Python" })
         #expect(python.subject == .project(slug: "cpython", name: "CPython", installedAs: "Python.framework"))
@@ -96,15 +96,30 @@ import Testing
         #expect(check.notChecked(products: own, projects: [:]).isEmpty)
     }
 
-    @Test func anExploitedFlawPutsTheAppInItsGroup() throws {
+    @Test func anExploitedFlawWithoutRangesMarksTheApp() throws {
         let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.5.1", bundleVersion: nil, caskToken: nil)
         let check = BundleCheck.match(Inventory(apps: [app]), index: Make.index)
         let f = try #require(check.findings(products: Self.products, projects: [:]).first)
-        #expect(f.group == .exploited && f.exploited && f.severity == .critical && f.fixedVersion == "6.6.12" && f.flawCount == 2)
-        #expect(f.note == "Likely affected: the issuer names 6.6.12 as fixed. Update zoom.us from its own menu or its website.")
+        // the record publishes no ranges: likely, and never counted; how serious it would be, and its mark, stay
+        #expect(f.group == .likely && f.exploited && f.severity == .critical && f.fixedVersion == "6.6.12" && f.flawCount == 2)
+        #expect(f.notChecked?.exploited == true && f.deservesNotification)
+        #expect(f.note == "Likely affected: the site publishes no affected ranges, and the issuer names 6.6.12 as fixed. Update zoom.us from its own menu or its website.")
         // at the fix, nothing
         var fixed = app; fixed.shortVersion = "6.6.12"
         #expect(BundleCheck.match(Inventory(apps: [fixed]), index: Make.index).findings(products: Self.products, projects: [:]).isEmpty)
+    }
+
+    /// A product advisory without published ranges is likely affected: never counted, but its critical flaw is marked.
+    @Test func aProductAdvisoryWithoutRangesIsLikely() throws {
+        let zoom = try JSONDecoder().decode(ProductResponse.self, from: Data(#"""
+            {"key":"zoom","name":"Zoom Workplace","recent":[{"id":"ZSB-1","sev":"CRITICAL","fixed_hint":["6.6.12"],"ranges":null}]}
+            """#.utf8))
+        let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.6.10", bundleVersion: nil, caskToken: nil)
+        let f = try #require(BundleCheck.match(Inventory(apps: [app]), index: Make.index).findings(products: ["zoom": zoom], projects: [:]).first)
+        #expect(f.group == .likely && !f.group.needsAction && f.fixedVersion == "6.6.12" && f.severity == .critical)
+        #expect(f.notChecked == Finding.NotChecked(id: "ZSB-1", exploited: false, critical: true))
+        #expect(f.note == "Likely affected: the site publishes no affected ranges, and the issuer names 6.6.12 as fixed. "
+                + "Update zoom.us from its own menu or its website.")
     }
 
     @Test func maliciousExtensionsComeFirstWithTheirRemoval() throws {
@@ -158,7 +173,7 @@ import Testing
         }
         // a package an extension bundles: updating the extension is the fix; malicious: remove the extension
         let ext = Origin.addOn(host: .vscode, id: "eamodio.gitlens", name: "GitLens", profile: nil, path: "/p")
-        #expect(UpgradeCommand.advice(for: ext, name: "lodash", ecosystem: .npm, target: "4.17.21", malicious: false)
+        #expect(UpgradeCommand.advice(for: ext, name: "lodash", ecosystem: .npm, target: Fixture.fix("4.17.21"), malicious: false)
                 == .init(command: nil, note: "Update GitLens in VS Code: it ships its own lodash."))
         #expect(UpgradeCommand.command(for: ext, name: "axios", ecosystem: .npm, fixed: nil, malicious: true) == "code --uninstall-extension eamodio.gitlens")
         // nothing here downloads an installer
@@ -166,7 +181,7 @@ import Testing
     }
 
     @Test func eachExtensionThatBundlesAPackageIsItsOwnFinding() throws {
-        let batch = try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-malicious.json"))
+        let batch = try JSONDecoder().decode(BatchResponse.self, from: Fixture.data("api/check-batch-plan.json"))
         func ext(_ id: String, _ name: String) -> Origin { .addOn(host: .vscode, id: id, name: name, profile: nil, path: "/u/.vscode/extensions/\(id)") }
         let installed = [
             InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.20", origin: ext("eamodio.gitlens", "GitLens")),
@@ -177,8 +192,9 @@ import Testing
         #expect(selection.approved.count == 2 && selection.approved.keys.allSatisfy { $0.platform == "macos" })   // one question per version
         let verdicts = Dictionary(uniqueKeysWithValues: selection.approved.keys.compactMap { a in batch.packages.first { $0.name == a.name }.map { (a, $0) } })
         let f = FindingOrder.sorted(FindingBuilder(index: Fixture.index).findings(approved: selection.approved, verdicts: verdicts, brew: [], projects: [:], bigIssues: []))
-        #expect(f.map { "\($0.title) · \($0.versionLabel) · \($0.group)" } == ["GitLens · axios 1.14.1 · malicious", "GitLens · lodash 4.17.20 · criticalHigh",
-                                                                                "Other · lodash 4.17.20 · criticalHigh"])
+        #expect(f.map { "\($0.title) · \($0.versionLabel) · \($0.group)" } == ["GitLens · axios 1.14.1 · malicious",
+                                                                                "GitLens · lodash 4.17.20 → 4.17.21 · criticalHigh",
+                                                                                "Other · lodash 4.17.20 → 4.17.21 · criticalHigh"])
         #expect(f[0].upgradeCommand == "code --uninstall-extension eamodio.gitlens" && f[0].note == "Remove it, then rotate every secret it could read.")
         #expect(f[1].upgradeCommand == nil && f[1].note == "Update GitLens in VS Code: it ships its own lodash.")
         #expect(f[1].originSummary == "VS Code extension · eamodio.gitlens")
@@ -186,10 +202,10 @@ import Testing
 
     @Test func orderKeepsEachAppTogetherWhereItsWorstFindingIs() {
         func finding(_ id: String, _ title: String, _ s: Severity, app: String?) -> Finding {
-            Finding(id: id, group: .criticalHigh, subject: .product(key: id, name: id), title: title, installedVersion: "1", fixedVersion: "2",
+            Finding(id: id, group: .criticalHigh, subject: .product(key: id, name: id), title: title, installedVersion: "1", upgrade: Fixture.fix("2", above: "1"),
                     severity: s, advisoryIDs: [], flawCount: 1, exploited: false, malicious: false, note: nil, bigIssue: nil,
                     origins: app.map { [.application(name: title, bundlePath: $0, caskToken: nil)] } ?? [.homebrewFormula(name: title)],
-                    pageURL: SiteURL.home, upgradeCommand: nil, verification: .none, grade: nil)
+                    pageURL: SiteURL.home, advice: nil, verification: .none, grade: nil)
         }
         let f = FindingOrder.sorted([
             finding("a1", "Zoom", .high, app: "/A/zoom.us.app"), finding("b", "curl", .critical, app: nil),
@@ -226,10 +242,10 @@ import Testing
             "malicious · Ad Blocker · 1.0",
             "malicious · GitLens · axios 1.14.1",
             "malicious · Prettier · 11.0.3",
-            "criticalHigh · zoom.us · Sparkle 1.24.0 → 2.7.3",
-            "criticalHigh · zoom.us · Python 3.11.15 → 3.14.11",
-            "criticalHigh · zoom.us · 6.6.10 → 6.6.12",
-            "criticalHigh · Prettier · lodash 4.17.20",
+            "likely · zoom.us · Sparkle 1.24.0 → 2.7.3",                          // the records publish no ranges
+            "likely · zoom.us · Python 3.11.15 → 3.14.11",
+            "likely · zoom.us · 6.6.10 → 6.6.12",
+            "reported · Prettier · lodash 4.17.20",                                // 0.5.1's answer lists no flaws: not checked
         ])
         #expect(report.inventory.reports.map(\.detail).contains("2 apps"))
         #expect(report.inventory.reports.map(\.detail).contains("3 extensions in VS Code, Chrome"))

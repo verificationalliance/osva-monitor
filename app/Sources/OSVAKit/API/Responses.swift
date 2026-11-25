@@ -12,17 +12,31 @@ public struct BatchResponse: Decodable, Sendable {
         public var aliases: [String]
         public var severity: String?
         public var summary: String?
+        /// The fixed versions the site names, read strictly: [] when it names none, or when the list could not be read
+        /// (`fixedInUnreadable`).
         public var fixedIn: [String]
+        /// The server sent a `fixed_in` the app could not read as a list of versions: the flaw is not checked by it,
+        /// never by []. Kept in the cache's copy (`fixed_in_unreadable`).
+        public var fixedInUnreadable: Bool
         /// The first fixed version installable here (with this package's Python), if any.
         public var fixForYou: String?
         /// "windows", "macos", "linux": the flaw affects that platform only. Nil: any platform.
         public var platform: String?
         public var exploitedSince: String?
         public var malicious: Bool
+        /// The affected ranges the site publishes for this flaw, read strictly (`AffectedRange`). Nil when it publishes
+        /// none it can state exactly (`rangesNote` says why), when the server is older than ranges, or when they could
+        /// not be read (`rangesUnreadable`).
+        public var ranges: [AffectedRange]?
+        public var rangesNote: String?
+        /// The server sent ranges the app could not read: the flaw is not checked against them, never against a wider
+        /// range. Kept in the cache's copy (`ranges_unreadable`).
+        public var rangesUnreadable: Bool
 
         enum CodingKeys: String, CodingKey {
-            case id, aliases, severity, summary, platform, malicious
+            case id, aliases, severity, summary, platform, malicious, ranges
             case fixedIn = "fixed_in", fixForYou = "fix_for_you", exploitedSince = "exploited_since"
+            case rangesNote = "ranges_note", rangesUnreadable = "ranges_unreadable", fixedInUnreadable = "fixed_in_unreadable"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
@@ -30,11 +44,19 @@ public struct BatchResponse: Decodable, Sendable {
             aliases = (try? c.decodeIfPresent([String].self, forKey: .aliases)) ?? []
             severity = try? c.decodeIfPresent(String.self, forKey: .severity)
             summary = try? c.decodeIfPresent(String.self, forKey: .summary)
-            fixedIn = (try? c.decodeIfPresent([String].self, forKey: .fixedIn)) ?? []
+            (fixedIn, fixedInUnreadable) = c.strictVersions(.fixedIn, unreadableKey: .fixedInUnreadable)
             fixForYou = try? c.decodeIfPresent(String.self, forKey: .fixForYou)
             platform = try? c.decodeIfPresent(String.self, forKey: .platform)
             exploitedSince = try? c.decodeIfPresent(String.self, forKey: .exploitedSince)
             malicious = (try? c.decodeIfPresent(Bool.self, forKey: .malicious)) ?? false
+            (ranges, rangesUnreadable) = c.strictRanges(.ranges, unreadableKey: .rangesUnreadable)
+            rangesNote = try? c.decodeIfPresent(String.self, forKey: .rangesNote)
+        }
+
+        /// The flaw as the core weighs it: its ranges, and `fixedIn` as its first fixed versions. Nil when either could
+        /// not be read.
+        public var coreAdvisory: CoreAdvisory? {
+            rangesUnreadable || fixedInUnreadable ? nil : CoreAdvisory(ranges: ranges, fixed: fixedIn)
         }
 
         /// Whether it can affect a Mac (no platform named, or macOS).
@@ -68,18 +90,20 @@ public struct BatchResponse: Decodable, Sendable {
             }
         }
 
-        public var target: String?
+        /// The version the server plans to upgrade to (`target` on the wire), which the core has not judged: read only by
+        /// BatchCheck, which shows it only when `Core.judge` confirms it (a guard in ClaimsTests holds this name to it).
+        public var unjudgedTarget: String?
         public var fixes: [String]
         public var remaining: [Remaining]
         public var requiresPython: String?
         public var newestInstallable: String?
 
         enum CodingKeys: String, CodingKey {
-            case target, fixes, remaining, requiresPython = "requires_python", newestInstallable = "newest_installable"
+            case unjudgedTarget = "target", fixes, remaining, requiresPython = "requires_python", newestInstallable = "newest_installable"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
-            target = try? c.decodeIfPresent(String.self, forKey: .target)
+            unjudgedTarget = try? c.decodeIfPresent(String.self, forKey: .unjudgedTarget)
             fixes = (try? c.decodeIfPresent([String].self, forKey: .fixes)) ?? []
             remaining = (try? c.decodeIfPresent([Remaining].self, forKey: .remaining)) ?? []
             requiresPython = try? c.decodeIfPresent(String.self, forKey: .requiresPython)
@@ -141,14 +165,22 @@ public struct ProjectResponse: Codable, Sendable {
         public var date: String
         public var severity: String
         public var title: String
-        /// The first fixed version the issuer names for each release branch. Decides only when `ranges` is nil.
+        /// The first fixed version the issuer names for each release branch. Decides only when `ranges` is nil. Read
+        /// strictly: [] when it names none, or when the list could not be read (`fixedHintUnreadable`).
         public var fixedHint: [String]
+        /// The server sent a `fixed_hint` the app could not read as a list of versions: the advisory is not checked by
+        /// it, never by []. Kept in the cache's copy (`fixed_hint_unreadable`).
+        public var fixedHintUnreadable: Bool
         public var kev: Bool
         public var cve: String?
-        /// Every affected range the issuer states ([]: no version is affected). Nil when the server has none for this
-        /// advisory: an older server, or a record it cannot read as ranges exactly (`rangesNote` says why).
+        /// Every affected range the issuer states, read strictly (`AffectedRange`). Nil when the server has none for
+        /// this advisory (an older server, or a record it cannot read as ranges exactly: `rangesNote` says why), or when
+        /// the app could not read them (`rangesUnreadable`). The core reads [] as it reads nil.
         public var ranges: [AffectedRange]?
         public var rangesNote: String?
+        /// The server sent ranges the app could not read: the advisory is not checked against them, never against a
+        /// wider range. Kept in the cache's copy (`ranges_unreadable`).
+        public var rangesUnreadable: Bool
         /// Builds a distributor's own record says contain the fix ("Amazon Corretto" 27.0.1.1.4: its changelog at that
         /// tag lists the advisory), not necessarily the first that does. [] from servers that do not send them.
         public var fixedBuilds: [FixedBuild]
@@ -162,7 +194,7 @@ public struct ProjectResponse: Codable, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case id, date, title, kev, cve, ranges, severity = "sev", fixedHint = "fixed_hint", rangesNote = "ranges_note"
-            case fixedBuilds = "fixed_builds"
+            case fixedBuilds = "fixed_builds", rangesUnreadable = "ranges_unreadable", fixedHintUnreadable = "fixed_hint_unreadable"
         }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
@@ -170,12 +202,18 @@ public struct ProjectResponse: Codable, Sendable {
             date = try c.decodeIfPresent(String.self, forKey: .date) ?? ""
             severity = try c.decodeIfPresent(String.self, forKey: .severity) ?? ""
             title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
-            fixedHint = (try? c.decodeIfPresent([String].self, forKey: .fixedHint)) ?? []
+            (fixedHint, fixedHintUnreadable) = c.strictVersions(.fixedHint, unreadableKey: .fixedHintUnreadable)
             kev = (try? c.decodeIfPresent(Bool.self, forKey: .kev)) ?? false
             cve = try? c.decodeIfPresent(String.self, forKey: .cve)
-            ranges = try? c.decodeIfPresent([AffectedRange].self, forKey: .ranges)     // malformed reads as none: fixed_hint decides
+            (ranges, rangesUnreadable) = c.strictRanges(.ranges, unreadableKey: .rangesUnreadable)
             rangesNote = try? c.decodeIfPresent(String.self, forKey: .rangesNote)
             fixedBuilds = (try? c.decodeIfPresent([FixedBuild].self, forKey: .fixedBuilds)) ?? []    // optional, and never fatal
+        }
+
+        /// The advisory as the core weighs it: its ranges, and `fixedHint` as its first fixed versions. Nil when either
+        /// could not be read.
+        public var coreAdvisory: CoreAdvisory? {
+            rangesUnreadable || fixedHintUnreadable ? nil : CoreAdvisory(ranges: ranges, fixed: fixedHint)
         }
     }
 
@@ -284,6 +322,28 @@ public struct StateResponse: Codable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(Big(vulns: bigIssues), forKey: .bigIssues)
+    }
+}
+
+/// What the core decides by, read strictly: a value that does not read is marked unreadable, never read as a wider
+/// range or as no fixed versions. The cache's copy says so at `unreadableKey`.
+extension KeyedDecodingContainer {
+    /// An advisory's or flaw's `ranges`: absent or null is nil; a list of ranges that reads strictly (`AffectedRange`)
+    /// is kept; anything else is nil and unreadable.
+    func strictRanges(_ key: Key, unreadableKey: Key) -> (ranges: [AffectedRange]?, unreadable: Bool) {
+        if (try? decodeIfPresent(Bool.self, forKey: unreadableKey)) == true { return (nil, true) }
+        guard contains(key), (try? decodeNil(forKey: key)) != true else { return (nil, false) }
+        guard let ranges = try? decode([AffectedRange].self, forKey: key) else { return (nil, true) }
+        return (ranges, false)
+    }
+
+    /// A list of fixed versions (`fixed_in`, `fixed_hint`): absent or null is [], none stated; a list of strings is
+    /// kept; anything else (a string, a number, a null in the list) is [] and unreadable.
+    func strictVersions(_ key: Key, unreadableKey: Key) -> (versions: [String], unreadable: Bool) {
+        if (try? decodeIfPresent(Bool.self, forKey: unreadableKey)) == true { return ([], true) }
+        guard contains(key), (try? decodeNil(forKey: key)) != true else { return ([], false) }
+        guard let versions = try? decode([String].self, forKey: key) else { return ([], true) }
+        return (versions, false)
     }
 }
 

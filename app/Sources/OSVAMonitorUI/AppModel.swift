@@ -112,12 +112,17 @@ public final class AppModel {
         updater?.start(checksDaily: checksForUpdates)
         let due = report.map { Date().timeIntervalSince($0.finishedAt) > interval } ?? true
         // A newer app scans at once, so the findings carry what it adds (0.2.0's Fix button needs a new scan).
-        let scannedByOlder = report != nil && defaults.string(forKey: Self.scannedByKey) != version
         if due || scannedByOlder { scanNow() } else { assessAllFixes() }
     }
 
     /// The app version that made the saved report.
     static let scannedByKey = "lastFullScanAppVersion"
+
+    /// The saved report was made by an older version of the app (or one from before 0.2.1, which recorded none).
+    private var scannedByOlder: Bool { report != nil && defaults.string(forKey: Self.scannedByKey) != version }
+
+    /// Why a row of such a report offers nothing yet.
+    static let olderReport = "Not offered until this version of the app has scanned again."
 
     /// Whether an earlier version ran here: the version of its last scan (recorded since 0.2.1), or a saved scan or
     /// settings file (every version).
@@ -214,8 +219,7 @@ public final class AppModel {
         if full { defaults.set(version, forKey: Self.scannedByKey) }
         scanReplacedFindings(full: full)
         if settings.notificationsEnabled {
-            let before = Set(previous?.findings.filter(\.deservesNotification).map(\.notificationKey) ?? [])
-            let fresh = result.findings.filter { $0.deservesNotification && !before.contains($0.notificationKey) }
+            let fresh = Finding.toNotify(result.findings, after: previous?.findings)
             if !fresh.isEmpty { Task { await notifier.post(fresh) } }
         }
         recheckNext()
@@ -364,6 +368,13 @@ public final class AppModel {
         guard !isShowingFixtures else { return }
         let state = fixes[finding.id] ?? FixRowState()
         guard state.availability == nil, !state.isBusy, !state.isResolved else { return }
+        // A report an older version made may hold a version or a command no core checked (0.5.1's npm @latest): no Fix
+        // button, and no command to copy, until this version's own scan (it starts at launch) has made them again.
+        if scannedByOlder {
+            fixes[finding.id, default: FixRowState()].availability = .withheld(Self.olderReport)
+            fixes[finding.id]?.hold = .blocked
+            return
+        }
         switch FixPlan.make(for: finding, tools: advisor.tools, home: advisor.home) {
         case let .failure(refusal):
             fixes[finding.id, default: FixRowState()].availability = .withheld(refusal.explanation)
@@ -468,7 +479,7 @@ public final class AppModel {
         currentPlan(finding, matching: offer.plan, target: offer.partialTarget)
     }
 
-    private func currentPlan(_ finding: Finding, matching plan: FixPlan, target: String? = nil) -> (finding: Finding, plan: FixPlan)? {
+    private func currentPlan(_ finding: Finding, matching plan: FixPlan, target: CheckedUpgrade? = nil) -> (finding: Finding, plan: FixPlan)? {
         guard let current = report?.findings.first(where: { $0.id == finding.id }),
               case let .success(now) = FixPlan.make(for: current, tools: advisor.tools, home: advisor.home, target: target), now == plan else {
             fixes[finding.id] = nil
@@ -771,7 +782,10 @@ public final class AppModel {
         var state = FixRowState(progress: .finished(outcome), run: run.script == nil ? fixes[id]?.run : nil)
         if case .undone = outcome { state.run?.undo = nil }
         // Still found, perhaps at a new version (a new id): its row says so, and gets its button again if one applies.
-        let now: Finding? = if case let .stillAffected(f) = recheck { f } else { updated.findings.first { $0.id == id } }
+        let now: Finding? = switch recheck {
+        case let .stillAffected(f), let .notChecked(f): f
+        default: updated.findings.first { $0.id == id }
+        }
         resolved.removeAll { $0.id == id }
         fixes[id] = nil
         if let now, !outcome.isResolved {
@@ -835,8 +849,9 @@ public final class AppModel {
     /// Fix all's review, run or summary, while one is shown.
     public private(set) var fixAll: FixAllState?
 
-    /// What the panel shows of Fix all: the header's count (exactly the rows that offer a fix now), why it waits, the
-    /// breakdown of what needs action, and the review, the run or the summary.
+    /// What the panel shows of Fix all: the header's count (exactly the rows that offer a fix now, but for findings the
+    /// core did not check against published ranges), why it waits, the breakdown of what needs action, and the review,
+    /// the run or the summary.
     public var fixAllPanel: FixAllPanel {
         let findings = report?.findings ?? []
         let running = fixAll?.phase == .running
@@ -1087,17 +1102,19 @@ public final class AppModel {
     /// A pip batch's dry run and gates: pip asked for every item at once (its exact pin and what moves with it, or an
     /// upgrade together's own request), with a report of exactly what it would install; each item's version must be
     /// the one reviewed; the end state must hold for everything installed (PipSetGuard); what an upgrade together moves
-    /// must bring no new flaw. The set, and every version pinned, the most urgent first.
+    /// must bring no new flaw, and its package's version must fix what its fix fixes, as the core judges it. The set,
+    /// and every version pinned, the most urgent first.
     private func prepareSet(_ items: [FixAllState.Item], python: String, user: Bool, advisor: FixAdvisor)
         async -> Result<([PythonDistribution], [String]), FixServerError> {
         var requirements: [String] = [], own: [String: String] = [:], first: [String] = [], checkFlaws = Set<String>()
-        var env: PythonEnvironment?
+        var env: PythonEnvironment?, together: [FixProposal.Together] = []
         for item in items {
             let offer = item.offers[0]
             if case let .together(t)? = offer.proposal {
                 requirements += t.requirements
                 first += [t.package] + t.blockers + t.others
                 env = env ?? t.python
+                together.append(t)
             } else if let pip = offer.plan.pip {
                 requirements += [pip.requirement] + offer.companions.filter(FixSafety.isSafeName)
                 own[PythonNames.normal(pip.name)] = pip.target
@@ -1121,7 +1138,7 @@ public final class AppModel {
         if let env {
             for d in installs where own[d.key] == nil { checkFlaws.insert(d.key) }
             guard let server = advisor.server else { return .failure(FixServerError("the app could not ask the site about what the set moves")) }
-            switch await PipSetGuard.newFlaw(site, installs: installs, only: checkFlaws, python: env, server: server) {
+            switch await PipSetGuard.review(site, installs: installs, only: checkFlaws, together: together, python: env, server: server) {
             case let .failure(e): return .failure(e)
             case let .success(flaw?): return .failure(FixServerError(flaw))
             case .success(nil): break
@@ -1279,6 +1296,8 @@ public final class AppModel {
                 case .removed: settle(f, .removed)
                 case let .stillAffected(now) where now.id != f.id:
                     settle(f, .blocked("It changed since the review: now \(now.installedLabel)"), now: now)
+                case let .notChecked(now):                  // only reported now: not the batch's to fix
+                    settle(f, .notChecked(FixOutcome.found(before: f, after: now)), now: now)
                 case .stillAffected, .couldNotCheck: findings.append(f); offers.append(offer)
                 }
             }

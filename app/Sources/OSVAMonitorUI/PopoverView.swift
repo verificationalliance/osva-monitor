@@ -72,9 +72,9 @@ public struct PopoverView: View {
             if let whatsNew {
                 WhatsNewCard(entry: whatsNew, close: actions.closeWhatsNew)
             }
-            HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open).padding(.leading, 4)
+            HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open)
             if content.isScanning {
-                ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
+                ScanProgress().padding(.horizontal, 4)
             }
             if fixAll.batch != nil {
                 FixAllCard(panel: fixAll, actions: actions.fixAll)
@@ -126,12 +126,12 @@ public struct PopoverView: View {
         }
     }
 
-    /// What could not be vouched for: what nothing classifies, what something else keeps up to date, then what was
-    /// never reported. None of it is "clean".
+    /// What could not be vouched for: what nothing classifies ("No record"), what something else keeps up to date, then
+    /// what was never reported. None of it is "clean".
     @ViewBuilder private var coverage: some View {
         let c = content.coverage
         if c.notCheckedCount > 0 {
-            GroupContainer(.notChecked, count: c.notCheckedCount) {
+            GroupContainer(.noRecord, count: c.notCheckedCount) {
                 ForEach(Array(c.notChecked.enumerated()), id: \.element.id) { i, bucket in
                     if i > 0 { Divider().padding(.leading, 12) }
                     ListDisclosureRow(CoverageLists.list(bucket, in: .notChecked), open: coverageOpen.contains(bucket.id), openList: actions.openList)
@@ -176,13 +176,16 @@ public struct PopoverView: View {
         }
     }
 
+    /// A quiet symbol button, `.plain` like the rows' own: `.borderless` is an AppKit button on macOS, which anything
+    /// that draws the panel as SwiftUI (osva-render's ImageRenderer) leaves as a placeholder. `.primary`: `.secondary`
+    /// measured under 3:1 on grey glass.
     private func quiet(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 15)).frame(width: 30, height: 28).contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .symbolRenderingMode(.hierarchical)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.primary)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -211,14 +214,15 @@ struct QuietCoverageSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: symbol).foregroundStyle(.secondary)
+                // the headings' plate width, so this line's words start where theirs do
+                Image(systemName: symbol).foregroundStyle(Ink.subline.color).frame(width: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).foregroundStyle(.secondary)
-                    Text(caption).font(Typeface.caption).foregroundStyle(.secondary)
+                    Text(title).foregroundStyle(Ink.subline.color)
+                    Text(caption).font(Typeface.caption).foregroundStyle(Ink.subline.color)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.subline.color)
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
             .font(Typeface.small)
@@ -247,7 +251,7 @@ struct QuietCoverageSection: View {
 struct NeedActionBreakdown: View {
     let line: String
     var body: some View {
-        Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(.secondary)
+        Text(String.whole(line)).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("Of these: " + line)
     }
@@ -260,12 +264,16 @@ struct HeroView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            shield
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.breathe, isActive: content.isScanning)
-                .symbolEffect(.bounce, value: content.heroCount ?? 0)
-                .frame(width: 36, height: 38)
-                .accessibilityHidden(true)
+            // from the panel's edge: the symbol's own 4 pt side bearing puts the shield's left edge where the headings'
+            // plates start (18 pt), and the words where they were. The hollow shield lies on a plate of its own shape.
+            GlyphPlate(size: 38, width: 42, plate: content.isScanning ? .none : content.hero.plate, alignment: .leading) {
+                shield
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.breathe, isActive: content.isScanning)
+                    .symbolEffect(.bounce, value: content.heroCount ?? 0)
+            }
+            .font(.system(size: 32))
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     if let n = content.heroCount {
@@ -284,7 +292,7 @@ struct HeroView: View {
                 }
                 .frame(minHeight: 32, alignment: .bottomLeading)              // the sentence alone sits level with the shield
                 if fixAll.count > 0, let why = fixAll.why {
-                    Text(why).font(Typeface.caption).foregroundStyle(.secondary)
+                    Text(why).font(Typeface.caption).foregroundStyle(Ink.subline.color)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 if content.heroCount != nil, let line = fixAll.breakdown { NeedActionBreakdown(line: line) }
@@ -298,17 +306,17 @@ struct HeroView: View {
                     .padding(.vertical, 2)
                 }
                 if !content.subline.isEmpty {
-                    Text(content.subline).font(Typeface.heroSubline).foregroundStyle(.secondary)
+                    Text(content.subline).font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)
                         .contentTransition(.numericText())
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let p = content.problem {
                     Label(p, systemImage: "exclamationmark.triangle")
-                        .font(Typeface.heroSubline).foregroundStyle(.secondary)
+                        .font(Typeface.heroSubline).foregroundStyle(Ink.subline.color)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if content.hero == .clean {
-                    Text("Not proof of safety: it is what has been reported.").font(Typeface.heroSubline).foregroundStyle(.tertiary)
+                if let caveat = content.caveat {
+                    HeroCaveat(text: caveat).padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -317,13 +325,15 @@ struct HeroView: View {
     }
 
     /// A status shield is two solid colours: a white mark on the status colour, with the system gradient, so it reads
-    /// crisply on any glass. Neutral states (not scanned, first scan, scanning) stay a quiet hierarchical outline.
+    /// crisply on any glass. Neutral states (not scanned, first scan, scanning) stay a quiet hierarchical outline. Not
+    /// checked is an amber outline, its mark solid: hollow, since nothing checked needs action, and never a filled
+    /// shield, which says the core found something.
     @ViewBuilder private var shield: some View {
         let image = Image(systemName: content.hero.symbol).font(.system(size: 32))
         if let fill = statusFill, !content.isScanning {
             image.symbolRenderingMode(.palette).symbolColorRenderingMode(.gradient).foregroundStyle(.white, fill)
         } else {
-            image.symbolRenderingMode(.hierarchical).foregroundStyle(glyphStyle)
+            image.symbolRenderingMode(content.hero == .notChecked && !content.isScanning ? .monochrome : .hierarchical).foregroundStyle(glyphStyle)
         }
     }
 
@@ -333,7 +343,7 @@ struct HeroView: View {
         case .critical: return Tokens.critical.glyph.color
         case .high: return Tokens.high.glyph.color
         case .clean: return Tokens.clean.color
-        case .notScanned, .firstScan: return nil
+        case .notChecked, .notScanned, .firstScan: return nil
         }
     }
 
@@ -345,6 +355,7 @@ struct HeroView: View {
         case .malicious: return AnyShapeStyle(Tokens.Malicious.glyph.color)
         case .critical: return AnyShapeStyle(Tokens.critical.glyph.color)
         case .high: return AnyShapeStyle(Tokens.high.glyph.color)
+        case .notChecked: return AnyShapeStyle(Tokens.NotChecked.mark.color)
         case .clean: return AnyShapeStyle(Tokens.clean.color)
         }
     }

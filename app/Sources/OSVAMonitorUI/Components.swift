@@ -35,23 +35,34 @@ public struct SeverityLabel: View {
 
 /// The small status labels. `.exploited` is the site's `.chip-kev` and the only solid red in the panel; `.malicious`
 /// is the clay word with its octagon; `.count` is a hero summary chip, a faint capsule of the status colour with a
-/// mark and a `.primary` label.
+/// mark and a `.primary` label, on `Surface.control` so it reads on grey glass. `.notChecked` is the amber mark of an
+/// exploited or critical flaw the core could not check against published ranges: the exploited chip's size, in the
+/// summary chips' form (a faint amber capsule, an amber shield, a `.primary` label), and the only way the panel draws
+/// that mark.
 public struct StatusChip: View {
     public enum Kind: Sendable, Hashable {
         case exploited
         case malicious
         case count(PopoverContent.Tally, Int)
+        /// The flaw, and whether the chip names it critical: not on a row whose own severity, beside it, already says
+        /// so (Finding.notCheckedChip decides).
+        case notChecked(Finding.NotChecked, namesCritical: Bool = true)
     }
 
     public var kind: Kind
     public init(_ kind: Kind) { self.kind = kind }
 
+    /// One line, at its own width: a row that has no room for a chip moves it whole to the next line (WrapAtSpaces).
     public var body: some View {
+        chip.lineLimit(1).fixedSize()
+    }
+
+    @ViewBuilder private var chip: some View {
         switch kind {
         case .exploited:
             Label("Exploited", systemImage: "flame.fill")
                 .labelStyle(TightLabel())
-                .font(.system(size: 10, weight: .bold))
+                .font(Typeface.statusChip)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 2.5)
                 .background(Capsule().fill(Tokens.Exploited.chip.color))
@@ -70,9 +81,27 @@ public struct StatusChip: View {
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 5.5).padding(.vertical, 2.5)
-            .background(Capsule().fill(tint(tally).opacity(light: 0.15, dark: 0.25).color))
+            .background { Self.capsule(tally.tint) }
             .accessibilityElement(children: .combine)
+        case let .notChecked(alert, namesCritical):
+            Label {
+                Text(alert.chipWords(namesCritical: namesCritical)).foregroundStyle(.primary)
+            } icon: {
+                Image(systemName: "exclamationmark.shield.fill").foregroundStyle(Tokens.NotChecked.mark.color)
+            }
+            .labelStyle(TightLabel())
+            .font(Typeface.statusChip)
+            .padding(.horizontal, 6).padding(.vertical, 2.5)
+            .background { Self.capsule(Tokens.NotChecked.tint) }
+            .help(alert.chipHelp)
         }
+    }
+
+    /// A tinted chip's capsule (the summary chips, the not-checked chip): the site link's surface under a faint tint of
+    /// the status colour, so the `.primary` words read on grey glass too.
+    @ViewBuilder static func capsule(_ tint: Tone) -> some View {
+        Capsule().fill(Surface.control.color)
+        Capsule().fill(tint.color)
     }
 
     @ViewBuilder private func mark(_ tally: PopoverContent.Tally) -> some View {
@@ -83,11 +112,84 @@ public struct StatusChip: View {
         }
     }
 
-    private func tint(_ tally: PopoverContent.Tally) -> Tone {
-        switch tally {
-        case .malicious: return Tokens.Malicious.glyph
-        case .exploited: return Tokens.Exploited.glyph
-        case let .severity(s): return Tokens.severity(s).fill
+}
+
+extension PopoverContent.Tally {
+    /// A summary chip's capsule tint: a faint wash of its status colour (15% light, 25% dark).
+    public var tint: Tone {
+        let colour: Tone
+        switch self {
+        case .malicious: colour = Tokens.Malicious.glyph
+        case .exploited: colour = Tokens.Exploited.glyph
+        case let .severity(s): colour = Tokens.severity(s).fill
+        }
+        return colour.opacity(light: 0.15, dark: 0.25)
+    }
+}
+
+/// The amber chip's words (StatusChip's `.notChecked`).
+extension Finding.NotChecked {
+    /// "Exploited, not checked", "Critical, not checked", "Not checked".
+    public func chipWords(namesCritical: Bool = true) -> String {
+        exploited ? "Exploited, not checked" : critical && namesCritical ? "Critical, not checked" : "Not checked"
+    }
+
+    /// "CVE-2026-1: critical, exploited in the wild; reported by the site, not checked against published ranges".
+    public var chipHelp: String {
+        (id.map { "\($0): \(words)" } ?? words.prefix(1).uppercased() + words.dropFirst()) + "; reported by the site, not checked against published ranges"
+    }
+}
+
+/// What a GlyphPlate lays under its glyph.
+public enum PlateShape: Equatable, Sendable {
+    case none
+    /// A disc the size of the frame (a heading's).
+    case disc
+    /// The glyph's own shape, filled (`shield.fill` under the hollow shield): no disc around it.
+    case symbol(String)
+}
+
+/// A status glyph on the panel's bare glass, the section headings' and the hero's, in a frame of one size, so what
+/// follows lines up. A glyph drawn in one colour whose own shape would vanish on grey glass (the flame, the hollow
+/// not-checked shield) lies on a `Surface.control` plate, which keeps it at 3:1 or more there (ToneTests); a filled
+/// glyph with a white mark reads without one.
+public struct GlyphPlate<Glyph: View>: View {
+    let size: CGFloat
+    /// The frame's width, when not `size` (the hero's, which starts at the panel's edge).
+    let width: CGFloat?
+    let plate: PlateShape
+    let alignment: Alignment
+    let glyph: Glyph
+
+    public init(size: CGFloat, width: CGFloat? = nil, plate: PlateShape, alignment: Alignment = .center, @ViewBuilder glyph: () -> Glyph) {
+        self.size = size; self.width = width; self.plate = plate; self.alignment = alignment; self.glyph = glyph()
+    }
+
+    public var body: some View {
+        glyph
+            .frame(width: width ?? size, height: size, alignment: alignment)
+            .background(alignment: alignment) {
+                switch plate {
+                case .none: EmptyView()
+                case .disc: Circle().fill(Surface.control.color).frame(width: size, height: size)
+                case let .symbol(name): Image(systemName: name).foregroundStyle(Surface.control.color)
+                }
+            }
+    }
+}
+
+/// The scan's progress under the hero: the system's linear bar. Drawn off-screen (osva-render), where that AppKit
+/// control would be a placeholder, a still accent bar in the same 20 pt frame stands in for it.
+struct ScanProgress: View {
+    @Environment(\.drawsOffScreen) private var drawsOffScreen
+
+    var body: some View {
+        if drawsOffScreen {
+            Capsule().fill(.tertiary).frame(height: 5)
+                .overlay(alignment: .leading) { Capsule().fill(Color.accentColor).frame(width: 110, height: 5) }
+                .frame(height: 20)
+        } else {
+            ProgressView().progressViewStyle(.linear)
         }
     }
 }
@@ -168,8 +270,22 @@ extension Finding.Group {
 public struct GroupContainer<Content: View>: View {
     public enum Heading: Equatable, Sendable {
         case findings(Finding.Group)
-        /// What the app cannot classify: never counted as clean.
-        case notChecked
+        /// What the app cannot classify ("No record"; `Coverage.notChecked`): never counted as clean.
+        case noRecord
+
+        /// "Critical and high", "Not checked against published ranges", "No record".
+        public var title: String {
+            switch self { case let .findings(g): return g.heading; case .noRecord: return "No record" }
+        }
+
+        /// The glyphs drawn in one colour, the flame and the hollow shield, lie on a plate; the others, filled with a
+        /// white mark or quiet, keep only the frame.
+        public var plate: PlateShape {
+            switch self {
+            case .findings(.exploited), .findings(.likely), .findings(.reported): return .disc
+            default: return .none
+            }
+        }
     }
 
     public var heading: Heading
@@ -187,8 +303,8 @@ public struct GroupContainer<Content: View>: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                glyph.font(.system(size: 12, weight: .semibold))
-                Text(title).font(Typeface.groupTitle).foregroundStyle(.primary)
+                GlyphPlate(size: 20, plate: heading.plate) { glyph.font(.system(size: 12, weight: .semibold)) }
+                Text(heading.title).font(Typeface.groupTitle).foregroundStyle(.primary)
                 if let n = Self.countText(count) { Text(n).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary) }
             }
             .padding(.leading, 4)
@@ -197,10 +313,6 @@ public struct GroupContainer<Content: View>: View {
             VStack(spacing: 0) { content }
                 .panelCard(heading == .findings(.malicious) ? .malicious : .plain)
         }
-    }
-
-    private var title: String {
-        switch heading { case let .findings(g): return g.heading; case .notChecked: return "Not checked" }
     }
 
     /// The number beside the heading: what still needs action. None when every row it shows was fixed or removed and
@@ -212,12 +324,14 @@ public struct GroupContainer<Content: View>: View {
         case .findings(.malicious):
             Image(systemName: "xmark.octagon.fill").symbolRenderingMode(.palette).foregroundStyle(.white, Tokens.Malicious.glyph.color)
         case .findings(.exploited):
-            Image(systemName: "flame.fill").symbolRenderingMode(.hierarchical).foregroundStyle(Tokens.Exploited.glyph.color)
+            Image(systemName: "flame.fill").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.Exploited.mark.color)
         case .findings(.criticalHigh):
             Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.palette).foregroundStyle(.white, Tokens.critical.glyph.color)
         case .findings(.other):
             Image(systemName: "info.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
-        case .notChecked:
+        case .findings(.likely), .findings(.reported):
+            Image(systemName: "exclamationmark.shield").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.NotChecked.mark.color)
+        case .noRecord:
             Image(systemName: "questionmark.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         }
     }
@@ -361,7 +475,7 @@ public struct CommandBlock: View {
     }
 }
 
-/// Lays words out left to right and starts a new line only between them. Its ideal width (asked with no width
+/// Lays words (or chips) out left to right and starts a new line only between them, each centred on its line. Its ideal width (asked with no width
 /// offered, as `ViewThatFits` does) is its widest word: the narrowest it can wrap to. So it "fits" exactly when no
 /// single word is wider than the space, and otherwise `ViewThatFits` picks the scrolling form.
 struct WrapAtSpaces: Layout {
@@ -382,7 +496,8 @@ struct WrapAtSpaces: Layout {
             var x = bounds.minX
             for i in line.items {
                 let size = subviews[i].sizeThatFits(.unspecified)
-                subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                // centred on the line, as an HStack centres them: a chip beside a label of another height stays level
+                subviews[i].place(at: CGPoint(x: x, y: y + (line.height - size.height) / 2), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
             y += line.height + lineSpacing
@@ -408,7 +523,7 @@ struct WrapAtSpaces: Layout {
     }
 }
 
-/// The one hover of the panel's rows (findings, Not checked, the not-in-index lists): the row takes a little more of
+/// The one hover of the panel's rows (findings, No record, the not-in-index lists): the row takes a little more of
 /// `Surface.hover`, which raises its text's contrast in either appearance and never lowers it. `hovering` lets the row
 /// brighten its own chevron too.
 struct RowHover: ViewModifier {
@@ -426,6 +541,9 @@ struct RowHover: ViewModifier {
 extension EnvironmentValues {
     /// Draws rows as if the pointer were over them (osva-render's hover sheet: off-screen there is no pointer).
     @Entry public var showsHover = false
+    /// Drawn off-screen as SwiftUI alone (osva-render's ImageRenderer, the render test), which leaves an AppKit control
+    /// as a placeholder: the panel draws a stand-in, in the same frame, for the one it has, the scan's progress bar.
+    @Entry public var drawsOffScreen = false
 }
 
 /// The panel's one container: `Surface.card` with a hairline edge, in corners concentric with the panel's own. The
@@ -457,6 +575,23 @@ extension View {
     func well(cornerRadius: CGFloat = 7) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return background { shape.fill(Surface.well.color).overlay(shape.strokeBorder(Surface.edge.color, lineWidth: 1)) }
+    }
+}
+
+/// The hero's caveat under a hero that says nothing (checked) needs action ("Not proof of safety: it is what has been
+/// reported."): `Ink.caveat` on the summary chips' surface, a `Surface.control` capsule, so it reads at 4.5:1 or more on
+/// any glass, mid-grey included, where no bare text colour does. The capsule hangs into the gutter beside the hero's
+/// words, so the caveat's words start where the subline's do: on light glass, where the capsule is all but white, they
+/// would otherwise look indented.
+struct HeroCaveat: View {
+    static let inset: CGFloat = 7
+    let text: String
+    var body: some View {
+        Text(text).font(Typeface.heroSubline).foregroundStyle(Ink.caveat.color)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, Self.inset).padding(.vertical, 2.5)
+            .background { Capsule().fill(Surface.control.color) }
+            .padding(.leading, -Self.inset)
     }
 }
 
@@ -509,6 +644,8 @@ public struct MenuBarLabel: View {
         /// The first-launch card waits for Start (Consent): nothing has run.
         case waiting
         case clean
+        /// Nothing the core checked needs action, but an exploited or critical flaw was not checked.
+        case notChecked
         case action(Int)
         case malicious(Int)
     }
@@ -533,6 +670,7 @@ public struct MenuBarLabel: View {
         switch state {
         case .notScanned, .waiting: return "shield"
         case .clean: return "checkmark.shield"
+        case .notChecked: return "exclamationmark.shield"
         case .action: return "exclamationmark.shield.fill"
         case .malicious: return "xmark.shield.fill"
         }
@@ -547,6 +685,7 @@ public struct MenuBarLabel: View {
         case .notScanned: return "OSVA Monitor: not scanned yet"
         case .waiting: return "OSVA Monitor: waiting for you to press Start"
         case .clean: return "OSVA Monitor: nothing needs action"
+        case .notChecked: return "OSVA Monitor: nothing checked needs action; an exploited or critical flaw is not checked against published ranges"
         case let .action(n): return "OSVA Monitor: \(n) findings need action"
         case let .malicious(n): return "OSVA Monitor: malicious package found; \(n) findings need action"
         }

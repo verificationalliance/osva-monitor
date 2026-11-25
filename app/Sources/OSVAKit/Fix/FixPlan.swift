@@ -106,18 +106,19 @@ public struct FixPlan: Hashable, Sendable {
         }
     }
 
-    /// The plan for a finding, or why there is none. `target`: a partial fix's version (FixProposal.partial), which the
-    /// command then names instead of the finding's own fixed version; the rest of the command must be the one shown.
+    /// The plan for a finding, or why there is none. `target`: a partial fix's version, as the core checked it
+    /// (FixProposal.partial), which the command then names instead of the finding's own fixed version; the rest of the
+    /// command must be the one shown.
     public static func make(for finding: Finding, tools: ToolEnvironment, home: String = NSHomeDirectory(),
-                            target partial: String? = nil) -> Result<FixPlan, Refusal> {
+                            target partial: CheckedUpgrade? = nil) -> Result<FixPlan, Refusal> {
         var finding = finding
         if let partial {
-            guard FixSafety.isSafeVersion(partial), !finding.malicious, var inputs = finding.commandInputs, case .pip = inputs.origin,
-                  UpgradeCommand.advice(inputs, home: home).command == finding.upgradeCommand else { return .failure(.notReproducible) }
-            inputs.target = partial
+            guard FixSafety.isSafeVersion(partial.version), !finding.malicious, let shown = finding.commandInputs, case .pip = shown.origin,
+                  UpgradeCommand.advice(shown, home: home).command == finding.upgradeCommand else { return .failure(.notReproducible) }
+            let inputs = UpgradeCommand.Inputs(origin: shown.origin, name: shown.name, ecosystem: shown.ecosystem, target: partial, malicious: false)
             finding.commandInputs = inputs
-            finding.fixedVersion = partial
-            finding.upgradeCommand = UpgradeCommand.advice(inputs, home: home).command
+            finding.setUpgrade(partial)
+            finding.setAdvice(UpgradeCommand.advice(inputs, home: home))
         }
         guard let command = finding.upgradeCommand else { return .failure(.noCommand) }
         guard let inputs = finding.commandInputs, UpgradeCommand.advice(inputs, home: home).command == command else {

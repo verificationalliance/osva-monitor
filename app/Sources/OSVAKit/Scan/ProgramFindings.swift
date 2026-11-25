@@ -45,15 +45,44 @@ extension FindingBuilder {
         var flawCount: Int
         var exploited: Bool
         var malicious: Bool
-        /// The version that fixes what can be fixed (the server's plan), if it reads as a version.
-        var target: String?
+        /// How its flaws were checked against the site's ranges (nil: malicious).
+        var check: Finding.Check?
+        /// The server's target, when the core confirms it fixes some of the flaws the part is shown for (BatchCheck).
+        var upgrade: CheckedUpgrade?
+        /// The server named a target for the flaws the part is shown for that the core did not confirm, or that does not
+        /// read as a version: there is no checked fix yet, which is not "no fixed release".
+        var unconfirmed = false
+        /// Its affected and likely flaws on this Mac, which the program's sentence weighs the newest upgrade against.
+        var flagged: [BatchResponse.Flaw]
+        /// Its other flaws with published ranges (BatchCheck.unflagged): the newest upgrade must not land inside any.
+        var unflagged: [BatchResponse.Flaw]
+        /// The flaws on this Mac it is not shown for (likely ones of an affected part, reported ones and those past the
+        /// list), and the most urgent of them: said in the sentence, never hidden.
+        var more: Int
+        var moreAlert: Finding.NotChecked?
+        /// Its reported flaws on this Mac whose published ranges leave the version out: checked and found clear, so said
+        /// apart, never "not checked" (a reported part counts them in `flawCount`, any other part beyond it).
+        var outside = 0
+        /// Every flaw it has on this Mac lies outside its published ranges: checked, nothing to do. Like a part with flaws
+        /// only elsewhere, it never decides how serious its program is.
+        var outsideOnly = false
+
+        /// Nothing to do on this Mac: its flaws are of another platform, or outside their published ranges.
+        var decidesNothing: Bool { onlyElsewhere || outsideOnly }
+        /// Its most urgent flaw not checked against published ranges, when exploited or critical.
+        var notChecked: Finding.NotChecked?
         var advisories: [String]
         var unresolved: [UnresolvedFlaw]
         var fixes: Int?
         /// The program's own module, crate or package, rather than something it was built with.
         var own: Bool
+        /// Every flaw it has is of another platform: listed, nothing to do on this Mac. Such a part never decides how
+        /// serious its program is, nor takes over the finding it is folded into.
+        var onlyElsewhere = false
 
         var isStdlib: Bool { package.ecosystem == .go && package.name == "stdlib" }
+        /// The upgrade's version as people write it (`shown`).
+        var shownUpgrade: String? { upgrade?.displayed(.program).display }
         /// What the row shows for it: "Go" for Go's standard library, nil for the program's own package.
         var label: String? { isStdlib ? "Go" : own ? nil : name }
         /// Versions as people write them: Go's "v0.23.0" is "0.23.0", "v25.0.6+incompatible" is "25.0.6", and a
@@ -78,28 +107,50 @@ extension FindingBuilder {
         }
     }
 
-    /// The same reading of an answer as `packageFindings`: what affects this Mac, how serious, and the plan's version.
+    /// The same reading of an answer as `packageFindings` (BatchCheck, `state`): what affects this Mac, how serious, and
+    /// the server's version only as the core confirmed it. Programs are installed software: macOS.
     func component(_ package: ApprovedPackage, _ verdict: BatchResponse.Result, name: String, own: Bool) -> Component {
-        let flaws = verdict.flaws
-        let here = flaws.filter(\.affectsThisMac)                           // programs are installed software: macOS
-        let malicious = verdict.malicious || flaws.contains(where: \.malicious) || verdict.plan?.remaining.contains { $0.reason == .malicious } == true
-        let exploited = flaws.isEmpty ? !verdict.exploited.isEmpty : here.contains { $0.exploitedSince != nil }
-        let severityHere = flaws.isEmpty ? Severity(api: verdict.worstSeverity) : here.compactMap { Severity(api: $0.severity) }.max()
-        let onlyElsewhere = !flaws.isEmpty && here.isEmpty && !malicious
-        let group: Finding.Group = malicious ? .malicious : onlyElsewhere ? .other : exploited ? .exploited
-            : (severityHere ?? .low) >= .high ? .criticalHigh : .other
-        // The API lists at most 40 flaws; the ones it leaves out are counted as affecting this Mac too.
-        let unlisted = max(verdict.distinctFlaws - flaws.count, 0)
-        let count = flaws.isEmpty ? max(verdict.distinctFlaws, malicious ? 0 : 1) : onlyElsewhere ? flaws.count : here.count + unlisted
-        // A version from the server goes into a sentence or a command only if it reads as a version (FixSafety).
-        let target = (malicious || onlyElsewhere ? nil : verdict.plan?.target).flatMap { FixSafety.isSafeVersion($0) ? $0 : nil }
-        let unresolved = (verdict.plan?.remaining ?? []).filter { $0.reason != .malicious }.map { r in
-            UnresolvedFlaw(id: r.id, severity: Severity(api: flaws.first { $0.id == r.id }?.severity), fixedIn: r.fixedIn,
-                           reason: Self.reason(r.reason), detail: r.detail, python: package.python, onThisMac: true)
-        }
-        return Component(package: package, name: name, group: group, severity: malicious ? nil : severityHere ?? flaws.compactMap { Severity(api: $0.severity) }.max(),
-                         flawCount: count, exploited: exploited, malicious: malicious, target: target, advisories: verdict.advisories,
-                         unresolved: unresolved, fixes: verdict.plan.map { $0.fixes.count }, own: own)
+        let check = BatchCheck.read(verdict, installed: package.version, onThisMac: true)
+        let state = Self.state(verdict, check, onThisMac: true, program: true)
+        let upgrade = state.malicious || state.onlyElsewhere || state.check == .reported ? nil : check.upgrade(for: state.here)
+        let unresolved = state.malicious
+            ? Self.maliciousUnresolved(verdict, python: package.python, onThisMac: true)
+            : state.check == .reported ? [] : Self.unresolved(check, upgrade: upgrade, python: package.python, onThisMac: true)
+        let decided = (state.check == .affected || state.check == .likely) && !state.onlyElsewhere
+        let target = check.target(for: state.here)
+        var c = Component(package: package, name: name, group: state.group, severity: state.severity, flawCount: state.flawCount,
+                         exploited: state.exploited, malicious: state.malicious, check: state.check, upgrade: upgrade,
+                         flagged: decided ? check.flagged.filter(\.affectsThisMac) : [], unflagged: decided ? check.unflagged : [],
+                         more: state.moreLikely + state.moreReported,
+                         moreAlert: .worse(state.likelyAlert, state.reportedAlert), notChecked: state.notChecked,
+                         advisories: verdict.advisories, unresolved: unresolved,
+                         fixes: Self.fixesCount(check, state, upgrade: upgrade, plan: verdict.plan), own: own, onlyElsewhere: state.onlyElsewhere)
+        c.unconfirmed = decided && upgrade == nil && (target == .unconfirmed || target == .notAVersion)
+        c.outside = state.outside
+        c.outsideOnly = state.outsideOnly
+        return c
+    }
+
+    /// The parts a program's flaw count is made of: of those with flaws on this Mac, the ones the core found affected
+    /// (and malicious ones), else the likely ones, else the reported ones, as for a package's finding. Only when every
+    /// part's flaws are of another platform, those.
+    static func countedParts(_ parts: [Component]) -> [Component] {
+        let here = parts.filter { !$0.decidesNothing }
+        guard !here.isEmpty else { return parts }
+        let checked = here.filter { !$0.group.isNotChecked }
+        if !checked.isEmpty { return checked }
+        let likely = here.filter { $0.group == .likely }
+        return likely.isEmpty ? here : likely
+    }
+
+    /// The parts that decide a program's group and weigh in a finding it is folded into: those with flaws on this Mac
+    /// that are something to do (not outside their published ranges).
+    static func partsHere(_ parts: [Component]) -> [Component] { parts.filter { !$0.decidesNothing } }
+
+    /// Flaws counted once per package: versions of one package share most of their flaws, so the most any of them has
+    /// stands for all.
+    static func flawCount(_ parts: [Component]) -> Int {
+        Self.byName(parts).reduce(0) { $0 + ($1.map(\.flawCount).max() ?? 0) }
     }
 
     /// Whether a package is the program's or tool's own (its main module, root crate, or the tool's package).
@@ -141,31 +192,48 @@ extension FindingBuilder {
             let parts = g.components.values.sorted(by: Self.worseFirst)
             guard let worst = parts.first else { continue }
             let sentence = Self.sentence(for: g.origins[0], programs: g.origins, parts: parts)
-            let severity = parts.compactMap(\.severity).max(), exploited = parts.contains(where: \.exploited)
+            // How serious it is, and how many flaws: from the parts the core checked when there are any (FindingBuilder.state)
+            let counted = Self.countedParts(parts)
+            let severity = counted.compactMap(\.severity).max(), exploited = counted.contains(where: \.exploited)
             let malicious = parts.contains(where: \.malicious)
-            let group = parts.map(\.group).min()!
+            // an affected part's group beats likely and reported; a part with flaws only elsewhere decides nothing
+            let here = Self.partsHere(parts)
+            let group = (here.isEmpty ? parts : here).map(\.group).min()!
             let advisories = Array(Set(parts.flatMap(\.advisories))).sorted()
-            // Versions of one package share most of their flaws: the most any of them has stands for all.
-            let flaws = Self.byName(parts).reduce(0) { $0 + ($1.map(\.flawCount).max() ?? 0) }
+            let flaws = Self.flawCount(counted)
+            let notChecked = parts.map(\.notChecked).reduce(nil, Finding.NotChecked.worse)
 
-            // A Homebrew formula already reported as a graded project: one finding, with its programs' flaws in it.
+            // A Homebrew formula already reported as a graded project: one finding, with its programs' flaws in it. Only
+            // the parts the core checked add flaws and weight to it: a likely or reported part is said in the sentence.
+            // A project finding the core did not check (its advisories publish no ranges) that takes in a checked part
+            // is decided by it, as an affected flaw decides a package's finding: its own advisories stay in its note
+            // and its mark.
             if case let .program(p) = g.origins[0], let formula = p.formula,
                let i = findings.firstIndex(where: { f in
                    if case .project = f.subject { return f.origins.contains(.homebrewFormula(name: formula)) }
                    return false
                }) {
-                findings[i].note = [findings[i].note, sentence].compactMap { $0 }.joined(separator: " ")
+                let checked = here.filter { !$0.group.isNotChecked }
+                findings[i].addNote(sentence)
                 findings[i].advisoryIDs += advisories.filter { !findings[i].advisoryIDs.contains($0) }
-                findings[i].flawCount += flaws
-                findings[i].exploited = findings[i].exploited || exploited
+                if findings[i].group.isNotChecked && !checked.isEmpty {
+                    findings[i].flawCount = Self.flawCount(checked)
+                    findings[i].exploited = checked.contains(where: \.exploited)
+                    findings[i].severity = checked.compactMap(\.severity).max()
+                }
+                else {
+                    findings[i].flawCount += Self.flawCount(checked)
+                    findings[i].exploited = findings[i].exploited || checked.contains(where: \.exploited)
+                    if let s = checked.compactMap(\.severity).max(), findings[i].severity.map({ s > $0 }) ?? true { findings[i].severity = s }
+                }
                 findings[i].malicious = findings[i].malicious || malicious
-                if group < findings[i].group { findings[i].group = group }
-                if let s = severity, findings[i].severity.map({ s > $0 }) ?? true { findings[i].severity = s }
+                findings[i].notChecked = .worse(findings[i].notChecked, notChecked)
+                if !here.isEmpty && group < findings[i].group { findings[i].group = group }
                 continue
             }
 
             let advice = Self.programAdvice(origin: g.origins[0], programs: g.origins.count, parts: parts, malicious: malicious)
-            let fixable = parts.contains { $0.target != nil }
+            let fixable = parts.contains { $0.upgrade != nil }
             let title: String
             let id: String
             switch g.origins[0] {
@@ -177,19 +245,25 @@ extension FindingBuilder {
             // three most serious flaws no release fixes yet are named, the site lists the rest.
             var unresolved: [UnresolvedFlaw] = [], seenFlaws = Set<String>()
             for u in parts.flatMap(\.unresolved) where u.affectsThisMac && seenFlaws.insert(u.id).inserted { unresolved.append(u) }
+            // without an upgrade on the row, no "not by this upgrade" line
+            if worst.upgrade == nil { unresolved.removeAll { $0.reason == .unknown } }
             unresolved = Array(unresolved.sorted { ($0.severity ?? .low, $1.id) > ($1.severity ?? .low, $0.id) }.prefix(3))
-            let allElsewhere = parts.allSatisfy { $0.group == .other && $0.target == nil && !$0.malicious }
-            let command = allElsewhere || (!fixable && !malicious) ? nil : advice.command
-            findings.append(Finding(
+            let allElsewhere = parts.allSatisfy { $0.group == .other && $0.upgrade == nil && !$0.malicious }
+            let shown = allElsewhere || (!fixable && !malicious) || advice.command == nil ? nil : advice
+            var program = Finding(
                 id: id, group: group, subject: .package(ecosystem: worst.package.ecosystem, name: worst.package.name), title: title,
-                component: Component.rowLabel(worst.label, installed: Component.shown(worst.package.version), fixed: worst.target.map(Component.shown)),
+                component: Component.rowLabel(worst.label, installed: Component.shown(worst.package.version), fixed: worst.shownUpgrade),
                 installedVersion: Component.shown(worst.package.version),
-                fixedVersion: worst.target.map(Component.shown), severity: malicious ? nil : severity, advisoryIDs: advisories,
+                upgrade: worst.upgrade?.displayed(.program), severity: malicious ? nil : severity, advisoryIDs: advisories,
                 flawCount: flaws, exploited: exploited, malicious: malicious,
                 note: [sentence, advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil, origins: g.origins,
                 pageURL: SiteURL.packagePage(worst.package.ecosystem, worst.package.name, version: worst.package.version),
-                upgradeCommand: command, verification: .none, grade: nil, fixesCount: parts.count == 1 ? worst.fixes : nil,
-                unresolved: unresolved, commandInputs: command == nil ? nil : Self.inputs(origin: g.origins[0], malicious: malicious)))
+                advice: shown, verification: .none, grade: nil, fixesCount: parts.count == 1 ? worst.fixes : nil,
+                unresolved: unresolved, commandInputs: shown == nil ? nil : Self.inputs(origin: g.origins[0], malicious: malicious),
+                notChecked: notChecked)
+            if here.isEmpty { program.onlyElsewhere = true }
+            if parts.allSatisfy(\.outsideOnly) { program.outsideItsRanges = true }   // its row says so, as a package's does
+            findings.append(program)
         }
     }
 
@@ -207,14 +281,23 @@ extension FindingBuilder {
                           return false
                       }
                   }) else { continue }
-            // Its sentence, without the advice: the app's own finding already says how the app is updated.
-            out[i].note = [out[i].note, f.note.map(Self.firstSentence)].compactMap { $0 }.joined(separator: " ")
+            // Its sentence, without the advice: the app's own finding already says how the app is updated. A program
+            // with no part the core checked adds no flaws and no weight: it is said, not counted. An app's finding the
+            // core did not check, taking in a checked program, is decided by it, as for a formula's project finding.
+            let elsewhere = f.onlyElsewhere == true                 // nothing to do on this Mac: said, never weighed
+            let checked = !f.group.isNotChecked && !elsewhere
+            out[i].addNote(f.note.map(Self.firstSentence))
             out[i].advisoryIDs += f.advisoryIDs.filter { !out[i].advisoryIDs.contains($0) }
-            out[i].flawCount += f.flawCount
-            out[i].exploited = out[i].exploited || f.exploited
+            if checked && out[i].group.isNotChecked {
+                out[i].flawCount = f.flawCount; out[i].exploited = f.exploited; out[i].severity = f.severity
+            } else if checked {
+                out[i].flawCount += f.flawCount
+                out[i].exploited = out[i].exploited || f.exploited
+                if let s = f.severity, out[i].severity.map({ s > $0 }) ?? true { out[i].severity = s }
+            }
             out[i].malicious = out[i].malicious || f.malicious
-            if f.group < out[i].group { out[i].group = f.group }
-            if let s = f.severity, out[i].severity.map({ s > $0 }) ?? true { out[i].severity = s }
+            out[i].notChecked = .worse(out[i].notChecked, f.notChecked)
+            if !elsewhere && f.group < out[i].group { out[i].group = f.group }
             folded.insert(f.id)
         }
         return out.filter { !folded.contains($0.id) }
@@ -227,15 +310,19 @@ extension FindingBuilder {
     }
 
     /// Worst first: malicious, exploited, critical and high, by severity, then by how many flaws; the standard
-    /// library after modules of the same weight (a module is what an update most often changes).
+    /// library after modules of the same weight (a module is what an update most often changes); a part with nothing to
+    /// do here (its flaws all of another platform, or outside their published ranges) after every other part.
     static func worseFirst(_ a: Component, _ b: Component) -> Bool {
-        let ra = (a.group.rawValue, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.isStdlib ? 1 : 0, -a.flawCount, a.name)
-        let rb = (b.group.rawValue, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.isStdlib ? 1 : 0, -b.flawCount, b.name)
+        let ra = (a.decidesNothing ? 1 : 0, a.group.rawValue, -(a.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), a.isStdlib ? 1 : 0, -a.flawCount, a.name)
+        let rb = (b.decidesNothing ? 1 : 0, b.group.rawValue, -(b.severity.map { Severity.allCases.firstIndex(of: $0)! } ?? -1), b.isStdlib ? 1 : 0, -b.flawCount, b.name)
         return ra < rb
     }
 
     /// "gh 2.62.0 was built with golang.org/x/net 0.23.0 — fixed in 0.33.0 · built with Go 1.22.3, whose stdlib has
-    /// 4 known flaws." At most four parts are named; the rest are counted.
+    /// 4 known flaws." At most four parts are named; the rest are counted. A package's newest upgrade is judged by the
+    /// core again, from its newest installed version and against the affected and likely flaws of all its versions:
+    /// "fixed in" when it leaves them all, "partly fixed in" when it leaves some, "no fixed release yet" when it leaves
+    /// none; "reported, not checked" when no version of it has a flaw the core checked. Call it off the main thread.
     static func sentence(for origin: Origin, programs: [Origin], parts: [Component]) -> String {
         let subject: String
         var plural = false
@@ -264,15 +351,16 @@ extension FindingBuilder {
             let built = i > 0 ? "built with" : plural ? "were built with" : "was built with"
             let versions = Core.shared.sortedVersions(Array(Set(same.map(\.package.version)))).map(Component.shown)
             let range = versions.count == 1 ? versions[0] : "\(versions.first!) to \(versions.last!)"
-            let most = same.map(\.flawCount).max() ?? 0
-            let target = Core.shared.newestVersion(same.compactMap(\.target)).map(Component.shown)
-            let fix = same.contains(where: \.malicious) ? " — malicious" : target.map { " — fixed in \($0)" } ?? " — no fixed release yet"
+            let most = Self.countedParts(same).map(\.flawCount).max() ?? 0
+            let malicious = same.contains(where: \.malicious), reported = same.allSatisfy { $0.check == .reported }
+            let fix = malicious ? " — malicious" : Self.fixClause(same)
+            let more = malicious || reported ? "" : Self.moreClause(same)
             if c.own {
-                clauses.append(c.malicious ? "is malicious" : "has \(flaws(most))" + fix)
+                clauses.append(c.malicious ? "is malicious" : "has \(flaws(most))" + fix + more)
             } else if c.isStdlib {
-                clauses.append("\(built) Go \(range), whose stdlib has \(versions.count > 1 ? "up to " : "")\(flaws(most))")
+                clauses.append("\(built) Go \(range), whose stdlib has \(versions.count > 1 ? "up to " : "")\(flaws(most))" + (reported ? fix : more))
             } else {
-                clauses.append((isTool ? "uses" : built) + " \(c.name) \(range)" + fix)
+                clauses.append((isTool ? "uses" : built) + " \(c.name) \(range)" + fix + more)
             }
         }
         if ordered.count > 4 {
@@ -280,6 +368,47 @@ extension FindingBuilder {
             clauses.append("\(more) more \(isTool ? "package" : "dependenc")\(isTool ? (more == 1 ? "" : "s") : (more == 1 ? "y" : "ies")) with known flaws")
         }
         return "\(subject) " + clauses.joined(separator: " · ") + "."
+    }
+
+    /// What the newest upgrade of one package's versions does, by the core: " — fixed in 0.62.0", " — partly fixed in
+    /// 0.62.0", " — no fixed release yet", " — no checked fixed version yet" when the server named a fix the core did
+    /// not confirm, or " — reported, not checked" when none of them has a checked flaw.
+    static func fixClause(_ same: [Component]) -> String {
+        if same.allSatisfy({ $0.check == .reported && $0.flawCount == $0.outside }) { return " — reported outside its published ranges" }
+        if same.allSatisfy({ $0.check == .reported }) {
+            let alert = same.map(\.notChecked).reduce(nil, Finding.NotChecked.worse)
+            return " — reported, not checked" + BatchCheck.parenthetical(alert, count: same.map(\.flawCount).max() ?? 0)
+        }
+        // judged from this Mac's flaws, at the versions they were found in (a version with only reported flaws is not one),
+        // and never inside the published ranges of another of their flaws (BatchCheck.unflagged)
+        let core = Core.shared
+        let decided = same.filter { !$0.flagged.isEmpty }
+        var seen = Set<String>(), flaws: [BatchResponse.Flaw] = [], others: [BatchResponse.Flaw] = []
+        for f in decided.flatMap(\.flagged) where seen.insert(f.id).inserted { flaws.append(f) }
+        for f in decided.flatMap(\.unflagged) where seen.insert(f.id).inserted { others.append(f) }
+        let advisories = (flaws + others).compactMap(\.coreAdvisory)         // every flagged and unflagged flaw has one (BatchCheck)
+        let unchecked = decided.contains(where: \.unconfirmed) ? " — no checked fixed version yet" : " — no fixed release yet"
+        guard let target = core.newestVersion(decided.compactMap { $0.upgrade?.version }),
+              let installed = core.newestVersion(decided.map(\.package.version)), advisories.count == flaws.count + others.count,
+              let judged = core.judge(target, from: installed, advisories: advisories,
+                                      flagged: flaws.map { _ in true } + others.map { _ in false }) else { return unchecked }
+        guard !judged.leaves.dropFirst(flaws.count).contains(false) else { return " — no checked fixed version yet" }
+        guard let upgrade = judged.upgrade else { return unchecked }
+        let shown = Component.shown(upgrade.version)
+        return judged.leaves.prefix(flaws.count).allSatisfy { $0 } ? " — fixed in \(shown)" : " — partly fixed in \(shown)"
+    }
+
+    /// ", and 2 more reported, not checked (CVE-X, exploited in the wild)": the flaws on this Mac one package's versions
+    /// have beyond those the clause counts (a counted version's others; all of a version that is not counted), and the
+    /// most urgent of them; "" when there are none.
+    static func moreClause(_ same: [Component]) -> String {
+        let counted = Set(countedParts(same).map(\.package))
+        // a reported part's flaws outside their published ranges are said apart: the core checked those
+        let more = same.map { counted.contains($0.package) ? $0.more : $0.flawCount - ($0.check == .reported ? $0.outside : 0) + $0.more }.max() ?? 0
+        let outside = same.map(\.outside).max() ?? 0
+        let alert = same.map { counted.contains($0.package) ? $0.moreAlert : $0.notChecked }.reduce(nil, Finding.NotChecked.worse)
+        let unchecked = more > 0 ? ", and \(more) more reported, not checked" + BatchCheck.parenthetical(alert, count: more) : ""
+        return unchecked + (outside == 0 ? "" : ", and \(outside) more reported outside \(outside == 1 ? "its" : "their") published ranges")
     }
 
     /// The components grouped by package, in the order of their worst version.
@@ -305,41 +434,79 @@ extension FindingBuilder {
     }
 
     /// The program's or tool's command.
+    ///
+    /// A command names a version the core checked, or lets Homebrew pick (UpgradeCommand), with one exception: a rebuild
+    /// (`go install`, `cargo install --force`, `uv tool install --force`) builds the program again at a version it names,
+    /// and what it is built with comes with it, picked by the tool. The version is the one the core checked for the
+    /// program's own module, crate or package, else the one installed. When every flagged part is something the program
+    /// was built with, what comes with that version is its author's choice, as `brew upgrade`'s is Homebrew's, and the
+    /// rebuild may be offered. When the program's own part is flagged, only if the core checked an upgrade for it
+    /// (`rebuildWaits`). `pipx runpip` is no rebuild: it pins every version it names, the tool's own at its checked
+    /// version or where it is.
     static func programAdvice(origin: Origin, programs: Int = 1, parts: [Component], malicious: Bool) -> UpgradeCommand.Advice {
+        let advice: UpgradeCommand.Advice, rebuild: Bool, name: String
         switch origin {
         case var .program(p):
+            name = p.name
             if programs > 1, p.formula == nil, p.app != nil { p.name = "them" }      // "Docker ships them."
-            return UpgradeCommand.program(p, rebuildOnly: !parts.contains(where: \.own), malicious: malicious)
+            advice = UpgradeCommand.rebuild(p, rebuildOnly: !parts.contains(where: \.own), own: parts.first { $0.own && $0.upgrade != nil }?.upgrade,
+                                            toolchain: parts.first { $0.isStdlib && $0.upgrade != nil }?.upgrade, malicious: malicious)
+            rebuild = p.place == .goInstall || p.place == .cargoInstall
         case let .pythonTool(t):
-            return UpgradeCommand.pythonTool(t, upgrades: parts.map { ($0.name, $0.target) }, malicious: malicious)
+            name = t.name
+            advice = UpgradeCommand.tool(t, upgrades: parts.map { ($0.name, $0.upgrade) }, malicious: malicious)
+            rebuild = t.manager == .uv
         default:
             return UpgradeCommand.Advice(command: nil)
         }
+        guard !malicious, rebuild, advice.command != nil, rebuildWaits(parts) else { return advice }
+        return UpgradeCommand.Advice(command: nil, note: "Not offered: building \(name) again would bring a release of it the app has not checked; see the site.")
+    }
+
+    /// Whether a rebuild waits for the program's own fix: its own module, crate or package is flagged on this Mac
+    /// (affected or likely), and the core checked no upgrade for it.
+    static func rebuildWaits(_ parts: [Component]) -> Bool {
+        parts.contains { $0.own && !$0.flagged.isEmpty && $0.upgrade == nil }
     }
 
     // MARK: MacPorts, Nix and conda packages matched to graded projects
 
     /// Like Homebrew's project findings: the project's recent critical, high and exploited advisories, each decided
-    /// by the verified core against the installed version.
-    func managedFindings(_ managed: [ManagedMatch], projects: [String: ProjectResponse]) -> [Finding] {
+    /// by the verified core against the installed version (AdvisoryCheck).
+    func managedFindings(_ managed: [ManagedMatch], projects: [String: ProjectResponse], decided: inout [String: Decided]) -> [Finding] {
         var out: [Finding] = []
         for match in managed {
             guard let project = projects[match.project.slug] else { continue }
-            let installed = match.package.version
-            // Each advisory by the issuer's ranges when it has them, else by its first fixed versions (AdvisoryCheck).
-            guard let d = AdvisoryCheck.decide(installed, project.recent) else { continue }
-            let target = d.target
-            let advice = UpgradeCommand.advice(for: match.package.origin, name: match.package.name, ecosystem: nil, target: target, malicious: false)
-            out.append(Finding(
-                id: Self.managedID(match.package), group: d.exploited ? .exploited : .criticalHigh,
-                subject: .project(slug: project.slug, name: project.name, installedAs: match.package.name), title: project.name,
-                installedVersion: installed, fixedVersion: target, severity: d.severity,
-                advisoryIDs: d.advisories.map(\.id), flawCount: d.hits.count, exploited: d.exploited, malicious: false,
-                note: [d.note, advice.note].compactMap { $0 }.joined(separator: " "),
-                bigIssue: nil, origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: project.slug),
-                upgradeCommand: advice.command, verification: project.verificationMark, grade: project.grade))
+            guard let d = AdvisoryCheck.decide(match.package.version, project.recent) else { continue }
+            let make = { (d: AdvisoryCheck) in
+                Self.managedFinding(match, slug: project.slug, name: project.name, grade: project.grade, mark: project.verificationMark, d)
+            }
+            let f = make(d)
+            decided[f.id] = .advisories(d, make)
+            out.append(f)
         }
         return out
+    }
+
+    /// A MacPorts, Nix or conda package's finding, as its project's advisories (or an item of the "patch these first"
+    /// list) decided it.
+    static func managedFinding(_ match: ManagedMatch, slug: String, name: String, grade: String?, mark: Verification, _ d: AdvisoryCheck) -> Finding {
+        let advice = managedAdvice(match.package, upgrade: d.target)
+        return Finding(
+            id: managedID(match.package), group: d.group,
+            subject: .project(slug: slug, name: name, installedAs: match.package.name), title: name,
+            installedVersion: match.package.version, upgrade: d.target, severity: d.severity,
+            advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
+            note: sentences(d.note, advice.note),
+            bigIssue: nil, origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: slug),
+            advice: advice, verification: mark, grade: grade, notChecked: d.notChecked)
+    }
+
+    /// MacPorts, Nix and conda pick the version themselves, and only Homebrew's picks are taken without one the core
+    /// checked: without a checked upgrade, no command, and no note about running one.
+    static func managedAdvice(_ p: ManagedPackage, upgrade: CheckedUpgrade?) -> UpgradeCommand.Advice {
+        guard let upgrade else { return UpgradeCommand.Advice(command: nil) }
+        return UpgradeCommand.advice(for: p.origin, name: p.name, ecosystem: nil, target: upgrade, malicious: false)
     }
 
     static func managedID(_ p: ManagedPackage) -> String {
@@ -352,43 +519,34 @@ extension FindingBuilder {
         return "\(p.manager.rawValue)|\(p.name)|\(p.version)|\(place)"
     }
 
-    /// The site's "patch these first" list, for packages matched through R lines (as for Homebrew's).
+    /// The site's "patch these first" list, for packages matched through R lines, decided as for Homebrew's.
     func applyBigIssues(_ issues: [StateResponse.BigIssue], toManaged managed: [ManagedMatch], findings: inout [Finding],
-                        projects: [String: ProjectResponse]) {
-        for issue in issues where !issue.fixedIn.isEmpty {
-            let label = "On the site's “patch these first” list: \(issue.title.isEmpty ? issue.name : issue.title)"
-            let severity = Severity(api: issue.severity)
-            let group: Finding.Group = issue.exploited ? .exploited : (severity ?? .low) >= .high ? .criticalHigh : .other
+                        projects: [String: ProjectResponse], decided: inout [String: Decided]) {
+        for issue in issues {
             let check = IssueCheck(issue, project: projects[issue.slug])        // the project's ranges when it has them
             for match in managed where match.project.slug == issue.slug {
                 let v = match.package.version
-                guard check.affects(v) else { continue }
-                let target = check.fix(v)
+                guard let verdict = check.verdict(v) else { continue }
                 let id = Self.managedID(match.package)
                 if let i = findings.firstIndex(where: { $0.id == id }) {
-                    findings[i].bigIssue = label
-                    if issue.exploited { findings[i].exploited = true }
-                    if group < findings[i].group { findings[i].group = group }
-                    if findings[i].severity == nil || (severity.map { $0 > findings[i].severity! } ?? false) { findings[i].severity = severity }
-                    if findings[i].fixedVersion == nil { findings[i].fixedVersion = target }
-                } else {
-                    let project = projects[issue.slug]
-                    let advice = UpgradeCommand.advice(for: match.package.origin, name: match.package.name, ecosystem: nil, target: target, malicious: false)
-                    findings.append(Finding(
-                        id: id, group: group, subject: .project(slug: issue.slug, name: project?.name ?? match.project.name, installedAs: match.package.name),
-                        title: project?.name ?? match.project.name, installedVersion: v, fixedVersion: target, severity: severity,
-                        advisoryIDs: issue.ids, flawCount: max(issue.ids.count, 1), exploited: issue.exploited, malicious: false,
-                        note: check.note(v, target), bigIssue: label,
-                        origins: [match.package.origin], pageURL: SiteURL.projectPage(slug: issue.slug), upgradeCommand: advice.command,
-                        verification: project?.verificationMark ?? .none, grade: project?.grade))
+                    Self.apply(issue, verdict: verdict, item: check, to: &findings[i], decided: &decided)
+                    continue
                 }
+                let project = projects[issue.slug]
+                let make = { (d: AdvisoryCheck) in
+                    Self.managedFinding(match, slug: issue.slug, name: project?.name ?? match.project.name, grade: project?.grade,
+                                        mark: project?.verificationMark ?? .none, d)
+                }
+                let d = AdvisoryCheck.forItem(issue, check, verdict: verdict, installed: v)
+                findings.append(Self.labelled(make(d), issue))
+                decided[id] = .advisories(d, make)
             }
         }
     }
 }
 
 extension Scanner {
-    /// "Not checked" for the program sources: managed packages no R line names, and what the sources could not read.
+    /// "No record" for the program sources: managed packages no R line names, and what the sources could not read.
     static func programCoverage(unmatchedManaged: [ManagedPackage], unchecked: [UncheckedItem]) -> [Coverage.Bucket] {
         var out: [Coverage.Bucket] = []
         let titles: [ManagedPackage.Manager: String] = [.macports: "MacPorts ports with no graded project",

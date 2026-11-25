@@ -9,7 +9,7 @@ import OSVAKit
     @Test func scannedSaysAppsAndExtensions() {
         let c = PopoverContent(report: PreviewData.bundlesReport(), isScanning: false, now: now)
         // the apps count includes those that bundle Electron; no phrase is split at a line break, a count never parts from its noun
-        #expect(c.subline == "Scanned\u{00A0}4\u{00A0}minutes\u{00A0}ago · Homebrew, 140\u{00A0}apps, 23\u{00A0}extensions, npm, pip, RubyGems, 2\u{00A0}folders")
+        #expect(c.subline == "Scanned\u{00A0}4\u{00A0}minutes\u{00A0}ago ·\u{00A0}Homebrew, 140\u{00A0}apps, 23\u{00A0}extensions, npm, pip, RubyGems, 2\u{00A0}folders")
         let older = PopoverContent.sourcesSummary(PreviewData.inventoryReports)                   // a report from before apps were read
         #expect(older == "Homebrew, 15\u{00A0}Electron\u{00A0}apps, npm, pip, RubyGems, 2\u{00A0}folders")
         #expect(PopoverContent.sourcesSummary([SourceReport(kind: .extensions, available: false, count: 0, detail: "no editors or browsers with extensions")]) == "")
@@ -88,10 +88,10 @@ import OSVAKit
                                               .init(source: "Edge web apps", items: ["c"])]) == "App Store, macOS and web apps — not checked here")
     }
 
-    @Test func onlyWhatNobodyLooksAfterIsNotChecked() {
+    @Test func onlyWhatNobodyLooksAfterHasNoRecord() {
         let c = PopoverContent(report: PreviewData.coverageReport(), isScanning: false, now: PreviewData.now)
         #expect(c.coverage.notCheckedCount == 109 && c.coverage.updatedElsewhereCount == 37)
-        #expect(c.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings · 109\u{00A0}not\u{00A0}checked · Scanned"))
+        #expect(c.subline.hasPrefix("3\u{00A0}lower-severity\u{00A0}findings ·\u{00A0}109\u{00A0}with\u{00A0}no\u{00A0}record ·\u{00A0}Scanned"))
         #expect(PreviewData.appsWithNoRecord.count + PreviewData.appsFromTheAppStore.count + PreviewData.chromeWebApps.count
                 + PreviewData.edgeWebApps.count == 141)
     }

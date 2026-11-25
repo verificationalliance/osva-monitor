@@ -290,9 +290,9 @@ func date(_ s: String) -> Date { ISO8601DateFormatter().date(from: s + "T12:00:0
             InstalledPackage(ecosystem: .pypi, name: $0.0, version: $0.1, origin: origin, provenance: Provenance(path: site.path))
         }
         let finding = Finding(id: "f", group: .exploited, subject: .package(ecosystem: .pypi, name: PackageNames.indexName(name, in: .pypi)),
-                              title: name, installedVersion: version, fixedVersion: nil, severity: .high, advisoryIDs: [], flawCount: 1,
+                              title: name, installedVersion: version, upgrade: nil, severity: .high, advisoryIDs: [], flawCount: 1,
                               exploited: true, malicious: false, note: nil, bigIssue: nil, origins: [origin],
-                              pageURL: SiteURL.packagePage(.pypi, name, version: version), upgradeCommand: nil, verification: .none, grade: nil)
+                              pageURL: SiteURL.packagePage(.pypi, name, version: version), advice: nil, verification: .none, grade: nil)
         let explainer = ProvenanceExplainer(tools: ToolEnvironment(home: URL(fileURLWithPath: "/Users/ana"), base: [:], runner: RecordedRunner(outputs: [:]),
                                                                    isExecutable: { _ in false }), timeZone: utc, homebrewPrefixes: [])
         return await explainer.explain([finding], inventory: Inventory(packages: packages)).first?.provenance?.first
@@ -444,9 +444,9 @@ func date(_ s: String) -> Date { ISO8601DateFormatter().date(from: s + "T12:00:0
 
     func explain(_ origin: Origin, version: String, prefix: String) async -> Provenance? {
         let finding = Finding(id: "f", group: .criticalHigh, subject: .project(slug: "x", name: "X", installedAs: "x"), title: "X",
-                              installedVersion: version, fixedVersion: nil, severity: .high, advisoryIDs: [], flawCount: 1, exploited: false,
+                              installedVersion: version, upgrade: nil, severity: .high, advisoryIDs: [], flawCount: 1, exploited: false,
                               malicious: false, note: nil, bigIssue: nil, origins: [origin], pageURL: SiteURL.projectPage(slug: "x"),
-                              upgradeCommand: nil, verification: .none, grade: nil)
+                              advice: nil, verification: .none, grade: nil)
         let tools = ToolEnvironment(home: URL(fileURLWithPath: "/Users/ana"), base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false })
         return await ProvenanceExplainer(tools: tools, timeZone: utc, homebrewPrefixes: [prefix]).explain([finding], inventory: Inventory())
             .first?.provenance?.first
@@ -494,9 +494,9 @@ func date(_ s: String) -> Date { ISO8601DateFormatter().date(from: s + "T12:00:0
 @Suite struct OtherProvenanceTests {
     func explain(_ p: InstalledPackage, tools: ToolEnvironment? = nil) async -> Provenance? {
         let finding = Finding(id: "f", group: .criticalHigh, subject: .package(ecosystem: p.ecosystem, name: PackageNames.indexName(p.name, in: p.ecosystem)),
-                              title: p.name, installedVersion: p.version, fixedVersion: nil, severity: .high, advisoryIDs: [], flawCount: 1,
+                              title: p.name, installedVersion: p.version, upgrade: nil, severity: .high, advisoryIDs: [], flawCount: 1,
                               exploited: false, malicious: false, note: nil, bigIssue: nil, origins: [p.origin],
-                              pageURL: SiteURL.packagePage(p.ecosystem, p.name, version: p.version), upgradeCommand: nil, verification: .none, grade: nil)
+                              pageURL: SiteURL.packagePage(p.ecosystem, p.name, version: p.version), advice: nil, verification: .none, grade: nil)
         let t = tools ?? ToolEnvironment(home: URL(fileURLWithPath: "/Users/ana"), base: [:], runner: RecordedRunner(outputs: [:]), isExecutable: { _ in false })
         return await ProvenanceExplainer(tools: t, timeZone: utc, homebrewPrefixes: []).explain([finding], inventory: Inventory(packages: [p]))
             .first?.provenance?.first

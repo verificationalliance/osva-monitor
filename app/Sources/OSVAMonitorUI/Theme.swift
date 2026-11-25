@@ -7,8 +7,8 @@ import SwiftUI
 // The panel is one sheet of system Liquid Glass (the MenuBarExtra window); everything inside it is content. Surfaces,
 // text and controls are the system's: `.primary`/`.secondary`/`.tertiary` text, `.quinary`/`.quaternary` fills, and
 // untinted controls that follow the person's accent colour. The site's colours (site/formalinformer/app.css) appear
-// only on status elements: severity marks, the exploited chip, the malicious section, grade tiles, verification marks,
-// the hero shield and a fixed row's check. Blue is for proof only, clay red for danger only.
+// only on status elements: severity marks, the exploited chip, the not-checked chip, the malicious section, grade
+// tiles, verification marks, the hero shield and a fixed row's check. Blue is for proof only, clay red for danger only.
 //
 // Each status colour has a value per role (fill, ring, glyph, text) and per appearance (light, dark, and their
 // Increase Contrast variants), from "OSVA Monitor colour palette" (reports/). Glyph values clear 3:1 and text values
@@ -125,6 +125,21 @@ public enum Tokens {
         public static let chip = Tone(0xA12828, dark: 0xA12828, lightIC: 0x990015, darkIC: 0xA12828)
         public static let chipRing = Tone.darkOnly(0xE7524E, darkIC: 0xFFA8A0)
         public static let glyph = Tone(0xA12828, dark: 0xE7524E, lightIC: 0x990015, darkIC: 0xFFA8A0)
+        /// The section heading's flame, on its plate (GlyphPlate): the glyph in light, critical's text shades in dark,
+        /// which keep 3:1 on the plate over grey glass where the glyph's red does not.
+        public static let mark = Tone(0xA12828, dark: 0xFFA8A0, lightIC: 0x990015, darkIC: 0xFFCDC7)
+    }
+
+    /// Not checked against published ranges: the moderate amber, with no hex of its own. It marks an exploited or
+    /// critical flaw the core could not check (the chip, StatusChip's `.notChecked`), the section those findings are
+    /// listed in, and the hero when they are all that is urgent. Never the exploited chip's solid red, which says the
+    /// core checked the flaw.
+    public enum NotChecked {
+        /// Every not-checked mark: the chip's shield, the section heading's and the hero's (on their plates). The
+        /// darker shade in light, which clears 3:1 on the tint and on the plates over grey glass: one amber, one mark.
+        public static let mark = Tokens.moderate.text
+        /// The chip's capsule: the summary chips' faint tint of the status colour (15% light, 25% dark).
+        public static let tint = Tokens.moderate.fill.opacity(light: 0.15, dark: 0.25)
     }
 
     /// Nothing needs action: the site's grade-A green, on the hero shield and on the check of a row its fix resolved.
@@ -174,10 +189,24 @@ public enum Surface {
     public static let hover = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.45, darkAlpha: 0.16, icAlpha: 0.55, darkICAlpha: 0.22)
     /// A command or a log, and the fix's review: set into the row.
     public static let well = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.62, darkAlpha: 0.24, icAlpha: 0.80, darkICAlpha: 0.36)
-    /// A small control drawn on whatever glass is there (the site link): its label clears 4.5:1 even on mid-grey glass.
+    /// A small control drawn on whatever glass is there (the site link), and the not-checked chip under its tint: its
+    /// label clears 4.5:1 even on mid-grey glass.
     public static let control = Tone(0xFFFFFF, dark: 0x000000, alpha: 0.62, darkAlpha: 0.40, icAlpha: 0.80, darkICAlpha: 0.52)
     /// The hairline round a container, well or control.
     public static let edge = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.09, darkAlpha: 0.11, icAlpha: 0.30, darkICAlpha: 0.32)
+}
+
+/// The quiet lines that lie on the panel's bare glass, the hero's and the coverage lines under the groups: the system's
+/// `.secondary` and `.tertiary` measured 2.31-2.63:1 and 1.49-2.27:1 there over a mid-grey desktop. Black in light mode and white in dark, at the opacity
+/// that clears the contrast each needs from white (black) glass to mid-grey (128) in both appearances; ToneTests
+/// checks every one.
+public enum Ink {
+    /// The subline ("2 lower-severity findings · Scanned 4 minutes ago · …"), the breakdown under the count, a scan's
+    /// problem, and the quiet coverage lines ("10 not in the index"): 3:1 or more on the bare glass.
+    public static let subline = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.66, darkAlpha: 0.80, icAlpha: 0.80, darkICAlpha: 0.90)
+    /// The caveat ("Not proof of safety: it is what has been reported."), on its `Surface.control` plate (HeroCaveat):
+    /// 4.5:1 or more there. No text colour reaches 4.5:1 on mid-grey dark glass alone (white on rgb 128 is 3.95:1).
+    public static let caveat = Tone(0x000000, dark: 0xFFFFFF, alpha: 0.72, darkAlpha: 0.78, icAlpha: 0.85, darkICAlpha: 0.90)
 }
 
 /// Type, one place. Counts use SF Pro Rounded with tabular digits.
@@ -191,6 +220,8 @@ public enum Typeface {
     public static let small = Font.system(size: 11.5)
     public static let caption = Font.system(size: 11)
     public static let chip = Font.system(size: 11, weight: .medium)
+    /// A row's status chip, exploited or not checked: the two are one size, so either sits in the other's place.
+    public static let statusChip = Font.system(size: 10, weight: .bold)
     public static let version = Font.system(size: 12, weight: .medium, design: .monospaced)
     public static let code = Font.system(size: 11, design: .monospaced)
     /// A fix's live log: small enough for a useful line, monospaced like the command.

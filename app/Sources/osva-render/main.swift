@@ -2,7 +2,10 @@
 // light and dark appearance (the panel also over a mid-grey backdrop), so the UI can be checked without opening a
 // window on anyone's screen.
 //
-//   osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only PREFIX,…] [--apps]
+//   osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only PREFIX,…] [--apps] [--dynamic-type SIZE]
+//
+// --dynamic-type draws every view at that text size (a DynamicTypeSize case: "large", "accessibility5"), and adds
+// "-SIZE" to the file names.
 //
 // --apps also draws the app lists from this Mac's own /Applications and ~/Applications (read here, sent nowhere), for
 // a look at real names and icons; keep those PNGs out of the repository.
@@ -21,13 +24,18 @@ import SwiftUI
 
 enum Method { case imageRenderer, hostingView, window }
 
+/// The text size every view is drawn at (--dynamic-type); nil leaves the system's.
+var dynamicType: DynamicTypeSize?
+
 @MainActor
 func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale: CGFloat, width: CGFloat? = nil,
                       backdrop: NSColor? = nil) throws -> NSBitmapImageRep {
     let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    let root = view
+    let sized = Group { if let dynamicType { view.dynamicTypeSize(dynamicType) } else { view } }
+    let root = sized
         .background(Color(nsColor: backdrop ?? .windowBackgroundColor))
         .environment(\.colorScheme, dark ? .dark : .light)
+        .environment(\.drawsOffScreen, true)
     var result: Result<NSBitmapImageRep, Error> = .failure(CocoaError(.fileWriteUnknown))
     appearance.performAsCurrentDrawingAppearance {
         result = Result { try draw(root, appearance: appearance, method: method, scale: scale, width: width) }
@@ -77,8 +85,15 @@ private func draw<V: View>(_ root: V, appearance: NSAppearance, method: Method, 
     }
 }
 
+/// Views drawn with SwiftUI's placeholder for a control it cannot draw off-screen: osva-render fails when there are any.
+var placeholders: [String] = []
+
 @MainActor
 func write(_ rep: NSBitmapImageRep, _ name: String, into dir: URL) throws {
+    if let image = rep.cgImage, case let n = PreviewData.placeholderPixels(image), n > 0 {
+        FileHandle.standardError.write(Data("osva-render: \(name) draws a placeholder (\(n) px of its yellow): an AppKit control ImageRenderer cannot draw\n".utf8))
+        placeholders.append(name)
+    }
     let file = dir.appendingPathComponent(name + ".png")
     guard let png = rep.representation(using: .png, properties: [:]) else {   // a real report's whole popover can be too tall
         FileHandle.standardError.write(Data("osva-render: \(name) is too large to encode (\(rep.pixelsWide)×\(rep.pixelsHigh) px), skipped\n".utf8))
@@ -98,12 +113,20 @@ struct ComponentSheet: View {
             HStack(spacing: 6) { ForEach(["A", "B", "C", "D", "F", "U"], id: \.self) { GradeTile($0) } }
             HStack(spacing: 12) { ForEach(Severity.allCases.reversed(), id: \.self) { SeverityLabel($0) } }
             HStack(spacing: 10) { StatusChip(.exploited); StatusChip(.malicious) }
+            // the amber mark of a flaw not checked against published ranges, as rows name it, beside the red chip it replaces
+            HStack(spacing: 10) {
+                StatusChip(.notChecked(Finding.NotChecked(id: "CVE-1", exploited: true, critical: true)))
+                StatusChip(.notChecked(Finding.NotChecked(id: "CVE-2", exploited: false, critical: true)))
+                StatusChip(.notChecked(Finding.NotChecked(id: "CVE-3", exploited: false, critical: true), namesCritical: false))
+                StatusChip(.exploited)
+            }
             HStack(spacing: 5) {
                 StatusChip(.count(.malicious, 1)); StatusChip(.count(.exploited, 2))
                 StatusChip(.count(.severity(.critical), 3)); StatusChip(.count(.severity(.high), 4))
             }
             HStack(spacing: 18) {
-                MenuBarLabel(.notScanned); MenuBarLabel(.waiting); MenuBarLabel(.clean); MenuBarLabel(.action(3)); MenuBarLabel(.malicious(12))
+                MenuBarLabel(.notScanned); MenuBarLabel(.waiting); MenuBarLabel(.clean); MenuBarLabel(.notChecked); MenuBarLabel(.action(3))
+                MenuBarLabel(.malicious(12))
             }
             .font(.system(size: 13))
             CommandBlock("cd ~/osva-monitor/run/demo-projects/api && python3 -m pip install 'Django>=5.2.17'").frame(width: 300)
@@ -112,7 +135,7 @@ struct ComponentSheet: View {
     }
 }
 
-/// Rows with the pointer over the middle one (findings, Not checked), and the site link: hover may only raise contrast.
+/// Rows with the pointer over the middle one (findings, No record), and the site link: hover may only raise contrast.
 struct HoverSheet: View {
     var body: some View {
         let ids = [PreviewData.FixID.nginx, PreviewData.FixID.openssh, PreviewData.FixID.cpython]
@@ -124,7 +147,7 @@ struct HoverSheet: View {
                     FindingRow(finding: f, expanded: false, actions: .none) {}.environment(\.showsHover, i == 1)
                 }
             }
-            GroupContainer(.notChecked, count: 8) {
+            GroupContainer(.noRecord, count: 8) {
                 ListDisclosureRow(NameList(title: "Homebrew packages with no graded project", explanation: "", count: 2,
                                            sections: [.init(title: nil, items: ["abseil 20260817.0", "ack 3.10.0"])], style: .code))
                 Divider().padding(.leading, 12)
@@ -164,8 +187,15 @@ func main() throws {
         case "--scale": scale = CGFloat(Double(args.popFirst() ?? "2") ?? 2)
         case "--apps": thisMacsApps = true
         case "--only": prefixes = (args.popFirst() ?? "").split(separator: ",").map(String.init)
+        case "--dynamic-type":
+            let name = args.popFirst() ?? ""
+            guard let size = DynamicTypeSize.allCases.first(where: { "\($0)" == name }) else {
+                FileHandle.standardError.write(Data("osva-render: no text size \(name); one of \(DynamicTypeSize.allCases.map { "\($0)" })\n".utf8))
+                exit(2)
+            }
+            dynamicType = size
         default:
-            FileHandle.standardError.write(Data("usage: osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only PREFIX,…] [--apps]\n".utf8))
+            FileHandle.standardError.write(Data("usage: osva-render [--out DIR] [--report last-scan.json] [--scale 2] [--only PREFIX,…] [--apps] [--dynamic-type SIZE]\n".utf8))
             exit(2)
         }
     }
@@ -225,6 +255,11 @@ func main() throws {
         ("popover-first-scan", AnyView(popover(nil, scanning: true, progress: "Looking at what is installed…")), .imageRenderer),
         ("popover-not-scanned", AnyView(popover(nil)), .imageRenderer),
         ("popover-clean", AnyView(popover(PreviewData.report(findings: PreviewData.findings.filter { $0.group == .other }))), .imageRenderer),
+        // only what the core could not check: the amber hero, the section, a reported exploited flaw and a likely one, open
+        ("popover-not-checked", AnyView(popover(PreviewData.notCheckedReport(),
+                                                expanded: [PreviewData.NotCheckedID.imagemagick, PreviewData.NotCheckedID.redis])), .imageRenderer),
+        // rows with everything on their status line, long names and versions: a chip wraps whole, never inside
+        ("popover-crowded", AnyView(popover(PreviewData.crowdedReport())), .imageRenderer),
         ("popover-high-only", AnyView(popover(PreviewData.report(findings: PreviewData.findings.filter { $0.severity == .high && !$0.exploited }))),
          .imageRenderer),
         ("popover-offline", AnyView(popover(PreviewData.report(findings: [], problems: ["Could not refresh the public index; using the copy from 2 days ago."]))), .imageRenderer),
@@ -332,9 +367,15 @@ func main() throws {
             let panel = view.hasPrefix("popover") || view.hasPrefix("fix-")
             guard backdrop == nil || panel else { continue }
             try write(capture(content, appearance: appearance, method: method, scale: scale, width: panel ? PopoverView.width : nil, backdrop: backdrop),
-                      "\(view)-\(mode)", into: out)
+                      "\(view)-\(mode)" + (dynamicType.map { "-\($0)" } ?? ""), into: out)
         }
     }
 }
 
-try MainActor.assumeIsolated { try main() }
+try MainActor.assumeIsolated {
+    try main()
+    if !placeholders.isEmpty {
+        FileHandle.standardError.write(Data("osva-render: \(placeholders.count) views draw a placeholder\n".utf8))
+        exit(1)
+    }
+}

@@ -37,7 +37,49 @@ enum Fixture {
                                              formula: nil)
     static let homebrewPython = PythonEnvironment(executable: "/opt/homebrew/bin/python3", version: "3.15.2", kind: .homebrew, externallyManaged: true,
                                                   userSite: "/Users/ana/Library/Python/3.15/lib/python/site-packages", formula: "python@3.15")
+
+    /// A version to upgrade to, as the core checks one: `version` above `installed`, clear of an advisory fixed in it.
+    /// Asked off the main thread, as the core requires.
+    static func fix(_ version: String, above installed: String = "0") -> CheckedUpgrade {
+        let ask: @Sendable () -> Core.UpgradeAnswer = {
+            Core.shared.upgrade(from: installed, advisories: [CoreAdvisory(ranges: [AffectedRange(fixed: version)], fixed: [])])
+        }
+        let answer: Core.UpgradeAnswer
+        if Thread.isMainThread {
+            let box = OffMain(), done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { box.answer = ask(); done.signal() }
+            done.wait()
+            answer = box.answer!
+        } else {
+            answer = ask()
+        }
+        guard case let .upgrade(u) = answer, u.version == version else { preconditionFailure("the core does not take \(version) above \(installed)") }
+        return u
+    }
+
+    /// A finding as a report saved on disk has it, with any fixed version: what a report from an older version, or one
+    /// changed on disk, gives the Fix button.
+    static func saved(_ f: Finding, fixedVersion: String?) -> Finding { saved(f, ["fixedVersion": fixedVersion]) }
+
+    /// The same, with any stored fields set (nil removes one).
+    static func saved(_ f: Finding, _ fields: [String: String?]) -> Finding {
+        var json = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(f)) as! [String: Any]
+        for (key, value) in fields { json[key] = value }
+        return try! JSONDecoder().decode(Finding.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    /// Command inputs as a report saved on disk has them, with any target: what a report from an older version, or one
+    /// changed on disk, gives the Fix button.
+    static func savedInputs(origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool) -> UpgradeCommand.Inputs {
+        let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: nil, malicious: malicious)
+        var json = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(inputs)) as! [String: Any]
+        json["target"] = target
+        return try! JSONDecoder().decode(UpgradeCommand.Inputs.self, from: JSONSerialization.data(withJSONObject: json))
+    }
 }
+
+/// What `Fixture.fix` asked off the main thread: written once by the worker, read after it signals.
+private final class OffMain: @unchecked Sendable { var answer: Core.UpgradeAnswer? }
 
 /// Answers requests from recorded responses and remembers every request.
 final class RecordedTransport: HTTPTransport, @unchecked Sendable {

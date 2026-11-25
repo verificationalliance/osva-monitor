@@ -46,6 +46,17 @@ import OSVAKit
         }
     }
 
+    /// A “quoted name” in a line is kept on one line where the lines are drawn (the card and Settings), while the file
+    /// and the release notes keep plain spaces.
+    @Test func aQuotedNameStaysWhole() throws {
+        let line = try #require(Changelog.bundled.entry(for: "0.6.0")?.lines.first { $0.contains("“") })
+        #expect(Changelog.quotesWhole(line) == "Lists what the site reports without ranges under “Not\u{00A0}checked\u{00A0}against\u{00A0}published\u{00A0}ranges”.")
+        #expect(!line.contains("\u{00A0}"))
+        #expect(Changelog.quotesWhole("a “b c” d “e f”") == "a “b\u{00A0}c” d “e\u{00A0}f”")
+        let views = try String(contentsOf: StyleGuardTests.app.appendingPathComponent("Sources/OSVAMonitorUI/WhatsNewViews.swift"), encoding: .utf8)
+        #expect(views.contains("Text(Changelog.quotesWhole(line))"))
+    }
+
     /// Settings lists every version, newest first, whatever order a changelog was put together in.
     @Test func settingsListsEveryVersionNewestFirst() {
         let rows = WhatsNewSection(changelog: .bundled).rows.map(\.version)

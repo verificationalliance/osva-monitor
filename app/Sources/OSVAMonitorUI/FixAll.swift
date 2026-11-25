@@ -6,7 +6,8 @@ import OSVAKit
 // one `npm install -g`, and a command of its own for each removal and anything else. Kept apart from the views so it
 // can be tested and rendered from fixtures.
 //
-// What it plans is exactly what the rows offer (FixRowState.offeredFix): no other path decides. A proposal (a partial
+// What it plans is exactly what the rows offer (FixRowState.offeredFix): no other path decides. A finding the core did
+// not check against published ranges (likely, reported) is never in it, whatever its row offers. A proposal (a partial
 // fix, an upgrade together) is listed under "Can do with your OK", unticked; a ticked one joins its Python's batch.
 // Batches go removals first, then Homebrew's formulae (they can replace Homebrew's own Pythons), casks, each Python, npm,
 // the rest; within a batch, the most urgent first: malicious, exploited in the wild, critical, high, the rest.
@@ -183,8 +184,10 @@ public struct FixAllState: Equatable, Sendable {
 
     public struct Tally: Equatable, Sendable {
         public var fixed = 0, partly = 0, failed = 0, needYou = 0, notRun = 0
-        public init(fixed: Int = 0, partly: Int = 0, failed: Int = 0, needYou: Int = 0, notRun: Int = 0) {
-            self.fixed = fixed; self.partly = partly; self.failed = failed; self.needYou = needYou; self.notRun = notRun
+        /// Ran, and the version now is still reported by the site, but not checked against published ranges.
+        public var notChecked = 0
+        public init(fixed: Int = 0, partly: Int = 0, failed: Int = 0, needYou: Int = 0, notRun: Int = 0, notChecked: Int = 0) {
+            self.fixed = fixed; self.partly = partly; self.failed = failed; self.needYou = needYou; self.notRun = notRun; self.notChecked = notChecked
         }
     }
 
@@ -207,6 +210,7 @@ public struct FixAllState: Equatable, Sendable {
                 switch o {
                 case .fixed, .fixedCheck, .removed, .undone: t.fixed += 1
                 case .partlyFixed: t.partly += 1
+                case .notChecked: t.notChecked += 1
                 case .needsPassword, .blocked, .couldNotCheck: t.needYou += 1
                 case .stopped: t.notRun += 1
                 case .stillAffected, .failed, .couldNotOpen, .exitedWithError, .killed, .timedOut, .couldNotStart, .broke, .undoFailed, .putBack:
@@ -217,10 +221,11 @@ public struct FixAllState: Equatable, Sendable {
         return t
     }
 
-    /// "Fixed 6 · 1 partly fixed · 1 failed · 2 need you": what is not zero.
+    /// "Fixed 6 · 1 partly fixed · 1 still reported, not checked · 1 failed · 2 need you": what is not zero.
     public var summary: String {
         let t = tally
         let parts = [t.fixed > 0 ? "Fixed \(t.fixed)" : nil, t.partly > 0 ? "\(t.partly) partly fixed" : nil,
+                     t.notChecked > 0 ? "\(t.notChecked) still reported, not checked" : nil,
                      t.failed > 0 ? "\(t.failed) failed" : nil,
                      t.needYou > 0 ? "\(t.needYou) need\(t.needYou == 1 ? "s" : "") you" : nil,
                      t.notRun > 0 ? "\(t.notRun) not run" : nil].compactMap { $0 }
@@ -256,9 +261,13 @@ public struct FixAllState: Equatable, Sendable {
 /// The review, worked out from the report and the rows: what Fix all would do now, and what it would not.
 public enum FixAll {
     /// The findings whose rows offer a fix now, worst first, each with its offer: exactly what Fix all counts and runs.
+    /// Never one the core did not check against published ranges: its row may offer a fix, the person's to run.
     public static func offered(_ findings: [Finding], fixes: [String: FixRowState]) -> [(Finding, FixOffer)] {
         ranked(findings).compactMap { f in fixes[f.id]?.offeredFix.map { (f, $0) } }
     }
+
+    /// What Fix all weighs: every finding but those the core did not check against published ranges.
+    static func checked(_ findings: [Finding]) -> [Finding] { findings.filter { !$0.group.isNotChecked } }
 
     /// Fix all's urgency: malicious removals, exploited in the wild, critical, high, the rest; the panel's own order
     /// within each.
@@ -273,7 +282,7 @@ public enum FixAll {
     }
 
     static func ranked(_ findings: [Finding]) -> [Finding] {
-        findings.enumerated().sorted { a, b in
+        checked(findings).enumerated().sorted { a, b in
             let (x, y) = (rank(a.element), rank(b.element))
             return x != y ? x < y : a.offset < b.offset
         }.map(\.element)
@@ -408,7 +417,7 @@ public enum FixAll {
     /// Each finding that needs action, in one bucket. Nil while some row is still being decided.
     public static func breakdown(_ findings: [Finding], fixes: [String: FixRowState]) -> Breakdown? {
         var b = Breakdown()
-        b.lower = findings.filter { !$0.group.needsAction && fixes[$0.id]?.offeredFix != nil }.count
+        b.lower = findings.filter { $0.group == .other && fixes[$0.id]?.offeredFix != nil }.count
         for f in findings where f.group.needsAction {
             let s = fixes[f.id] ?? FixRowState()
             if s.availability == .checking { return nil }

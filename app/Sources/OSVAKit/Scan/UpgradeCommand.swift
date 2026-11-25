@@ -1,14 +1,24 @@
 import Foundation
 
 /// What to do about one finding where the package actually lives: the command to paste into Terminal (when there is
-/// one that works there), and a note when the place needs explaining. The target is the server plan's version, the
-/// lowest that fixes what can be fixed with this package's Python on this Mac, not simply the newest fix.
+/// one that works there), and a note when the place needs explaining. The target is a version the verified core checked
+/// (`CheckedUpgrade`): the server plan's version when the core confirms it, the lowest that fixes what can be fixed with
+/// this package's Python on this Mac, not simply the newest fix.
+///
+/// Without one, a finding gets no command but Homebrew's (`isHomebrewUpgrade`): every other command that names no
+/// version lets a registry pick it. A removal needs no version. Programs and tools are the exception ProgramFindings
+/// decides from their parts: a rebuild at the installed version (`go install`, `cargo install --force`, `uv tool install
+/// --force`), only when every flagged part is something the program was built with, brings newer versions of those,
+/// the tool's choice, as `brew upgrade` brings Homebrew's.
 ///
 /// Names, versions and paths come from this Mac's files, so every one is shell-quoted unless it is plainly safe.
 public enum UpgradeCommand {
+    /// A command and its note. Only the builders write a command into one (UpgradeCommand, its extensions in
+    /// ProgramCommands.swift and JavaCheck.swift, and BundleAdvice); elsewhere an advice is withheld (`command: nil`) or
+    /// passed on whole (ClaimsTests holds this).
     public struct Advice: Equatable, Sendable {
-        public var command: String?
-        public var note: String?
+        public fileprivate(set) var command: String?
+        public fileprivate(set) var note: String?
         public init(command: String?, note: String? = nil) { self.command = command; self.note = note }
     }
 
@@ -19,24 +29,52 @@ public enum UpgradeCommand {
         public var origin: Origin
         public var name: String
         public var ecosystem: Ecosystem?
-        public var target: String?
+        /// The version the command goes to, as the core checked it (`CheckedUpgrade.version`). Set only from a
+        /// `CheckedUpgrade`; a report saved on disk keeps the one it was made with.
+        public private(set) var target: String?
         public var malicious: Bool
-        public init(origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool) {
-            self.origin = origin; self.name = name; self.ecosystem = ecosystem; self.target = target; self.malicious = malicious
+        public init(origin: Origin, name: String, ecosystem: Ecosystem?, target: CheckedUpgrade?, malicious: Bool) {
+            self.origin = origin; self.name = name; self.ecosystem = ecosystem; self.target = target?.version; self.malicious = malicious
         }
     }
 
+    /// Said when a command would need a version the core checked and there is none.
+    public static let noCheckedVersion = "No checked fixed version yet; see the site."
+
+    /// A Homebrew upgrade ("brew upgrade nginx", "brew upgrade --cask slack"): Homebrew picks the version, one the
+    /// person already takes from it, so it may be offered without a version the core checked. Every other command that
+    /// names no version (npm's @latest, `go get …@latest`, `cargo install x`, `gem update x`, `npm update x` …) lets a
+    /// registry pick it.
+    public static func isHomebrewUpgrade(_ command: String) -> Bool { command == "brew upgrade" || command.hasPrefix("brew upgrade ") }
+
+    /// The command made again from a finding's inputs.
     public static func advice(_ i: Inputs, home: String = NSHomeDirectory()) -> Advice {
-        advice(for: i.origin, name: i.name, ecosystem: i.ecosystem, target: i.target, malicious: i.malicious, home: home)
+        make(for: i.origin, name: i.name, ecosystem: i.ecosystem, target: i.target, malicious: i.malicious, home: home)
     }
 
-    public static func command(for origin: Origin, name: String, ecosystem: Ecosystem?, fixed: String?, malicious: Bool,
+    public static func command(for origin: Origin, name: String, ecosystem: Ecosystem?, fixed: CheckedUpgrade?, malicious: Bool,
                                home: String = NSHomeDirectory()) -> String? {
         advice(for: origin, name: name, ecosystem: ecosystem, target: fixed, malicious: malicious, home: home).command
     }
 
-    public static func advice(for origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool,
+    public static func advice(for origin: Origin, name: String, ecosystem: Ecosystem?, target: CheckedUpgrade?, malicious: Bool,
                               home: String = NSHomeDirectory()) -> Advice {
+        make(for: origin, name: name, ecosystem: ecosystem, target: target?.version, malicious: malicious, home: home)
+    }
+
+    /// The advice for a version the core checked (`target`, as it checked it), or for none. Without one, no command but
+    /// Homebrew's, a removal, or a program's or tool's rebuild (ProgramFindings decides those from the program's parts).
+    private static func make(for origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool, home: String) -> Advice {
+        let a = written(for: origin, name: name, ecosystem: ecosystem, target: target, malicious: malicious, home: home)
+        switch origin {
+        case .program, .pythonTool: return a
+        default:
+            guard !malicious, target == nil, let c = a.command, !isHomebrewUpgrade(c) else { return a }
+            return Advice(command: nil, note: noCheckedVersion)
+        }
+    }
+
+    private static func written(for origin: Origin, name: String, ecosystem: Ecosystem?, target: String?, malicious: Bool, home: String) -> Advice {
         let n = quote(name)
         switch origin {
         case let .homebrewFormula(formula):
@@ -49,7 +87,8 @@ public enum UpgradeCommand {
         case let .npmGlobal(npm):
             let tool = npm.hasPrefix("/opt/homebrew/") || npm.hasPrefix("/usr/local/") ? "npm" : quote(npm)
             if malicious { return Advice(command: "\(tool) uninstall -g \(n)") }
-            return Advice(command: "\(tool) install -g \(quote(name + "@" + (target ?? "latest")))")
+            guard let target else { return Advice(command: nil, note: noCheckedVersion) }        // never npm's @latest
+            return Advice(command: "\(tool) install -g \(quote(name + "@" + target))")
         case let .pip(python, user, formula):
             return pip(python: python, user: user, formula: formula, name: name, target: target, malicious: malicious)
         case .cargoInstall:
@@ -160,7 +199,10 @@ public enum UpgradeCommand {
             if isDirect, let target { return Advice(command: "cargo add \(quote("\(name)@\(target)"))") }
             return Advice(command: "cargo update -p \(n)\(target.map { " --precise \(quote($0))" } ?? "")")
         case "go.sum":
-            return Advice(command: "go get \(quote(name + "@" + (target.map { $0.hasPrefix("v") ? $0 : "v" + $0 } ?? "latest")))")
+            // `@none` takes the module out of go.mod; it was `@latest`, which installs a malicious module's newest release
+            if malicious { return isDirect ? Advice(command: "go get \(quote(name + "@none"))") : Advice(command: nil, note: removeIndirect(name)) }
+            guard let target else { return Advice(command: nil, note: noCheckedVersion) }        // never go's @latest
+            return Advice(command: "go get \(quote(name + "@" + (target.hasPrefix("v") ? target : "v" + target)))")
         case "Gemfile.lock":
             if malicious { return isDirect ? Advice(command: "bundle remove \(n)") : Advice(command: nil, note: removeIndirect(name)) }
             return Advice(command: isDirect ? "bundle update \(n)" : "bundle update --conservative \(n)")

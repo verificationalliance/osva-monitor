@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import OSVAKit
 
@@ -6,19 +7,39 @@ import OSVAKit
 public enum PreviewData {
     public static let now = Date(timeIntervalSince1970: 1_795_575_000)      // 19 Nov 2026, 02:10 UTC
 
+    /// `make`'s result, made off the main thread and waited for. Fixtures built as a scan builds its findings ask the core
+    /// for upgrades and judgements, which must not run on the main thread (Core.swift), and osva-render and the previews
+    /// first read them there. `make` must not need a fixture that is still being built: when the main thread is in a
+    /// fixture's first read (a `static let`) and `make` reads that same fixture, the two wait for each other forever.
+    static func offMain<T: Sendable>(_ make: @escaping @Sendable () -> T) -> T {
+        guard Thread.isMainThread else { return make() }
+        let box = MadeOffMain<T>(), done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async { box.value = make(); done.signal() }
+        done.wait()
+        return box.value!
+    }
+
+    /// A fixture's version to upgrade to, as the core checks one: `version` above `installed`, clear of an advisory
+    /// fixed in it. Asked off the main thread (`offMain`).
+    static func fix(_ version: String, above installed: String) -> CheckedUpgrade {
+        let answer = offMain { Core.shared.upgrade(from: installed, advisories: [CoreAdvisory(ranges: [AffectedRange(fixed: version)], fixed: [])]) }
+        guard case let .upgrade(u) = answer, u.version == version else { preconditionFailure("the core does not take \(version) above \(installed)") }
+        return u
+    }
+
     static func finding(_ id: String, _ group: Finding.Group, _ subject: Finding.Subject, _ title: String, component: String? = nil,
                         _ installed: String, _ fixed: String?, _ severity: Severity?, flaws: Int, exploited: Bool = false,
                         malicious: Bool = false, note: String? = nil, bigIssue: String? = nil, origins: [Origin], page: URL,
                         name: String? = nil, ecosystem: Ecosystem? = nil, runnable: Bool = true, mark: Verification = .none,
-                        grade: String? = nil, fixes: Int? = nil, unresolved: [UnresolvedFlaw] = []) -> Finding {
-        // The command is UpgradeCommand's, from the same inputs a scan would record.
-        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem, target: malicious ? nil : fixed,
-                                           malicious: malicious)
-        let command = runnable ? UpgradeCommand.advice(inputs).command : nil
-        return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, fixedVersion: fixed,
+                        grade: String? = nil, fixes: Int? = nil, unresolved: [UnresolvedFlaw] = [], notChecked: Finding.NotChecked? = nil) -> Finding {
+        // The command is UpgradeCommand's, from the same inputs a scan would record, and the version one the core checked.
+        let upgrade = malicious ? nil : fixed.map { fix($0, above: installed) }
+        let inputs = UpgradeCommand.Inputs(origin: origins[0], name: name ?? title, ecosystem: ecosystem, target: upgrade, malicious: malicious)
+        let advice = runnable ? UpgradeCommand.advice(inputs) : nil
+        return Finding(id: id, group: group, subject: subject, title: title, component: component, installedVersion: installed, upgrade: upgrade,
                        severity: severity, advisoryIDs: [], flawCount: flaws, exploited: exploited, malicious: malicious, note: note,
-                       bigIssue: bigIssue, origins: origins, pageURL: page, upgradeCommand: command, verification: mark, grade: grade,
-                       fixesCount: fixes, unresolved: unresolved, commandInputs: command == nil ? nil : inputs)
+                       bigIssue: bigIssue, origins: origins, pageURL: page, advice: advice, verification: mark, grade: grade,
+                       fixesCount: fixes, unresolved: unresolved, commandInputs: advice?.command == nil ? nil : inputs, notChecked: notChecked)
     }
 
     public static let applePython = PythonEnvironment(executable: "/usr/bin/python3", version: "3.9.6", kind: .apple, externallyManaged: false,
@@ -37,14 +58,14 @@ public enum PreviewData {
 
     public static let findings: [Finding] = {
         let home = NSHomeDirectory()
-        let likely = { (v: String) in "Likely affected: the issuer names \(v) as fixed." }
+        let affected = { (installed: String, fixed: String) in "The issuer lists \(installed) as affected and \(fixed) as fixed." }
         return [
             finding("pkg|npm|axios|1.14.1", .malicious, .package(ecosystem: .npm, name: "axios"), "axios", "1.14.1", nil, nil, flaws: 34,
                     malicious: true, note: "Remove it, then rotate every secret it could read.",
                     origins: [.folder(root: home + "/code/storefront", lockfile: home + "/code/storefront/package-lock.json", direct: true)],
                     page: SiteURL.packagePage(.npm, "axios", version: "1.14.1"), ecosystem: .npm),
             finding("brew|openssh|10.6p1", .exploited, .project(slug: "openssh", name: "OpenSSH", installedAs: "openssh"), "OpenSSH",
-                    "10.6p1", "10.6p2", .high, flaws: 1, exploited: true, note: likely("10.6p2"),
+                    "10.6p1", "10.6p2", .high, flaws: 1, exploited: true, note: affected("10.6p1", "10.6p2"),
                     bigIssue: "On the site's “patch these first” list", origins: [.homebrewFormula(name: "openssh")],
                     page: SiteURL.projectPage(slug: "openssh"), name: "openssh", mark: .parts, grade: "U"),
             finding("app|/Applications/OpenMTP.app|18.3.15", .exploited, .package(ecosystem: .npm, name: "electron"), "OpenMTP", component: "Electron",
@@ -52,14 +73,17 @@ public enum PreviewData {
                     origins: [.electronApp(name: "OpenMTP", bundlePath: "/Applications/OpenMTP.app", caskToken: "openmtp")],
                     page: SiteURL.packagePage(.npm, "electron", version: "18.3.15"), name: "electron", ecosystem: .npm),
             finding("brew|nginx|1.30.2", .criticalHigh, .project(slug: "nginx", name: "nginx", installedAs: "nginx"), "nginx",
-                    "1.30.2", "1.30.7", .critical, flaws: 6, note: likely("1.30.7"), bigIssue: "On the site's “patch these first” list",
+                    "1.30.2", "1.30.7", .critical, flaws: 6, note: affected("1.30.2", "1.30.7"), bigIssue: "On the site's “patch these first” list",
                     origins: [.homebrewFormula(name: "nginx")], page: SiteURL.projectPage(slug: "nginx"), grade: "C"),
             finding("pkg|RubyGems|nokogiri|1.13.8", .criticalHigh, .package(ecosystem: .rubygems, name: "nokogiri"), "nokogiri",
                     "1.13.8", "1.19.5", .critical, flaws: 23, origins: [.gem(gem: "/usr/bin/gem")],
                     page: SiteURL.packagePage(.rubygems, "nokogiri", version: "1.13.8"), ecosystem: .rubygems, grade: "C"),
+            // checked and affected, with critical advisories beside that state no affected versions: its row carries the mark
             finding("brew|python@3.12|3.12.16", .criticalHigh, .project(slug: "cpython", name: "CPython", installedAs: "python@3.12"), "CPython",
-                    "3.12.16", "3.14.11", .high, flaws: 1, note: likely("3.14.11"), origins: [.homebrewFormula(name: "python@3.12")],
-                    page: SiteURL.projectPage(slug: "cpython"), name: "python@3.12", mark: .parts, grade: "C"),
+                    "3.12.16", "3.14.11", .high, flaws: 1,
+                    note: affected("3.12.16", "3.14.11") + " 4 more advisories state no affected versions; not checked, among them CVE-2026-38812, critical.",
+                    origins: [.homebrewFormula(name: "python@3.12")], page: SiteURL.projectPage(slug: "cpython"), name: "python@3.12", mark: .parts,
+                    grade: "C", notChecked: Finding.NotChecked(id: "CVE-2026-38812", exploited: false, critical: true)),
             finding("pkg|PyPI|urllib3|1.26.5", .criticalHigh, .package(ecosystem: .pypi, name: "urllib3"), "urllib3", "1.26.5", "2.8.0", .high,
                     flaws: 10, note: managedNote, origins: [.pip(python: homebrewPython, user: false, formula: nil)],
                     page: SiteURL.packagePage(.pypi, "urllib3", version: "1.26.5"), ecosystem: .pypi, runnable: false),
@@ -83,17 +107,91 @@ public enum PreviewData {
             finding("pkg|npm|hacl-wasm|1.4.0", .other, .package(ecosystem: .npm, name: "hacl-wasm"), "hacl-wasm", "1.4.0", "1.4.2", .low, flaws: 1,
                     origins: [.folder(root: home + "/code/storefront", lockfile: home + "/code/storefront/package-lock.json", direct: true)],
                     page: SiteURL.packagePage(.npm, "hacl-wasm", version: "1.4.0"), ecosystem: .npm, mark: .whole, grade: "A"),
-            finding("pkg|PyPI|pygments|2.14.0|py3.15.2", .other, .package(ecosystem: .pypi, name: "pygments"), "pygments", "2.14.0", nil, .moderate,
-                    flaws: 1, origins: [.pip(python: homebrewPython, user: false, formula: "pygments")],
-                    page: SiteURL.packagePage(.pypi, "pygments", version: "2.14.0"), runnable: false,
-                    unresolved: [UnresolvedFlaw(id: "GHSA-x9mx-xxxx-wq5c", severity: .moderate, fixedIn: "2.15.0", reason: .otherPlatform, detail: "Windows",
-                                                summary: "Code execution via a crafted path on Windows")]),
+            // its one flaw is Windows-only, inside its published ranges there: listed, nothing to do on this Mac, never
+            // counted among the lower-severity findings
+            { () -> Finding in
+                var f = finding("pkg|PyPI|pygments|2.14.0|py3.15.2", .other, .package(ecosystem: .pypi, name: "pygments"), "pygments", "2.14.0", nil,
+                                .moderate, flaws: 1, origins: [.pip(python: homebrewPython, user: false, formula: "pygments")],
+                                page: SiteURL.packagePage(.pypi, "pygments", version: "2.14.0"), runnable: false,
+                                unresolved: [UnresolvedFlaw(id: "GHSA-x9mx-xxxx-wq5c", severity: .moderate, fixedIn: "2.15.0", reason: .otherPlatform,
+                                                            detail: "Windows", summary: "Code execution via a crafted path on Windows")])
+                f.onlyElsewhere = true
+                return f
+            }(),
             finding("pkg|crates.io|time|0.1.43", .other, .package(ecosystem: .crates, name: "time"), "time", "0.1.43", nil, .moderate, flaws: 1,
                     note: "No fixed release yet.",
                     origins: [.folder(root: home + "/code/tools", lockfile: home + "/code/tools/cli/Cargo.lock", direct: false)],
                     page: SiteURL.packagePage(.crates, "time", version: "0.1.43"), runnable: false),
+        ] + notCheckedFindings
+    }()
+
+    /// What the core could not check against published ranges: a formula the site reports an exploited, critical flaw
+    /// for, with no affected versions published (the amber mark, never counted), and one likely affected by the
+    /// issuer's first fixed version, with the version the core checked.
+    public static let notCheckedFindings: [Finding] = [
+        finding("brew|imagemagick|7.1.2-8", .reported, .project(slug: "imagemagick", name: "ImageMagick", installedAs: "imagemagick"), "ImageMagick",
+                "7.1.2-8", nil, .critical, flaws: 1, exploited: true,
+                note: "Reported by the site, not checked: it publishes no affected versions for CVE-2026-41730.",
+                origins: [.homebrewFormula(name: "imagemagick")], page: SiteURL.projectPage(slug: "imagemagick"), name: "imagemagick",
+                runnable: false, grade: "D", notChecked: Finding.NotChecked(id: "CVE-2026-41730", exploited: true, critical: true)),
+        finding("brew|redis|8.2.1", .likely, .project(slug: "redis", name: "Redis", installedAs: "redis"), "Redis", "8.2.1", "8.2.3", .high, flaws: 2,
+                note: "Likely affected: the site publishes no affected ranges, and the issuer names 8.2.3 as fixed.",
+                origins: [.homebrewFormula(name: "redis")], page: SiteURL.projectPage(slug: "redis"), name: "redis", grade: "B"),
+    ]
+
+    public enum NotCheckedID {
+        public static let imagemagick = "brew|imagemagick|7.1.2-8", redis = "brew|redis|8.2.1"
+    }
+
+    /// Only what was not checked: nothing the core checked needs action, and an exploited flaw is reported.
+    public static func notCheckedReport() -> ScanReport { report(findings: notCheckedFindings) }
+
+    /// Rows with everything on their status line at once, and long names and versions: the status line wraps a chip
+    /// whole to its next line, never inside it; a title too long for the row is cut in the middle.
+    public static let crowdedFindings: [Finding] = {
+        let openmtp = Origin.electronApp(name: "OpenMTP", bundlePath: "/Applications/OpenMTP.app", caskToken: "openmtp")
+        let insiders = Origin.electronApp(name: "Visual Studio Code - Insiders", bundlePath: "/Applications/Visual Studio Code - Insiders.app",
+                                          caskToken: "visual-studio-code@insiders")
+        let storefront = Origin.folder(root: NSHomeDirectory() + "/code/storefront", lockfile: NSHomeDirectory() + "/code/storefront/package-lock.json",
+                                       direct: true)
+        return [
+            finding("crowded|openmtp|128", .exploited, .package(ecosystem: .npm, name: "electron"), "OpenMTP", component: "Electron", "18.3.15",
+                    "42.11.16", .moderate, flaws: 128, exploited: true, origins: [openmtp], page: SiteURL.packagePage(.npm, "electron", version: "18.3.15"),
+                    name: "electron", ecosystem: .npm, notChecked: Finding.NotChecked(id: "CVE-2026-50112", exploited: true, critical: false)),
+            finding("crowded|openmtp|12", .exploited, .package(ecosystem: .npm, name: "electron"), "OpenMTP", component: "Electron", "24.2.0",
+                    "42.11.16", .moderate, flaws: 12, exploited: true, origins: [openmtp], page: SiteURL.packagePage(.npm, "electron", version: "24.2.0"),
+                    name: "electron", ecosystem: .npm, notChecked: Finding.NotChecked(id: "CVE-2026-50112", exploited: true, critical: true)),
+            finding("crowded|insiders", .likely, .package(ecosystem: .npm, name: "electron"), "Visual Studio Code - Insiders Edition (Universal)",
+                    component: "Electron", "38.0.0-beta.17", "38.0.1", .critical, flaws: 128, exploited: true,
+                    note: "Likely affected: the site publishes no affected ranges, and the issuer names 38.0.1 as fixed.",
+                    origins: [insiders], page: SiteURL.packagePage(.npm, "electron", version: "38.0.0-beta.17"), name: "electron", ecosystem: .npm,
+                    mark: .parts, grade: "B", notChecked: Finding.NotChecked(id: "CVE-2026-50113", exploited: true, critical: true)),
+            finding("crowded|aws", .criticalHigh, .package(ecosystem: .npm, name: "@aws-sdk/client-secrets-manager"), "@aws-sdk/client-secrets-manager",
+                    "3.1022.0-beta.17", "3.1022.1", .high, flaws: 12, origins: [storefront],
+                    page: SiteURL.packagePage(.npm, "@aws-sdk/client-secrets-manager", version: "3.1022.0-beta.17"), ecosystem: .npm, mark: .whole,
+                    grade: "A", notChecked: Finding.NotChecked(id: "CVE-2026-50114", exploited: false, critical: true)),
+            // checked: its only flaw's published ranges leave 2.0.0-1 out. In Other, with no severity and nothing counted
+            { () -> Finding in
+                var f = finding("crowded|numeric", .other, .package(ecosystem: .npm, name: "numeric"), "numeric", "2.0.0-1", nil, nil, flaws: 1,
+                                note: "Reported by the site; its published ranges for CVE-2026-50115 do not include 2.0.0-1.", origins: [storefront],
+                                page: SiteURL.packagePage(.npm, "numeric", version: "2.0.0-1"), ecosystem: .npm, runnable: false)
+                f.outsideItsRanges = true
+                return f
+            }(),
+            // its one flaw, high, is Windows-only and has no published ranges: in Other, with no severity and nothing to do
+            { () -> Finding in
+                var f = finding("crowded|win-path", .other, .package(ecosystem: .npm, name: "win-path"), "win-path", "1.4.0", nil, nil, flaws: 1,
+                                origins: [.npmGlobal(npm: "/opt/homebrew/bin/npm")], page: SiteURL.packagePage(.npm, "win-path", version: "1.4.0"),
+                                ecosystem: .npm, runnable: false,
+                                unresolved: [UnresolvedFlaw(id: "CVE-2026-50116", severity: .high, fixedIn: nil, reason: .otherPlatform, detail: "windows",
+                                                            summary: "Path traversal through drive-relative paths on Windows")])
+                f.onlyElsewhere = true
+                return f
+            }(),
         ]
     }()
+
+    public static func crowdedReport() -> ScanReport { report(findings: crowdedFindings, coverage: Coverage()) }
 
     // MARK: Fixes (osva-render)
 
@@ -344,3 +442,27 @@ public enum PreviewData {
     public static let updates = UpdateState(isAvailable: true, canCheck: true, checksAutomatically: true, version: "0.1.1",
                                             lastChecked: now.addingTimeInterval(-3 * 3600))
 }
+
+extension PreviewData {
+    /// How many pixels of a render are SwiftUI's placeholder for a view it cannot draw off-screen (an AppKit control:
+    /// a `.borderless` button, a linear progress bar): the yellow (255, 204, 0) square behind its red "no" sign. A render of
+    /// the panel has none (osva-render fails on one, and PopoverContentTests/thePanelDrawsNoPlaceholder).
+    public static func placeholderPixels(_ image: CGImage) -> Int {
+        let width = image.width, height = image.height
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let bytes = context.makeImage()!.dataProvider!.data! as Data, row = context.bytesPerRow
+        var count = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = y * row + x * 4
+                if bytes[i] >= 252 && abs(Int(bytes[i + 1]) - 204) <= 3 && bytes[i + 2] <= 3 && bytes[i + 3] == 255 { count += 1 }
+            }
+        }
+        return count
+    }
+}
+
+/// What `PreviewData.offMain` made: written once by the worker, read only after it signals.
+private final class MadeOffMain<T>: @unchecked Sendable { var value: T? }

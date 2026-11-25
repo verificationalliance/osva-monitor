@@ -5,10 +5,13 @@ import OSVAKit
 /// rendered from fixtures.
 public struct PopoverContent: Sendable {
     public struct Section: Identifiable, Sendable {
+        /// The section's group: likely and reported findings share one, keyed `.likely` (Finding.Group.section).
         public var group: Finding.Group
         /// Its rows: the findings, and those fixed since the last full scan, each where it was.
         public var findings: [Finding]
-        /// How many still stand (the heading's number): fixed rows are shown, not counted.
+        /// How many still stand (the heading's number): fixed rows are shown, not counted, and so are rows listed with
+        /// nothing to do on this Mac (outside their published ranges, or of another platform), which the hero's
+        /// "lower-severity findings" does not count either.
         public var count: Int
         public var id: Int { group.rawValue }
     }
@@ -20,6 +23,9 @@ public struct PopoverContent: Sendable {
         case malicious
         case critical          // exploited, or critical severity
         case high              // only high severity needs action
+        /// Nothing the core checked needs action, but an exploited or critical flaw was not checked against published
+        /// ranges: never the green "Nothing needs action".
+        case notChecked
         case clean
 
         public var symbol: String {
@@ -27,9 +33,14 @@ public struct PopoverContent: Sendable {
             case .notScanned, .firstScan: return "shield"
             case .malicious: return "xmark.shield.fill"
             case .critical, .high: return "exclamationmark.shield.fill"
+            case .notChecked: return "exclamationmark.shield"
             case .clean: return "checkmark.shield.fill"
             }
         }
+
+        /// The hollow not-checked shield lies on its own shape, filled (GlyphPlate), so its outline and mark read on grey
+        /// glass; the filled shields carry a white mark and need none.
+        public var plate: PlateShape { self == .notChecked ? .symbol("shield.fill") : .none }
     }
 
     /// What the hero's summary chips count.
@@ -55,6 +66,10 @@ public struct PopoverContent: Sendable {
     public var sentence: String
     /// What to do first, when one thing comes before the rest ("Remove the malicious package first.").
     public var advice: String?
+    /// Under a hero that says nothing (checked) needs action: what it rests on.
+    public var caveat: String? {
+        hero == .clean || hero == .notChecked ? "Not proof of safety: it is what has been reported." : nil
+    }
     /// "Scanned 4 minutes ago · Homebrew, 15 Electron apps, pip, RubyGems, 2 folders".
     public var subline: String
     public struct TallyCount: Identifiable, Hashable, Sendable {
@@ -80,9 +95,9 @@ public struct PopoverContent: Sendable {
         let findings = report?.findings ?? []
         let standing = Set(findings.map(\.id))
         let shown = findings + resolved.filter { !standing.contains($0.id) }
-        sections = Finding.Group.allCases.compactMap { g in
-            let items = FindingOrder.sorted(shown.filter { $0.group == g })          // each app's findings together
-            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) }.count)
+        sections = Finding.Group.sections.compactMap { g in
+            let items = FindingOrder.sorted(shown.filter { $0.group.section == g })  // each app's findings together
+            return items.isEmpty ? nil : Section(group: g, findings: items, count: items.filter { standing.contains($0.id) && !$0.affectsNothingHere }.count)
         }
         actionCount = report?.actionCount ?? 0
         problem = report?.problems.first
@@ -97,10 +112,15 @@ public struct PopoverContent: Sendable {
         tallies = [TallyCount(tally: .malicious, count: malicious), TallyCount(tally: .exploited, count: exploited),
                    TallyCount(tally: .severity(.critical), count: critical), TallyCount(tally: .severity(.high), count: high)].filter { $0.count > 0 }
 
-        let lower = findings.count - urgent.count
+        // a finding listed with nothing to do on this Mac (outside its published ranges, or of another platform) is none
+        let lower = findings.filter { $0.group == .other && !$0.affectsNothingHere }.count
+        let notChecked = findings.filter(\.group.isNotChecked).count
+        // an exploited or critical flaw the core could not check, on any finding
+        let alerting = findings.contains { $0.notCheckedMark != nil }
+        let notAgainstRanges = notChecked == 0 ? nil : Self.unbroken("\(notChecked) not checked against published ranges")
         let scanned = report.map { Self.unbroken("Scanned \(Self.relative($0.finishedAt, now: now))") }
         let looked = report.map { Self.sourcesSummary($0.inventory.reports) } ?? ""
-        let when = [scanned, looked.isEmpty ? nil : looked].compactMap { $0 }.joined(separator: " · ")
+        let when = [scanned, looked.isEmpty ? nil : looked].compactMap { $0 }.joined(separator: Self.dot)
 
         switch (report, actionCount) {
         case (nil, _):
@@ -110,12 +130,12 @@ public struct PopoverContent: Sendable {
             subline = isScanning ? (progress.isEmpty ? "Reading Homebrew, apps and global packages…" : progress)
                                  : "Scan to see what the site knows about this Mac."
         case (_, 0):
-            hero = .clean
+            hero = alerting ? .notChecked : .clean
             heroCount = nil
-            sentence = "Nothing needs action"
+            sentence = alerting ? "Nothing checked needs action" : "Nothing needs action"
             let others = lower == 0 ? nil : Self.unbroken(lower == 1 ? "1 lower-severity finding" : "\(lower) lower-severity findings")
-            let unchecked = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) not checked")
-            subline = [others, unchecked, when].compactMap { $0 }.joined(separator: " · ")
+            let noRecord = coverage.notCheckedCount == 0 ? nil : Self.unbroken("\(coverage.notCheckedCount.formatted()) with no record")
+            subline = [notAgainstRanges, others, noRecord, when].compactMap { $0 }.joined(separator: Self.dot)
         case let (_, n):
             hero = malicious > 0 ? .malicious : (exploited + critical > 0 ? .critical : .high)
             heroCount = n
@@ -125,7 +145,7 @@ public struct PopoverContent: Sendable {
                 advice = Self.removeFirst(urgent.filter(\.malicious))
             default: sentence = n == 1 ? "needs action" : "need action"
             }
-            subline = when
+            subline = [notAgainstRanges, when.isEmpty ? nil : when].compactMap { $0 }.joined(separator: Self.dot)
         }
         if isScanning && report != nil, !progress.isEmpty { subline = progress }
     }
@@ -166,6 +186,10 @@ public struct PopoverContent: Sendable {
         }.map(unbroken).joined(separator: ", ")
     }
 
+    /// Between the subline's parts: the dot goes with the next part (a no-break space after it), so a wrapped line
+    /// breaks before a dot, never after one, and no line ends with "·".
+    static let dot = " ·\u{00A0}"
+
     /// The phrase with no-break spaces: a wrapped subline breaks between its parts, never inside "4 minutes ago".
     static func unbroken(_ phrase: String) -> String { phrase.replacingOccurrences(of: " ", with: "\u{00A0}") }
 
@@ -181,6 +205,7 @@ public struct PopoverContent: Sendable {
         switch hero {
         case .notScanned, .firstScan: return .notScanned
         case .clean: return .clean
+        case .notChecked: return .notChecked
         case .malicious: return .malicious(actionCount)
         case .critical, .high: return .action(actionCount)
         }
