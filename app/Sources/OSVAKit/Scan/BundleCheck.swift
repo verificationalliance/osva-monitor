@@ -109,9 +109,9 @@ public struct BundleCheck: Sendable {
 
     // MARK: Findings
 
-    /// The advisories `installed` is affected by, weighed as Homebrew projects' are (critical, high, or exploited),
-    /// each decided by the verified core on the issuer's ranges when the record has them, else on its first fixed
-    /// versions (AdvisoryCheck), and the one upgrade that clears them.
+    /// The advisories `installed` is affected by, likely affected by, or reported for, weighed as Homebrew projects'
+    /// are (critical, high, or exploited) and decided by the verified core: affected only inside the ranges the record
+    /// publishes (AdvisoryCheck). The upgrade is the core's.
     static func decide(_ installed: String, _ recent: [ProjectResponse.Advisory]) -> AdvisoryCheck? {
         AdvisoryCheck.decide(installed, recent)
     }
@@ -128,21 +128,21 @@ public struct BundleCheck: Sendable {
         }
     }
 
+    /// Call it off the main thread: the core picks each upgrade (AdvisoryCheck).
     public func findings(products: [String: ProductResponse], projects: [String: ProjectResponse]) -> [Finding] {
         var out: [Finding] = []
-        func likely(_ d: AdvisoryCheck) -> String? { d.note }
 
         // An app's own version, against its product record.
         for m in apps {
             guard let version = m.version, let record = products[m.record.product], let d = Self.decide(version, record.recent) else { continue }
-            let advice = BundleAdvice.advice(for: m.app.origin, component: nil, malicious: false)
+            let advice = d.advice(BundleAdvice.advice(for: m.app.origin, component: nil, malicious: false))
             out.append(Finding(
-                id: "prod|\(m.app.path)|\(m.record.product)|\(version)", group: d.exploited ? .exploited : .criticalHigh,
+                id: "prod|\(m.app.path)|\(m.record.product)|\(version)", group: d.group,
                 subject: .product(key: m.record.product, name: record.name), title: m.app.name, installedVersion: version,
-                fixedVersion: d.target, severity: d.severity, advisoryIDs: d.advisories.map(\.id), flawCount: d.advisories.count,
-                exploited: d.exploited, malicious: false, note: [likely(d), advice.note].compactMap { $0 }.joined(separator: " "),
+                upgrade: d.target, severity: d.severity, advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount,
+                exploited: d.exploited, malicious: false, note: FindingBuilder.sentences(d.note, advice.note),
                 bigIssue: nil, origins: [m.app.origin], pageURL: record.sourceURL ?? SiteURL.home, upgradeCommand: advice.command,
-                verification: .none, grade: nil))
+                verification: .none, grade: nil, notChecked: d.notChecked))
         }
 
         // A library an app bundles: attributed to the app, since updating the app is what updates it. One finding per
@@ -163,13 +163,13 @@ public struct BundleCheck: Sendable {
                 (subject, recent, page) = (.product(key: c.found.record.product, name: r.name), r.recent, r.sourceURL ?? SiteURL.home)
             }
             guard Self.comparable(c.found, version, recent), let d = Self.decide(version, recent) else { continue }
-            let advice = BundleAdvice.advice(for: c.app.origin, component: c.found.label, malicious: false)
+            let advice = d.advice(BundleAdvice.advice(for: c.app.origin, component: c.found.label, malicious: false))
             out.append(Finding(
-                id: "comp|\(key)", group: d.exploited ? .exploited : .criticalHigh, subject: subject, title: c.app.name,
-                component: c.found.label, installedVersion: version, fixedVersion: d.target, severity: d.severity,
-                advisoryIDs: d.advisories.map(\.id), flawCount: d.advisories.count, exploited: d.exploited, malicious: false,
-                note: [likely(d), advice.note].compactMap { $0 }.joined(separator: " "), bigIssue: nil, origins: [c.app.origin],
-                pageURL: page, upgradeCommand: advice.command, verification: .none, grade: nil))
+                id: "comp|\(key)", group: d.group, subject: subject, title: c.app.name,
+                component: c.found.label, installedVersion: version, upgrade: d.target, severity: d.severity,
+                advisoryIDs: d.advisories.map(\.id), flawCount: d.flawCount, exploited: d.exploited, malicious: false,
+                note: FindingBuilder.sentences(d.note, advice.note), bigIssue: nil, origins: [c.app.origin],
+                pageURL: page, upgradeCommand: advice.command, verification: .none, grade: nil, notChecked: d.notChecked))
         }
 
         // An extension its store reported: malicious, removed with the editor's own command or in the browser.

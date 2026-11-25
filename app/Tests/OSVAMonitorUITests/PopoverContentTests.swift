@@ -113,6 +113,13 @@ import SwiftUI
         #expect(SystemNotifier.text(for: [listed]).title == "On the “patch these first” list: lodash")
     }
 
+    /// osva-render first reads the Java fixture on the main thread, and JavaCheck asks the core for upgrades, which must
+    /// not run there: the fixture is built off it.
+    @MainActor @Test func theJavaFixtureIsBuiltOffTheMainThread() {
+        #expect(Thread.isMainThread)
+        #expect(PreviewData.javaFindings.contains { $0.id == PreviewData.JavaID.temurin })
+    }
+
     @Test func aFixedFindingKeepsItsRowButIsNotCounted() {
         let nginx = PreviewData.findings.first { $0.id == PreviewData.FixID.nginx }!
         let rest = PreviewData.findings.filter { $0.id != nginx.id }

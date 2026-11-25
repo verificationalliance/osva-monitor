@@ -481,7 +481,8 @@ extension BatchCheckTests {
         let made = FindingBuilder(index: Fixture.index).findings(
             approved: PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "electron", version: "28.1.0", origin: app)]).approved,
             verdicts: [:], brew: [], projects: [:], bigIssues: [issue])
-        #expect(made.map(\.fixedVersion) == ["28.3.2"] && made.first?.note == "Likely affected: the issuer names 28.3.2 as fixed.")
+        #expect(made.map(\.fixedVersion) == ["28.3.2"] && made.map(\.group) == [.likely])
+        #expect(made.first?.note == "Likely affected: the site publishes no affected ranges, and the issuer names 28.3.2 as fixed.")
     }
 
     @Test func notifiedAgainOnlyWhenMoreSerious() throws {
@@ -507,7 +508,7 @@ extension BatchCheckTests {
     }
 }
 
-/// The re-review of #18.
+/// The re-review of #18, and Task 6's "patch these first" Electron item.
 extension BatchCheckTests {
     @Test func aTargetIsShownOnlyWhenItFixesAFlawTheFindingIsShownFor() throws {
         // a Windows-only affected flaw, a macOS likely flaw first fixed in 3.0.0, and the server's target 2.0.0: the core
@@ -543,5 +544,27 @@ extension BatchCheckTests {
         // only the flaws past the list on this Mac: they are what it says
         let unlisted = try Self.result("npm", "n", "3.0", distinct: 3, flaws: [Self.flaw("WIN", ranges: outside, platform: "windows")])
         #expect(Self.findings([unlisted]).first?.note == "Reported by the site, not checked: 2 flaws are not listed.")
+    }
+
+    @Test func thePatchTheseFirstElectronItemIsLikelyAndItsVersionChecked() throws {
+        let app = Origin.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack")
+        func made(_ fixedIn: [String]) throws -> Finding {
+            let issue = try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data((#"{"name":"Electron","slug":"electron","severity":"CRITICAL","exploited":true,"#
+                + #""date":"2026-11-01","ids":["CVE-EL"],"fixed_in":[\#(fixedIn.map { "\"\($0)\"" }.joined(separator: ","))],"title":"Electron's renderer escapes"}"#).utf8))
+            let approved = PrivacyFilter(index: Fixture.index).approve([InstalledPackage(ecosystem: .npm, name: "electron", version: "28.1.0", origin: app)]).approved
+            return try #require(FindingBuilder(index: Fixture.index).findings(approved: approved, verdicts: [:], brew: [], projects: [:], bigIssues: [issue]).first)
+        }
+        // decided by its first fixed versions alone: likely, never in the exploited group; marked, and it notifies
+        let f = try made(["28.3.2"])
+        #expect(f.group == .likely && f.fixedVersion == "28.3.2" && f.upgradeCommand == "brew upgrade --cask slack")
+        #expect(f.notChecked == Alert(id: "CVE-EL", exploited: true, critical: true) && f.deservesNotification)
+        // a version the core picks that does not read as a version is never shown, and no command runs for it
+        let odd = try made(["28.3.2;reboot"])
+        #expect(odd.fixedVersion == nil && odd.upgradeCommand == nil && odd.commandInputs == nil)
+        #expect(odd.note == "Likely affected: the site publishes no affected ranges. The server named a fixed version the app does not accept as a version; see the site.")
+        // more work than the core may be asked for: no version, and no command, Homebrew's included
+        let many = try made((0..<500).map { "29.\($0)" })
+        #expect(many.fixedVersion == nil && many.upgradeCommand == nil && many.commandInputs == nil)
+        #expect(many.note == "Likely affected: the site publishes no affected ranges. No checked fixed version yet; see the site.")
     }
 }

@@ -328,6 +328,26 @@ enum JDK {
         #expect(decoded.fixedBuilds.isEmpty && live.recent.allSatisfy { $0.fixedBuilds.isEmpty })
     }
 
+    /// A vendor's build is named as the fix only when the core finds it outside the published ranges of an advisory the
+    /// row is shown for: Amazon's changelog listing the CVE at a build Oracle's range still holds is not enough.
+    @Test func aVendorBuildInsideThePublishedRangesIsNotNamed() throws {
+        var json = try #require(try JSONSerialization.jsonObject(with: Fixture.data("api/project-openjdk-post-fix-2026-11-19.json")) as? [String: Any])
+        var recent = try #require(json["recent"] as? [[String: Any]])
+        let i = try #require(recent.firstIndex { $0["id"] as? String == "CVE-2026-114938" })
+        recent[i]["fixed_builds"] = [["dist": "Amazon Corretto", "build": "27.0.1.1.4"]]
+        var ranges = try #require(recent[i]["ranges"] as? [[String: Any]])
+        let line = try #require(ranges.firstIndex { $0["introduced"] as? String == "27" })
+        ranges[line]["last_affected"] = "27.0.1.1.9"
+        recent[i]["ranges"] = ranges
+        json["recent"] = recent
+        let record = try JSONDecoder().decode(ProjectResponse.self, from: JSONSerialization.data(withJSONObject: json))
+        var r = JDK.runtime("27.0.1", .corretto, path: "/Library/Java/JavaVirtualMachines/Corretto-27.0.1.1.3.jdk")
+        r.implementorVersion = "Corretto-27.0.1.1.3"
+        #expect(JavaCheck.vendorFixes(r, record.recent).fix == "27.0.1.1.4")      // the vendor's record names it
+        let f = try #require(JavaCheck.match([r], index: Make.index).findings(products: [:], projects: ["openjdk": record]).first)
+        #expect(f.advisoryIDs.contains("CVE-2026-114938") && f.fixedVersion == nil && f.note?.contains("changelog") == false)
+    }
+
     /// GraalVM is listed as not checked, with why, never against OpenJDK's advisories; so is a runtime whose record
     /// could not be read.
     @Test func graalVMIsNotCheckedAndSaysWhy() {

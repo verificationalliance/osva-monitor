@@ -55,7 +55,8 @@ extension PreviewData {
         JavaID.homebrew: Provenance(path: "/opt/homebrew/Cellar/openjdk@8/1.8.0-511", why: "You installed it on 14 Aug 2026"),
     ]
 
-    public static let javaFindings: [Finding] = {
+    /// Built off the main thread, where osva-render first reads it: JavaCheck asks the core for upgrades (`offMain`).
+    public static let javaFindings: [Finding] = offMain {
         let check = JavaCheck.match(javaRuntimes, index: javaIndex)
         let item = HomebrewItem(kind: .formula, name: "openjdk@8", version: "1.8.0-511", urls: ["https://openjdk.org/"])
         let brew = FindingBuilder(index: javaIndex).findings(approved: [:], verdicts: [:], brew: [.init(item: item, project: javaIndex.project(slug: "openjdk")!)],
@@ -64,7 +65,7 @@ extension PreviewData {
                                       + findings.filter { [FixID.nginx, FixID.openssh].contains($0.id) })
         for i in out.indices { if let p = javaProvenance[out[i].id] { out[i].provenance = [p] } }
         return out
-    }()
+    }
 
     public static let javaCoverage = Coverage(
         notChecked: [.init(source: JavaCheck.noRecord, items: ["GraalVM 21.0.12 (graalvm-21.jdk)"]),

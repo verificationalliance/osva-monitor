@@ -156,11 +156,11 @@ import Testing
         let f = try #require(findings([brew("python@3.14", "3.14.10", "cpython")], ["cpython": py]).first)
         #expect(f.advisoryIDs == ["CVE-2026-119170"] && f.fixedVersion == "3.14.11" && f.upgradeCommand == "brew upgrade python@3.14")
         #expect(f.note == "The issuer lists 3.14.10 as affected and 3.14.11 as fixed.")
-        // the same record read by first fixed versions alone: the false alarm the owner saw (now without the command,
-        // since 3.14.11 is not a python@3.11 release)
+        // the same record read by first fixed versions alone: the false alarm the owner saw, now only likely and never
+        // counted (and without the command, since 3.14.11 is not a python@3.11 release)
         let old = findings([brew("python@3.11", "3.11.18", "cpython")], ["cpython": withoutRanges(py)])
-        #expect(old.first?.advisoryIDs == ["CVE-2026-119170"])
-        #expect(old.first?.note == "The issuer lists 3.11.18 as affected; its fix, 3.14.11, is not a python@3.11 release.")
+        #expect(old.first?.advisoryIDs == ["CVE-2026-119170"] && old.first?.group == .likely && old.first?.upgradeCommand == nil)
+        #expect(old.first?.note == "Likely affected: the site publishes no affected ranges; the issuer's fix, 3.14.11, is not a python@3.11 release.")
     }
 
     @Test func aVersionedFormulaIsNeverToldToLeaveItsLine() throws {
@@ -224,7 +224,10 @@ import Testing
             """#.utf8))
         let d = try #require(AdvisoryCheck.decide("1.0", mixed.recent))
         #expect(d.hits.map(\.advisory.id) == ["A", "B"] && d.hits.map(\.basis) == [.ranges, .firstFixed])     // C is low: not weighed
-        #expect(d.target == "1.4" && d.note == "Likely affected: the issuer names 1.4 as fixed.")
+        // affected by A's ranges; B, without ranges, is likely, said and never counted; the core's upgrade leaves both
+        #expect(d.check == .affected && d.target?.version == "1.4" && d.flawCount == 1 && d.group == .criticalHigh)
+        #expect(d.note == "The issuer lists 1.0 as affected and 1.4 as fixed. 1 more advisory without published ranges likely affects it too: B, critical.")
+        #expect(d.notChecked == Finding.NotChecked(id: "B", exploited: false, critical: true))
         #expect(AdvisoryCheck.decide("1.0", [mixed.recent[0]])?.note == "The issuer lists 1.0 as affected and 1.2 as fixed.")
         let open = try JSONDecoder().decode(ProjectResponse.self, from: Data(#"{"slug":"x","recent":[{"id":"A","sev":"HIGH","ranges":[{"introduced":"0.5"}]}]}"#.utf8))
         #expect(AdvisoryCheck.decide("1.0", open.recent)?.note == "The issuer lists 1.0 as affected. No fixed release yet.")
@@ -252,11 +255,143 @@ import Testing
         let app = InstalledApp(name: "zoom.us", path: "/nonexistent/zoom.us.app", bundleID: "us.zoom.xos", shortVersion: "6.5.1", bundleVersion: nil, caskToken: nil)
         let check = BundleCheck.match(Inventory(apps: [app]), index: Make.index)
         let f = try #require(check.findings(products: ["zoom": zoom], projects: [:]).first)
-        #expect(f.advisoryIDs == ["B"] && f.fixedVersion == "6.5.9" && f.exploited)
+        #expect(f.advisoryIDs == ["B"] && f.fixedVersion == "6.5.9" && f.exploited && f.group == .exploited)
         #expect(f.note == "The issuer lists 6.5.1 as affected and 6.5.9 as fixed. Update zoom.us from its own menu or its website.")
-        // by first fixed versions alone, A (6.6.0 up to 6.6.12) would flag 6.5.1 too
+        // by first fixed versions alone, A (6.6.0 up to 6.6.12) would flag 6.5.1 too: likely, never counted
         var hintOnly = zoom
         hintOnly.recent = zoom.recent.map { var a = $0; a.ranges = nil; return a }
-        #expect(Set(check.findings(products: ["zoom": hintOnly], projects: [:]).first?.advisoryIDs ?? []) == ["A", "B"])
+        let likely = try #require(check.findings(products: ["zoom": hintOnly], projects: [:]).first)
+        #expect(Set(likely.advisoryIDs) == ["A", "B"] && likely.group == .likely && !likely.group.needsAction)
+    }
+}
+
+/// Task 6: a project's or product's advisory is affected only inside its published ranges; without them it is likely
+/// affected, never counted; the upgrade is the core's; and a "patch these first" item never promotes or versions a
+/// finding the core did not check.
+extension RangesTests {
+    /// A project record with these advisories, as the server writes them.
+    func record(_ slug: String, _ advisories: [String]) throws -> ProjectResponse {
+        try JSONDecoder().decode(ProjectResponse.self, from: Data(#"{"slug":"\#(slug)","name":"\#(slug)","recent":[\#(advisories.joined(separator: ","))]}"#.utf8))
+    }
+
+    func item(_ slug: String, ids: [String], fixedIn: [String], exploited: Bool = true, severity: String = "HIGH") throws -> StateResponse.BigIssue {
+        let json = #"{"name":"\#(slug)","slug":"\#(slug)","severity":"\#(severity)","exploited":\#(exploited),"date":"2026-11-20","#
+            + #""ids":[\#(ids.map { "\"\($0)\"" }.joined(separator: ","))],"fixed_in":[\#(fixedIn.map { "\"\($0)\"" }.joined(separator: ","))],"title":"Item"}"#
+        return try JSONDecoder().decode(StateResponse.BigIssue.self, from: Data(json.utf8))
+    }
+
+    func report(_ findings: [Finding]) -> ScanReport {
+        ScanReport(startedAt: Date(), finishedAt: Date(), inventory: Inventory(), findings: findings, sent: SentRecord(), indexGeneratedAt: nil, problems: [])
+    }
+
+    @Test func anAdvisoryWithoutRangesIsLikelyNotAffected() throws {
+        let nginx = try record("nginx", [#"{"id":"CVE-N","sev":"HIGH","fixed_hint":["1.30.7","1.31.9"],"ranges":null}"#])
+        let f = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": nginx]).first)
+        #expect(f.group == .likely && f.fixedVersion == "1.31.9" && f.upgradeCommand == "brew upgrade nginx")
+        #expect(f.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.31.9 as fixed.")
+        #expect(report([f]).actionCount == 0)
+        // exploited in the wild: still likely, never counted, but marked, and it notifies
+        let kev = try record("nginx", [#"{"id":"CVE-N","sev":"HIGH","kev":true,"fixed_hint":["1.30.7","1.31.9"],"ranges":null}"#])
+        let k = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": kev]).first)
+        #expect(k.group == .likely && k.exploited && k.notChecked == Finding.NotChecked(id: "CVE-N", exploited: true, critical: false))
+        #expect(k.deservesNotification && report([k]).actionCount == 0)
+        // MacPorts and Nix the same
+        let port = ManagedPackage(manager: .macports, name: "nginx", version: "1.31.5", origin: .macports(port: "nginx"))
+        let m = try #require(FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [], projects: ["nginx": kev], bigIssues: [],
+                                                                   managed: [.init(package: port, project: index.project(slug: "nginx")!)]).first)
+        #expect(m.group == .likely && m.fixedVersion == "1.31.9" && m.notChecked?.exploited == true)
+        #expect(m.note?.hasPrefix("Likely affected: the site publishes no affected ranges, and the issuer names 1.31.9 as fixed.") == true)
+    }
+
+    @Test func anUnreadableAdvisoryIsReportedNeverAffected() throws {
+        // its ranges do not read: decided by its first fixed versions alone, and then only reported
+        let p = try record("nginx", [#"{"id":"CVE-U","sev":"CRITICAL","fixed_hint":["1.31.9"],"ranges":[{"introduced":"1.0","limit":"2.0"}]}"#])
+        let f = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": p]).first)
+        #expect(f.group == .reported && f.fixedVersion == nil && f.upgradeCommand == nil && f.commandInputs == nil)
+        #expect(f.note == "Reported by the site, not checked: the app could not read its affected ranges for CVE-U.")
+        #expect(f.notChecked == Finding.NotChecked(id: "CVE-U", exploited: false, critical: true) && report([f]).actionCount == 0)
+        // beside an affected one, it is said and marked, never counted
+        let both = try record("nginx", [#"{"id":"CVE-A","sev":"HIGH","ranges":[{"fixed":"1.31.9"}]}"#,
+                                        #"{"id":"CVE-U","sev":"CRITICAL","fixed_hint":["1.31.9"],"ranges":[{"introduced":"1.0","limit":"2.0"}]}"#])
+        let g = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": both]).first)
+        #expect(g.group == .criticalHigh && g.flawCount == 1 && g.severity == .high && g.fixedVersion == "1.31.9")
+        #expect(g.note == "The issuer lists 1.31.5 as affected and 1.31.9 as fixed. 1 more advisory is reported, not checked: CVE-U, critical.")
+        #expect(g.notChecked == Finding.NotChecked(id: "CVE-U", exploited: false, critical: true))
+    }
+
+    @Test func theUpgradeLeavesRangedAndUnrangedAdvisoriesAlike() throws {
+        let pg = try record("postgres", [#"{"id":"R","sev":"HIGH","fixed_hint":["16.15"],"ranges":[{"introduced":"16","fixed":"16.15"}]}"#,
+                                         #"{"id":"F","sev":"HIGH","fixed_hint":["16.20"],"ranges":null}"#])
+        let f = try #require(findings([brew("postgresql@16", "16.14", "postgres")], ["postgres": pg]).first)
+        #expect(f.fixedVersion == "16.20" && f.group == .criticalHigh)
+        let d = try #require(AdvisoryCheck.decide("16.14", pg.recent))
+        #expect(d.target?.version == "16.20" && d.target?.fixCount == 2)
+    }
+
+    @Test func anUpgradeTheCoreWillNotWeighIsNeitherShownNorRun() throws {
+        // more work than the core may be asked for: no version and no command, Homebrew's included
+        let fixes = (0..<500).map { "\"2.\($0)\"" }.joined(separator: ",")
+        let many = try record("nginx", [#"{"id":"CVE-M","sev":"HIGH","fixed_hint":[\#(fixes)],"ranges":null}"#])
+        let f = try #require(findings([brew("nginx", "1.0", "nginx")], ["nginx": many]).first)
+        #expect(f.group == .likely && f.fixedVersion == nil && f.upgradeCommand == nil && f.commandInputs == nil)
+        #expect(f.note == "Likely affected: the site publishes no affected ranges. No checked fixed version yet; see the site.")
+        // a fixed version the core picks that does not read as a version: the same
+        let odd = try record("nginx", [#"{"id":"CVE-O","sev":"HIGH","fixed_hint":["1.31.9;reboot"],"ranges":[{"fixed":"1.31.9;reboot"}]}"#])
+        let g = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": odd]).first)
+        #expect(g.group == .criticalHigh && g.fixedVersion == nil && g.upgradeCommand == nil)
+        #expect(g.note == "The issuer lists 1.31.5 as affected. The server named a fixed version the app does not accept as a version; see the site.")
+    }
+
+    @Test func aPatchTheseFirstItemNeverPromotesAnUncheckedFinding() throws {
+        // a likely finding, and an exploited item on it whose advisory has no ranges: still likely, labelled, marked
+        let nginx = try record("nginx", [#"{"id":"CVE-N","sev":"HIGH","fixed_hint":["1.30.7","1.31.9"],"ranges":null}"#])
+        let unranged = try item("nginx", ids: ["CVE-N"], fixedIn: ["1.31.10"])
+        let f = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": nginx], big: [unranged]).first)
+        #expect(f.group == .likely && f.bigIssue != nil && f.fixedVersion == "1.31.9" && !f.exploited)
+        #expect(f.notChecked == Finding.NotChecked(id: "CVE-N", exploited: true, critical: false) && f.deservesNotification)
+        // an item whose ranges hold the version makes it exploited
+        let both = try record("nginx", [#"{"id":"CVE-N","sev":"HIGH","fixed_hint":["1.30.7","1.31.9"],"ranges":null}"#,
+                                        #"{"id":"CVE-K","sev":"MODERATE","fixed_hint":["1.31.9"],"ranges":[{"introduced":"1.31.0","fixed":"1.31.9"}]}"#])
+        let ranged = try item("nginx", ids: ["CVE-K"], fixedIn: ["1.31.9"])
+        let g = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": both], big: [ranged]).first)
+        #expect(g.group == .exploited && g.exploited && g.bigIssue != nil)
+        // MacPorts the same, both ways
+        let port = ManagedPackage(manager: .macports, name: "nginx", version: "1.31.5", origin: .macports(port: "nginx"))
+        func managed(_ p: ProjectResponse, _ i: StateResponse.BigIssue) -> Finding? {
+            FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [], projects: ["nginx": p], bigIssues: [i],
+                                                  managed: [.init(package: port, project: index.project(slug: "nginx")!)]).first
+        }
+        #expect(managed(nginx, unranged)?.group == .likely && managed(nginx, unranged)?.exploited == false && managed(nginx, unranged)?.bigIssue != nil)
+        #expect(managed(both, ranged)?.group == .exploited)
+        // without a finding of its own, an item decided by its first fixed versions makes a likely one, never an exploited one
+        let made = try #require(findings([brew("nginx", "1.31.5", "nginx")], [:], big: [unranged]).first)
+        #expect(made.group == .likely && made.fixedVersion == "1.31.10" && made.notChecked?.exploited == true && made.deservesNotification)
+        #expect(made.note == "Likely affected: the site publishes no affected ranges, and the issuer names 1.31.10 as fixed.")
+        let madeManaged = try #require(FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [], projects: [:], bigIssues: [unranged],
+                                                                             managed: [.init(package: port, project: index.project(slug: "nginx")!)]).first)
+        #expect(madeManaged.group == .likely && madeManaged.fixedVersion == "1.31.10")
+    }
+
+    @Test func aPatchTheseFirstItemNeverFillsAnotherFindingsFix() throws {
+        // affected, and no release leaves its range; an item the record does not know names 2.0 by its first fixed versions
+        let open = try record("nginx", [#"{"id":"CVE-O","sev":"HIGH","ranges":[{"introduced":"1.0"}]}"#])
+        let other = try item("nginx", ids: ["CVE-ELSE"], fixedIn: ["2.0"], exploited: false)
+        let f = try #require(findings([brew("nginx", "1.5", "nginx")], ["nginx": open], big: [other]).first)
+        #expect(f.group == .criticalHigh && f.bigIssue != nil && f.fixedVersion == nil && f.upgradeCommand == "brew upgrade nginx")
+        let port = ManagedPackage(manager: .macports, name: "nginx", version: "1.5", origin: .macports(port: "nginx"))
+        let m = try #require(FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [], projects: ["nginx": open], bigIssues: [other],
+                                                                   managed: [.init(package: port, project: index.project(slug: "nginx")!)]).first)
+        #expect(m.bigIssue != nil && m.fixedVersion == nil)
+        // MacPorts picks its own version, which only Homebrew's is taken without a checked one: no command
+        #expect(m.upgradeCommand == nil && m.note == "The issuer lists 1.5 as affected. No fixed release yet.")
+        // a reported finding names no version, though the core has one for the item on it (1.31.9)
+        let unread = try record("nginx", [#"{"id":"CVE-U","sev":"HIGH","fixed_hint":["1.31.9"],"ranges":[{"introduced":"1.0","limit":"2.0"}]}"#])
+        let onIt = try item("nginx", ids: ["CVE-U"], fixedIn: ["1.31.9"])
+        let r = try #require(findings([brew("nginx", "1.31.5", "nginx")], ["nginx": unread], big: [onIt]).first)
+        #expect(r.group == .reported && r.bigIssue != nil && r.fixedVersion == nil && r.upgradeCommand == nil)
+        let reportedPort = ManagedPackage(manager: .macports, name: "nginx", version: "1.31.5", origin: .macports(port: "nginx"))
+        let rm = try #require(FindingBuilder(index: index).findings(approved: [:], verdicts: [:], brew: [], projects: ["nginx": unread], bigIssues: [onIt],
+                                                                    managed: [.init(package: reportedPort, project: index.project(slug: "nginx")!)]).first)
+        #expect(rm.group == .reported && rm.bigIssue != nil && rm.fixedVersion == nil)
     }
 }
