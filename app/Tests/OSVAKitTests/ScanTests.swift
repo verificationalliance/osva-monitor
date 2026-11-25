@@ -168,13 +168,13 @@ import Testing
 
     @Test func aHostileNameCannotBreakOut() {
         let cmd = UpgradeCommand.command(for: .folder(root: "/p", lockfile: "/p/My Project/package-lock.json", direct: true), name: "x$(curl evil)",
-                                         ecosystem: .npm, fixed: "1.0.0", malicious: false)
+                                         ecosystem: .npm, fixed: Fixture.fix("1.0.0"), malicious: false)
         #expect(cmd == "cd '/p/My Project' && npm install 'x$(curl evil)@^1.0.0'")
     }
 
     @Test func foldersInHomeAreWrittenFromTilde() {
         func c(_ lockfile: String) -> String? {
-            UpgradeCommand.command(for: .folder(root: "/Users/ana/code", lockfile: lockfile, direct: true), name: "lodash", ecosystem: .npm, fixed: "4.18.1",
+            UpgradeCommand.command(for: .folder(root: "/Users/ana/code", lockfile: lockfile, direct: true), name: "lodash", ecosystem: .npm, fixed: Fixture.fix("4.18.1"),
                                    malicious: false, home: "/Users/ana")
         }
         #expect(c("/Users/ana/code/shop/package-lock.json") == "cd ~/code/shop && npm install 'lodash@^4.18.1'")
@@ -184,7 +184,7 @@ import Testing
 
     @Test func perOrigin() {
         func c(_ o: Origin, _ name: String = "pkg", _ eco: Ecosystem? = nil, fixed: String? = "2.0.0", malicious: Bool = false) -> String? {
-            UpgradeCommand.command(for: o, name: name, ecosystem: eco, fixed: fixed, malicious: malicious)
+            UpgradeCommand.command(for: o, name: name, ecosystem: eco, fixed: fixed.map { Fixture.fix($0) }, malicious: malicious)
         }
         #expect(c(.homebrewFormula(name: "openssl@3")) == "brew upgrade openssl@3")
         #expect(c(.homebrewCask(token: "slack")) == "brew upgrade --cask slack")
@@ -210,7 +210,8 @@ import Testing
          true, nil, "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -m pip install --user --upgrade six==2.0.0", false),
     ] as [(PythonEnvironment, Bool, String?, String?, Bool)])
     func pip(_ python: PythonEnvironment, _ user: Bool, _ formula: String?, _ command: String?, _ hasNote: Bool) {
-        let a = UpgradeCommand.advice(for: .pip(python: python, user: user, formula: formula), name: "six", ecosystem: .pypi, target: "2.0.0", malicious: false)
+        let a = UpgradeCommand.advice(for: .pip(python: python, user: user, formula: formula), name: "six", ecosystem: .pypi, target: Fixture.fix("2.0.0"),
+                                      malicious: false)
         #expect(a.command == command)
         #expect((a.note != nil) == hasNote, "\(a.note ?? "no note")")
         #expect(!(a.command ?? "").contains("--break-system-packages"))
@@ -218,7 +219,7 @@ import Testing
 
     @Test func homebrewsOwnPipComesWithItsFormula() {
         let a = UpgradeCommand.advice(for: .pip(python: Fixture.homebrewPython, user: false, formula: nil), name: "setuptools", ecosystem: .pypi,
-                                      target: "78.1.1", malicious: false)
+                                      target: Fixture.fix("78.1.1"), malicious: false)
         #expect(a.command == "brew upgrade python@3.15")
         #expect(PythonEnvironment(executable: "/usr/bin/python3", version: "3.9.6", kind: .apple, externallyManaged: false, userSite: nil, formula: nil)
             .label == "Apple's Python 3.9.6 (part of Xcode)")
@@ -226,7 +227,7 @@ import Testing
 
     @Test func lockfilesDirectAndIndirect() {
         func a(_ lockfile: String, _ name: String, _ eco: Ecosystem, direct: Bool?, target: String? = "2.0.0", malicious: Bool = false) -> UpgradeCommand.Advice {
-            UpgradeCommand.advice(for: .folder(root: "/p", lockfile: "/p/" + lockfile, direct: direct), name: name, ecosystem: eco, target: target,
+            UpgradeCommand.advice(for: .folder(root: "/p", lockfile: "/p/" + lockfile, direct: direct), name: name, ecosystem: eco, target: target.map { Fixture.fix($0) },
                                   malicious: malicious, home: "/Users/ana")
         }
         #expect(a("package-lock.json", "lodash", .npm, direct: true).command == "cd /p && npm install 'lodash@^2.0.0'")

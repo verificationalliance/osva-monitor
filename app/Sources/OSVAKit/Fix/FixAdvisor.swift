@@ -14,9 +14,9 @@ public struct FixOffer: Equatable, Sendable {
         self.plan = plan; self.homebrew = homebrew; self.companions = companions; self.proposal = proposal
     }
 
-    /// The version a partial fix goes to, for making its plan again.
-    public var partialTarget: String? {
-        if case .partial? = proposal { return plan.target }
+    /// The version a partial fix goes to, as the core checked it, for making its plan again.
+    public var partialTarget: CheckedUpgrade? {
+        if case let .partial(p)? = proposal { return p.target }
         return nil
     }
 }
@@ -86,23 +86,25 @@ public struct FixAdvisor: Sendable {
 
     /// What can be done when a dependent or a runtime boundary blocks the full fix (rules 4.7 and 4.3):
     ///   1. a partial fix: the site picks the best version within what blocks it (each blocking specifier, the boundary
-    ///      as "<2.9"), and it is offered if it passes the same check as any target here;
+    ///      as "<2.9"), and it is offered if the core confirms it leaves a flaw the finding is shown for (`partial`) and
+    ///      it passes the same check as any target here;
     ///   2. otherwise, when dependents' specifiers block it, an upgrade together: the fix with what holds it back, which
     ///      pip's resolver works out at the review. Not when what holds it back is a project of the person's.
     func proposal(_ finding: Finding, plan: FixPlan, pip: FixPlan.Pip, site: PythonSite, conflicts: [DependencyConflict]) async -> FixOffer? {
         guard let server else { return nil }                   // without the site, neither can be checked
         if let constraints = PythonConstraints.blocking(pip.name, from: pip.installed, to: pip.target, in: site),
            case let .success(answer?) = await server.plan(finding, within: constraints.map(\.specifier)),
-           let target = answer.target, !answer.fixes.isEmpty,
-           PythonSpecifier.readable(PythonSpecifier.plain(target)), PythonSpecifier.compare(PythonSpecifier.plain(target), PythonSpecifier.plain(pip.installed)) > 0,
-           case let .success(partial) = FixPlan.make(for: finding, tools: tools, home: home, target: target), let p = partial.pip {
-            let blocked = answer.remaining.filter { $0.reason == .blockedByConstraint }
+           let partial = Self.partial(answer, finding: finding),
+           PythonSpecifier.readable(PythonSpecifier.plain(partial.target.version)),
+           PythonSpecifier.compare(PythonSpecifier.plain(partial.target.version), PythonSpecifier.plain(pip.installed)) > 0,
+           case let .success(made) = FixPlan.make(for: finding, tools: tools, home: home, target: partial.target), let p = made.pip {
+            let blocked = (answer.plan?.remaining ?? []).filter { $0.reason == .blockedByConstraint }
             let blocker = blocked.compactMap { r in constraints.first { $0.specifier == r.constraint } }.first ?? constraints[0]
-            let proposal = FixProposal.partial(.init(fixes: answer.fixes.count, of: max(finding.flawCount, answer.fixes.count + answer.remaining.count),
-                                                     blocker: blocker, constraints: constraints.map(\.specifier)))
+            let proposal = FixProposal.partial(.init(target: partial.target, fixes: partial.fixes, of: partial.of, blocker: blocker,
+                                                     constraints: constraints.map(\.specifier)))
             switch PipGuard.verdict(site, pip: p) {
-            case .clear: return FixOffer(plan: partial, proposal: proposal)
-            case let .companions(names, _): return FixOffer(plan: partial, companions: names, proposal: proposal)
+            case .clear: return FixOffer(plan: made, proposal: proposal)
+            case let .companions(names, _): return FixOffer(plan: made, companions: names, proposal: proposal)
             default: break
             }
         }
@@ -131,6 +133,17 @@ public struct FixAdvisor: Sendable {
         let together = FixProposal.Together(package: pip.name, fix: pip.target, blockers: live.map(\.name), others: others.sorted(), held: held,
                                             exploited: finding.exploited, python: python)
         return FixOffer(plan: plan, proposal: .together(together))
+    }
+
+    /// The partial fix in the site's answer within constraints, as the core decides the answer (BatchCheck, as a scan's):
+    /// its target only when the core confirms it leaves at least one flaw the finding is shown for (affected, or likely,
+    /// on this Mac), how many of those it leaves, and of how many. Nil otherwise. Call it off the main thread.
+    static func partial(_ answer: BatchResponse.Result, finding: Finding) -> (target: CheckedUpgrade, fixes: Int, of: Int)? {
+        let check = BatchCheck.read(answer, installed: finding.installedVersion)
+        let state = FindingBuilder.state(answer, check, onThisMac: true)
+        guard state.check == .affected || state.check == .likely, !state.onlyElsewhere, let target = check.upgrade(for: state.here) else { return nil }
+        let fixes = check.fixed.filter(state.here.contains).count
+        return (target, fixes, max(finding.flawCount, state.flawCount))
     }
 
     /// What else the fix changes, from the tool's dry run.
@@ -176,8 +189,9 @@ public struct FixAdvisor: Sendable {
 
     /// An upgrade together's review: pip's resolver is asked for a consistent set (it asks PyPI about the names), and
     /// the set is accepted only if the end state holds for everything installed (specifiers, extras, markers, runtime
-    /// boundaries), it moves no project of the person's nor anything such a project uses past a major version, and
-    /// nothing it moves brings a flaw the version before did not have. Then every version in it is pinned.
+    /// boundaries), it moves no project of the person's nor anything such a project uses past a major version, nothing
+    /// it moves brings a flaw the version before did not have, and the core confirms pip's version of the package
+    /// leaves every flaw the fix leaves (PipSetGuard.review). Then every version in it is pinned.
     func together(_ plan: FixPlan, _ t: FixProposal.Together) async -> FixPreview {
         guard let pip = plan.pip else { return .none("Nothing to ask pip about.") }
         let source = "pip install --dry-run --report (asks PyPI about \(t.asked.joined(separator: ", ")), installs nothing)"
@@ -208,9 +222,10 @@ public struct FixAdvisor: Sendable {
         }
         if let why = PipSetGuard.refusal(site, installs: installs) { return refused(why, lines) }
         guard let server, let python = t.python else { return refused("the app could not ask the site about what the set moves", lines) }
-        switch await PipSetGuard.newFlaw(site, installs: installs, python: python, server: server) {
+        // nothing it moves brings a new flaw, and pip's version of the package fixes what the fix fixes, as the core judges it
+        switch await PipSetGuard.review(site, installs: installs, together: [t], python: python, server: server) {
         case let .failure(e): return refused("the app could not check what the set moves (\(e.message))", lines)
-        case let .success(flaw?): return refused(flaw, lines)
+        case let .success(why?): return refused(why, lines)
         case .success(nil): break
         }
         var preview = FixPreview(source: source, lines: lines, installs: Dictionary(installs.map { ($0.key, $0.version) }, uniquingKeysWith: { a, _ in a }))

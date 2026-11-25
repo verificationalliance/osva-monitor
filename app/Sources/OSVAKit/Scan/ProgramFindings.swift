@@ -406,16 +406,36 @@ extension FindingBuilder {
     }
 
     /// The program's or tool's command.
+    ///
+    /// A command shows a version the core checked, or Homebrew's own pick (UpgradeCommand), with one exception: a rebuild
+    /// that names no version (`go install …@latest`, `cargo install --force`, `uv tool upgrade`, `pipx upgrade`) brings
+    /// the program's next release. When every flagged part is something the program was built with, which release that
+    /// is is its author's choice, as `brew upgrade`'s is Homebrew's, and the rebuild may be offered. When the program's
+    /// own module, crate or package is flagged, only if the core checked an upgrade for it (`rebuildWaits`).
+    /// `pipx runpip` is no rebuild: it pins every version it names, the tool's own at its checked version or where it is.
     static func programAdvice(origin: Origin, programs: Int = 1, parts: [Component], malicious: Bool) -> UpgradeCommand.Advice {
+        let advice: UpgradeCommand.Advice, rebuild: Bool, name: String
         switch origin {
         case var .program(p):
+            name = p.name
             if programs > 1, p.formula == nil, p.app != nil { p.name = "them" }      // "Docker ships them."
-            return UpgradeCommand.program(p, rebuildOnly: !parts.contains(where: \.own), malicious: malicious)
+            advice = UpgradeCommand.program(p, rebuildOnly: !parts.contains(where: \.own), malicious: malicious)
+            rebuild = p.place == .goInstall || p.place == .cargoInstall
         case let .pythonTool(t):
-            return UpgradeCommand.pythonTool(t, upgrades: parts.map { ($0.name, $0.upgrade?.version) }, malicious: malicious)
+            name = t.name
+            advice = UpgradeCommand.pythonTool(t, upgrades: parts.map { ($0.name, $0.upgrade?.version) }, malicious: malicious)
+            rebuild = t.manager == .uv || !parts.contains { !$0.own && $0.upgrade != nil }        // pipx upgrade, not runpip
         default:
             return UpgradeCommand.Advice(command: nil)
         }
+        guard !malicious, rebuild, advice.command != nil, rebuildWaits(parts) else { return advice }
+        return UpgradeCommand.Advice(command: nil, note: "No checked fixed version of \(name) yet; see the site.")
+    }
+
+    /// Whether a rebuild waits for the program's own fix: its own module, crate or package is flagged on this Mac
+    /// (affected or likely), and the core checked no upgrade for it.
+    static func rebuildWaits(_ parts: [Component]) -> Bool {
+        parts.contains { $0.own && !$0.flagged.isEmpty && $0.upgrade == nil }
     }
 
     // MARK: MacPorts, Nix and conda packages matched to graded projects
@@ -455,7 +475,7 @@ extension FindingBuilder {
     /// checked: without a checked upgrade, no command, and no note about running one.
     static func managedAdvice(_ p: ManagedPackage, upgrade: CheckedUpgrade?) -> UpgradeCommand.Advice {
         guard let upgrade else { return UpgradeCommand.Advice(command: nil) }
-        return UpgradeCommand.advice(for: p.origin, name: p.name, ecosystem: nil, target: upgrade.version, malicious: false)
+        return UpgradeCommand.advice(for: p.origin, name: p.name, ecosystem: nil, target: upgrade, malicious: false)
     }
 
     static func managedID(_ p: ManagedPackage) -> String {

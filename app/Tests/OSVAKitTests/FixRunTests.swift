@@ -492,7 +492,7 @@ final class UpdateRecorder: @unchecked Sendable {
         #expect(!p.command.contains(">=") && !p.invocation.argv.contains { $0.contains(">=") })
         // the copyable command for a requirements file pins exactly too
         let r = UpgradeCommand.advice(UpgradeCommand.Inputs(origin: .folder(root: "/p", lockfile: "/p/requirements.txt", direct: true), name: "django",
-                                                            ecosystem: .pypi, target: "5.2.17", malicious: false), home: home)
+                                                            ecosystem: .pypi, target: Fixture.fix("5.2.17"), malicious: false), home: home)
         #expect(r.command == "cd /p && python3 -m pip install django==5.2.17")
     }
 

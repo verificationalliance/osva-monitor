@@ -10,7 +10,8 @@ let home = "/Users/ana"
 /// A finding whose command UpgradeCommand made from these inputs, as FindingBuilder makes them.
 func fixable(_ origin: Origin, _ name: String, _ ecosystem: Ecosystem? = .npm, installed: String = "1.0.0", fixed: String? = "2.0.0",
              malicious: Bool = false, subject: Finding.Subject? = nil, component: String? = nil, id: String? = nil) -> Finding {
-    let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: malicious ? nil : fixed, malicious: malicious)
+    let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: ecosystem, target: malicious ? nil : fixed.map { Fixture.fix($0, above: installed) },
+                                       malicious: malicious)
     let command = UpgradeCommand.advice(inputs, home: home).command
     return Finding(id: id ?? "pkg|\(name)|\(installed)", group: malicious ? .malicious : .criticalHigh,
                    subject: subject ?? .package(ecosystem: ecosystem ?? .npm, name: name), title: name, component: component,
@@ -81,6 +82,66 @@ func ok(_ r: Result<FixPlan, FixPlan.Refusal>, sourceLocation: SourceLocation = 
         #expect(f.upgradeCommand == nil && f.commandInputs == nil && f.fixedVersion == nil)
         #expect(f.note?.contains("does not accept as a version") == true)
         #expect(plan(f) == .failure(.noCommand))
+    }
+}
+
+// MARK: - A command's version is one the core checked
+
+@Suite struct FixTests {
+    static let none = UpgradeCommand.Advice(command: nil, note: "No checked fixed version yet; see the site.")
+
+    func advice(_ origin: Origin, _ name: String = "x", _ ecosystem: Ecosystem? = .npm, target: CheckedUpgrade? = nil,
+                malicious: Bool = false) -> UpgradeCommand.Advice {
+        UpgradeCommand.advice(for: origin, name: name, ecosystem: ecosystem, target: target, malicious: malicious, home: home)
+    }
+
+    /// npm's `@latest` and go's: without a version the core checked, an npm global and a project's go.sum give no command,
+    /// and say why. With one, the command names it.
+    @Test func noLatestCommandWithoutACheckedTarget() {
+        let npm = Origin.npmGlobal(npm: "/opt/homebrew/bin/npm"), goSum = Origin.folder(root: "/p", lockfile: "/p/go.sum", direct: false)
+        #expect(advice(npm) == Self.none)
+        #expect(advice(goSum, "golang.org/x/net", .go) == Self.none)
+        #expect(advice(npm, target: Fixture.fix("2.0.0")).command == "npm install -g x@2.0.0")
+        #expect(advice(goSum, "golang.org/x/net", .go, target: Fixture.fix("0.33.0")).command == "cd /p && go get golang.org/x/net@v0.33.0")
+        // a removal names no version; a malicious module comes out of go.mod (it was `go get …@latest`)
+        #expect(advice(npm, malicious: true).command == "npm uninstall -g x")
+        #expect(advice(Origin.folder(root: "/p", lockfile: "/p/go.sum", direct: true), "evil.example/m", .go, malicious: true).command
+                == "cd /p && go get evil.example/m@none")
+        #expect(advice(goSum, "evil.example/m", .go, malicious: true).command == nil)
+    }
+
+    /// Every other command that names no version lets a registry pick it too: none without a checked version. Homebrew's
+    /// own upgrade stays, since Homebrew picks from releases the person already takes from it.
+    @Test func noCommandLetsARegistryPickTheVersion() {
+        let env = CondaEnvironment(prefix: "/Users/ana/miniforge3", name: "base", named: true, tool: .conda, python: "3.11.5")
+        let registry: [(Origin, Ecosystem?)] = [
+            (.cargoInstall, .crates), (.gem(gem: "/usr/bin/gem"), .rubygems), (.gem(gem: "/opt/homebrew/opt/ruby/bin/gem"), .rubygems),
+            (.conda(env: env), .pypi), (.macports(port: "x"), nil), (.nix(profile: NixProfile(path: "/Users/ana/.nix-profile", style: .profile, shared: false), element: "x"), nil),
+        ] + [("package-lock.json", Ecosystem.npm), ("yarn.lock", .npm), ("pnpm-lock.yaml", .npm), ("poetry.lock", .pypi), ("Pipfile.lock", .pypi),
+             ("Cargo.lock", .crates), ("Gemfile.lock", .rubygems), ("composer.lock", .packagist)].flatMap { file, eco in
+            [true, false].map { (Origin.folder(root: "/p", lockfile: "/p/" + file, direct: $0), Optional(eco)) }
+        }
+        for (origin, eco) in registry {
+            let a = advice(origin, "x", eco)
+            #expect(a.command == nil && (a.note == nil || a.note == Self.none.note), "\(origin): \(a)")
+            #expect(advice(origin, "x", eco, target: Fixture.fix("2.0.0")).command != nil || advice(origin, "x", eco, target: Fixture.fix("2.0.0")).note != nil,
+                    "\(origin)")
+        }
+        // Homebrew picks: kept without a checked version
+        #expect(advice(.homebrewFormula(name: "nginx"), "nginx", nil).command == "brew upgrade nginx")
+        #expect(advice(.homebrewCask(token: "slack"), "slack", nil).command == "brew upgrade --cask slack")
+        #expect(advice(.electronApp(name: "Slack", bundlePath: "/Applications/Slack.app", caskToken: "slack"), "electron").command
+                == "brew upgrade --cask slack")
+        #expect(advice(.pip(python: Fixture.homebrewPython, user: false, formula: "jupyterlab"), "six", .pypi).command == "brew upgrade jupyterlab")
+    }
+
+    /// A report saved with a command made without a checked version (0.5.1's `npm install -g x@latest`) is not one the
+    /// Fix button runs: the inputs no longer give that command.
+    @Test func aSavedLatestCommandIsNotRunAgain() {
+        let inputs = Fixture.savedInputs(origin: .npmGlobal(npm: "/opt/homebrew/bin/npm"), name: "lodash", ecosystem: .npm, target: nil, malicious: false)
+        var f = fixable(.npmGlobal(npm: "/opt/homebrew/bin/npm"), "lodash", installed: "4.17.20", fixed: "4.17.21")
+        f.commandInputs = inputs; f.upgradeCommand = "npm install -g lodash@latest"; f.fixedVersion = nil
+        #expect(plan(f) == .failure(.notReproducible))
     }
 }
 
@@ -478,7 +539,8 @@ func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title:
                 (.cargoInstall, evil, "2.0.0", ["install", evil + "@2.0.0"]),
             ]
             for (origin, name, target, expected) in cases where !expected.isEmpty {
-                let inputs = UpgradeCommand.Inputs(origin: origin, name: name, ecosystem: nil, target: target, malicious: false)
+                // any target, as a report saved on disk may have one: what the command does with it is the point here
+                let inputs = Fixture.savedInputs(origin: origin, name: name, ecosystem: nil, target: target, malicious: false)
                 let command = try #require(UpgradeCommand.advice(inputs, home: home).command)
                 let id = "pkg|x|\(evil)|1.0"
                 let run = UUID()
@@ -499,7 +561,7 @@ func scriptPlan(_ command: String, id: String = "pkg|npm|left-pad|1.0.0", title:
             let folder = base.appendingPathComponent("p-" + UUID().uuidString).appendingPathComponent(evil.replacingOccurrences(of: "/", with: "_"))
             if (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil {
                 let inputs = UpgradeCommand.Inputs(origin: .folder(root: folder.path, lockfile: folder.appendingPathComponent("package-lock.json").path, direct: true),
-                                                   name: "lodash", ecosystem: .npm, target: "4.18.1", malicious: false)
+                                                   name: "lodash", ecosystem: .npm, target: Fixture.fix("4.18.1"), malicious: false)
                 let command = try #require(UpgradeCommand.advice(inputs, home: home).command)
                 let run = UUID()
                 let dirs = FixDirectories(support: base.appendingPathComponent(run.uuidString))

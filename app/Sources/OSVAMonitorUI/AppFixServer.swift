@@ -15,14 +15,14 @@ struct AppFixServer: FixServer {
         Scanner(configuration: ScanConfiguration(storage: storage, tools: tools, folders: [], applicationRoots: []), transport: transport, limiter: limiter)
     }
 
-    func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Plan?, FixServerError> {
+    func plan(_ finding: Finding, within constraints: [String]) async -> Result<BatchResponse.Result?, FixServerError> {
         let s = scanner()
         let answer = await s.plan(finding, within: constraints)
         record(await s.takeSentRequests())
         return answer
     }
 
-    func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: Set<String>], FixServerError> {
+    func flaws(_ versions: [PackageVersion], python: PythonEnvironment) async -> Result<[PackageVersion: BatchResponse.Result], FixServerError> {
         let s = scanner()
         let answer = await s.flaws(versions, python: python)
         record(await s.takeSentRequests())

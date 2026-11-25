@@ -4,9 +4,11 @@ import Foundation
 // than the finding's own package (research rules 4.3 and 4.7):
 //   - a partial fix: when a dependent's specifier or a runtime boundary blocks the full fix, the highest version under
 //     every one of them that removes at least one flaw and adds none. The site picks it (`check/batch` with
-//     `constraints`), from versions and operators alone;
+//     `constraints`), from versions and operators alone, and it is proposed only when the verified core confirms it
+//     leaves a flaw the finding is shown for (BatchCheck);
 //   - an upgrade together: when a dependent's specifier blocks every fixing version, pip's own resolver is asked for a
-//     consistent set that moves what holds it back, and the set is run as one exact-pinned transaction.
+//     consistent set that moves what holds it back, and the set is run as one exact-pinned transaction. The version pip
+//     picks for the package must leave, as the core judges it, every flaw the fix leaves (PipSetGuard.keepsTheFix).
 
 /// One constraint on a package's upgrade: a specifier set and who it comes from.
 public struct FixConstraint: Hashable, Sendable {
@@ -113,15 +115,17 @@ public enum FixProposal: Hashable, Sendable {
     case together(Together)
 
     public struct Partial: Hashable, Sendable {
-        /// The flaws the partial target removes, and the finding's flaws.
+        /// The version it goes to: the site's pick within the constraints, as the core checked it (FixAdvisor).
+        public var target: CheckedUpgrade
+        /// The flaws the partial target removes, as the core decides them, and the finding's flaws.
         public var fixes: Int
         public var of: Int
         /// The constraint that blocks the rest, and who needs it.
         public var blocker: FixConstraint
         /// Every constraint it was asked within, as sent.
         public var constraints: [String]
-        public init(fixes: Int, of: Int, blocker: FixConstraint, constraints: [String]) {
-            self.fixes = fixes; self.of = of; self.blocker = blocker; self.constraints = constraints
+        public init(target: CheckedUpgrade, fixes: Int, of: Int, blocker: FixConstraint, constraints: [String]) {
+            self.target = target; self.fixes = fixes; self.of = of; self.blocker = blocker; self.constraints = constraints
         }
     }
 

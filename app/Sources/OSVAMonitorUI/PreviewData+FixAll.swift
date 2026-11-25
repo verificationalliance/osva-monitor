@@ -68,9 +68,10 @@ extension PreviewData {
 
     /// torch to 2.8.0 with torchaudio, within whisperx's limit: 6 of its 14 flaws.
     public static var torchPartial: FixOffer {
-        guard case let .success(plan) = FixPlan.make(for: torch311, tools: fixtureTools, target: "2.8.0") else { preconditionFailure("no partial plan") }
+        let target = fix("2.8.0", above: torch311.installedVersion)
+        guard case let .success(plan) = FixPlan.make(for: torch311, tools: fixtureTools, target: target) else { preconditionFailure("no partial plan") }
         return FixOffer(plan: plan, companions: ["torchaudio"],
-                        proposal: .partial(.init(fixes: 6, of: 14, blocker: FixConstraint(specifier: "<2.9", from: "whisperx", boundary: true),
+                        proposal: .partial(.init(target: target, fixes: 6, of: 14, blocker: FixConstraint(specifier: "<2.9", from: "whisperx", boundary: true),
                                                  constraints: ["<2.9"])))
     }
 
