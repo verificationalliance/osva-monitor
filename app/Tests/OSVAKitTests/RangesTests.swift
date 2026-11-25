@@ -30,9 +30,12 @@ import Testing
 
     // MARK: The core, through its wrapper
 
+    /// PostgreSQL's ranges for one advisory: one per release branch (CoreTests shares them).
+    static let pg = [AffectedRange(fixed: "14.24"), AffectedRange(introduced: "15", fixed: "15.19"), AffectedRange(introduced: "16", fixed: "16.15"),
+                     AffectedRange(introduced: "17", fixed: "17.11"), AffectedRange(introduced: "18", fixed: "18.6")]
+
     @Test func theCoreDecidesByRanges() {
-        let pg = [AffectedRange(fixed: "14.24"), AffectedRange(introduced: "15", fixed: "15.19"), AffectedRange(introduced: "16", fixed: "16.15"),
-                  AffectedRange(introduced: "17", fixed: "17.11"), AffectedRange(introduced: "18", fixed: "18.6")]
+        let pg = Self.pg
         #expect(core.affectedness(installed: "16.16", ranges: pg) == .notAffected)
         #expect(core.affectedness(installed: "16.14", ranges: pg) == .affected)
         #expect(core.upgrade(from: "16.14", ranges: pg) == "16.15")                // its own branch's fix, not 18.6
@@ -50,22 +53,29 @@ import Testing
         #expect(core.affectedness(installed: "dev", ranges: [AffectedRange(introduced: "", fixed: "1.0")]) == .notAffected)
     }
 
+    /// A sample of range sets and versions, for checking the core's theorems with the wrapper's own comparisons as the
+    /// reference (CoreTests shares them).
+    static let sampleSets: [[AffectedRange]] = [
+        [AffectedRange(fixed: "13.22"), AffectedRange(introduced: "14", fixed: "14.19"), AffectedRange(introduced: "16", fixed: "16.10")],
+        [AffectedRange(introduced: "3.14.10", fixed: "3.14.11")],
+        [AffectedRange(introduced: "2.11.0", lastAffected: "2.13.0"), AffectedRange(introduced: "3.0rc1")],
+        [AffectedRange(fixed: "1.0"), AffectedRange(introduced: "0.9", fixed: "1.2"), AffectedRange(introduced: "1.1", lastAffected: "1.1.5")],
+    ]
+    static let sampleVersions = ["0.1", "0.9", "1.0", "1.1", "1.1.5", "1.2", "2.11.0", "2.12.1", "2.13.0", "2.14", "3.0rc1", "3.0", "3.14.10",
+                                 "3.14.11", "13.9", "13.22", "14.18", "14.19", "16.9", "16.10", "16.16", "v16.9", "10.6p2", ""]
+
+    /// Whether `r` holds `v`, by the wrapper's comparisons alone: the reference the core is checked against.
+    static func holds(_ r: AffectedRange, _ v: String) -> Bool {
+        let core = Core.shared
+        return (r.introduced.map { core.compareVersions($0, v) <= 0 } ?? true) && (r.fixed.map { core.compareVersions(v, $0) < 0 } ?? true)
+            && (r.lastAffected.map { core.compareVersions(v, $0) <= 0 } ?? true)
+    }
+
     @Test func aWarningMeansTheVersionIsInARangeAndTheUpgradeIsInNone() {
         // Ranges.lean's theorems, on a sample, with the wrapper's own comparisons as the reference
-        let sets: [[AffectedRange]] = [
-            [AffectedRange(fixed: "13.22"), AffectedRange(introduced: "14", fixed: "14.19"), AffectedRange(introduced: "16", fixed: "16.10")],
-            [AffectedRange(introduced: "3.14.10", fixed: "3.14.11")],
-            [AffectedRange(introduced: "2.11.0", lastAffected: "2.13.0"), AffectedRange(introduced: "3.0rc1")],
-            [AffectedRange(fixed: "1.0"), AffectedRange(introduced: "0.9", fixed: "1.2"), AffectedRange(introduced: "1.1", lastAffected: "1.1.5")],
-        ]
-        let versions = ["0.1", "0.9", "1.0", "1.1", "1.1.5", "1.2", "2.11.0", "2.12.1", "2.13.0", "2.14", "3.0rc1", "3.0", "3.14.10", "3.14.11",
-                        "13.9", "13.22", "14.18", "14.19", "16.9", "16.10", "16.16", "v16.9", "10.6p2", ""]
-        for rs in sets {
-            for v in versions {
-                let inOne = rs.contains { r in
-                    (r.introduced.map { core.compareVersions($0, v) <= 0 } ?? true) && (r.fixed.map { core.compareVersions(v, $0) < 0 } ?? true)
-                        && (r.lastAffected.map { core.compareVersions(v, $0) <= 0 } ?? true)
-                }
+        for rs in Self.sampleSets {
+            for v in Self.sampleVersions {
+                let inOne = rs.contains { Self.holds($0, v) }
                 #expect((core.affectedness(installed: v, ranges: rs) == .affected) == inOne, "\(v) in \(rs)")
                 if let u = core.upgrade(from: v, ranges: rs) {
                     #expect(core.compareVersions(v, u) < 0 && core.affectedness(installed: u, ranges: rs) == .notAffected, "\(v) → \(u)")
@@ -83,16 +93,43 @@ import Testing
          {"id":"B","sev":"HIGH","fixed_hint":["3"],"ranges":null,"ranges_note":"wildcard '6.1.*' (lessThanOrEqual)"},
          {"id":"C","fixed_hint":[]},
          {"id":"D","ranges":[]},
-         {"id":"E","ranges":"nonsense"}]}
+         {"id":"E","ranges":"nonsense"},
+         {"id":"F","fixed_hint":["2.0"],"ranges":[{"introduced":"1.0","limit":"2.0"}]},
+         {"id":"G","ranges":[{"fixed":null}]},
+         {"id":"H","ranges":[{"fixed":2}]},
+         {"id":"I","ranges":[{}]},
+         {"id":"J","ranges":[{"introduced":"1.0","fixed":"1.2"},"1.3"]}]}
         """#
         let p = try JSONDecoder().decode(ProjectResponse.self, from: Data(json.utf8))
         #expect(p.recent[0].ranges == [AffectedRange(introduced: "1.0", fixed: "1.2"), AffectedRange(lastAffected: "0.9")])
         #expect(p.recent[1].ranges == nil && p.recent[1].rangesNote == "wildcard '6.1.*' (lessThanOrEqual)")
         #expect(p.recent[2].ranges == nil)                          // an older server: no ranges at all
         #expect(p.recent[3].ranges == [])                           // the issuer says no version is affected
-        #expect(p.recent[4].ranges == nil)                          // malformed reads as none, so fixed_hint decides
+        #expect(p.recent[0...3].allSatisfy { !$0.rangesUnreadable })
+        #expect(p.recent[4].ranges == nil && p.recent[4].rangesUnreadable)            // malformed: not checked, never wider
+        // strict: an unknown key, a null or a number never reads as a wider range ("limit" dropped, null as absent)
+        for i in 5...7 { #expect(p.recent[i].ranges == nil && p.recent[i].rangesUnreadable, "\(p.recent[i].id)") }
+        #expect(p.recent[8].ranges == [AffectedRange()] && !p.recent[8].rangesUnreadable)   // {}: every version, as published
+        #expect(p.recent[9].ranges == nil && p.recent[9].rangesUnreadable)            // one unreadable range spoils the list
+        #expect(p.recent[5].coreAdvisory == nil && p.recent[8].coreAdvisory == CoreAdvisory(ranges: [AffectedRange()], fixed: []))
+        #expect(p.recent[0].coreAdvisory == CoreAdvisory(ranges: p.recent[0].ranges, fixed: ["1.2"]))
+        #expect(p.recent[1].coreAdvisory == CoreAdvisory(ranges: nil, fixed: ["3"]))
         let again = try JSONDecoder().decode(ProjectResponse.self, from: JSONEncoder().encode(p))     // the cache's copy
         #expect(again.recent == p.recent)
+        #expect(again.recent.map(\.rangesUnreadable) == [false, false, false, false, true, true, true, true, false, true])
+    }
+
+    @Test func aRangeReadsOnlyItsThreeBoundsAsStrings() throws {
+        func range(_ json: String) -> AffectedRange? { try? JSONDecoder().decode(AffectedRange.self, from: Data(json.utf8)) }
+        #expect(range(#"{"introduced":"1.0","fixed":"2.0","last_affected":"1.9"}"#) == AffectedRange(introduced: "1.0", fixed: "2.0", lastAffected: "1.9"))
+        #expect(range(#"{"introduced":""}"#) == AffectedRange(introduced: ""))          // a present bound, even empty
+        #expect(range("{}") == AffectedRange())
+        for bad in [#"{"introduced":"1.0","limit":"2.0"}"#, #"{"fixed":null}"#, #"{"fixed":2}"#, #"{"lastAffected":"1.0"}"#,
+                    #"{"introduced":["1.0"]}"#, #""1.0""#, "null", "[]"] {
+            #expect(range(bad) == nil, "\(bad)")
+        }
+        let r = AffectedRange(introduced: "1.0", lastAffected: "1.9")
+        #expect(range(String(decoding: try JSONEncoder().encode(r), as: UTF8.self)) == r)
     }
 
     // MARK: Homebrew: CPython
