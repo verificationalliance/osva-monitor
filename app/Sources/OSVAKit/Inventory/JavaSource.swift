@@ -17,7 +17,7 @@ public struct JavaSource: Sendable {
     public static let maxRelease = 64 << 10
     public static let maxPlist = 1 << 20
     public static let maxRuntimes = 512
-    /// The "Not checked" heading of runtimes with no version the advisories could be compared with.
+    /// The "No record" heading of runtimes with no version the advisories could be compared with.
     public static let unreadable = "Java runtimes with no readable version"
 
     public struct Result: Sendable {

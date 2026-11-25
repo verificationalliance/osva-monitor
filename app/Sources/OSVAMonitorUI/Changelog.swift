@@ -93,6 +93,16 @@ public struct Changelog: Sendable, Equatable {
         return Changelog(entries: entries)
     }
 
+    /// The line with each “quoted name” kept on one line: its spaces become no-break spaces, so a wrapped line never
+    /// breaks “Not checked against published ranges” after "Not". The file keeps plain spaces, as the release notes do.
+    public static func quotesWhole(_ line: String) -> String {
+        var quoted = false
+        return String(line.map { c -> Character in
+            if c == "“" { quoted = true } else if c == "”" { quoted = false }
+            return quoted && c == " " ? "\u{00A0}" : c
+        })
+    }
+
     /// The `- ` lines of a Markdown list, each with its indented continuation lines joined on: an entry's lines, and
     /// what a release notes file holds.
     public static func bullets(_ text: String) throws -> [String] {

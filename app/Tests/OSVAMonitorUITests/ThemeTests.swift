@@ -95,7 +95,24 @@ import OSVAKit
             }
         }
         #expect(Tokens.NotChecked.glyph == Tokens.moderate.glyph && Tokens.NotChecked.mark == Tokens.moderate.text)
-        #expect(Tokens.NotChecked.tint.hex(.light) == Tokens.moderate.fill.hex(.light) && Tokens.NotChecked.tint.alpha[.light] == 0.15)
+        #expect(Tokens.NotChecked.tint == Tokens.moderate.fill.opacity(light: 0.15, dark: 0.25))
+    }
+
+    /// The hero's summary chips lie on the panel's bare glass, on the site link's surface under their tint: their
+    /// label, the system's primary text, clears 4.5:1 on any glass the panel models, from white (black) to the owner's
+    /// mid-grey (138). On the tint alone it measured 4.18:1 (grey, light) and 3.45:1 (grey, dark).
+    @Test func theSummaryChipsReadOnAnyGlass() {
+        for tally in [PopoverContent.Tally.malicious, .exploited, .severity(.critical), .severity(.high)] {
+            for v in Tone.Variant.allCases {
+                let dark = v == .dark || v == .darkIC
+                for level in dark ? SurfaceTests.darkGlass : SurfaceTests.lightGlass {
+                    let g = UInt32(level), glass = g << 16 | g << 8 | g
+                    let chip = Self.over(Self.over(glass, Surface.control, v), tally.tint, v)
+                    let label = Self.contrast(Self.over(chip, Tone(0x000000, dark: 0xFFFFFF, alpha: 0.85), v), chip)
+                    #expect(label >= 4.5, "\(tally.word(1)) chip label \(v) on \(level): \(label)")
+                }
+            }
+        }
     }
 
     @Test func theExploitedChipIsTheOnlySolidRedAndItsLabelReads() {
@@ -189,9 +206,32 @@ import OSVAKit
         let row = Self.sources("OSVAMonitorUI").first { $0.0 == "FindingRow.swift" }!.1
         #expect(row.contains("if finding.checkedExploited { StatusChip(.exploited) }") && !row.contains("finding.exploited"))
         #expect(row.contains("finding.notCheckedChip.map(StatusChip.init)"))
-        // the chip lies on the site link's surface, which theNotCheckedChipReadsOnAnyGlass models under its tint
+        // the tinted chips lie on the site link's surface, which the contrast tests model under their tints: one capsule
         let components = Self.sources("OSVAMonitorUI").first { $0.0 == "Components.swift" }!.1
-        #expect(components.contains("Capsule().fill(Surface.control.color)\n                Capsule().fill(Tokens.NotChecked.tint.color)"))
+        #expect(components.contains("    @ViewBuilder static func capsule(_ tint: Tone) -> some View {\n        Capsule().fill(Surface.control.color)\n        Capsule().fill(tint.color)\n    }"))
+        #expect(components.contains(".background { Self.capsule(tally.tint) }") && components.contains(".background { Self.capsule(Tokens.NotChecked.tint) }"))
+        #expect(components.components(separatedBy: ".opacity(light: 0.15, dark: 0.25)").count - 1 == 1)          // Tally.tint's alone
+    }
+
+    /// Every SF Symbol the panel, Settings and the menu bar name exists on this macOS: a missing one draws nothing at
+    /// all, without an error, in the app and in osva-render alike. The names come from every line that names a symbol
+    /// (`systemName:`, `systemImage:`, `symbol:`, the footer's `quiet(`) and from the `symbol` properties' switches.
+    @Test func everySymbolTheAppNamesExists() {
+        var names: Set<String> = []
+        for (_, text) in Self.sources("OSVAMonitorUI") + Self.sources("OSVAMonitor") {
+            var inProperty = 0
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
+                if line.contains("var symbol") { inProperty = 12 }
+                if inProperty > 0 || ["systemName:", "systemImage:", "symbol:", "quiet("].contains(where: { line.contains($0) }) {
+                    for m in line.matches(of: /"([a-z0-9]+(?:\.[a-z0-9]+)*)"/) { names.insert(String(m.1)) }
+                }
+                inProperty -= 1
+            }
+        }
+        #expect(names.count >= 45 && names.isSuperset(of: ["gearshape", "power", "exclamationmark.shield", "xmark.shield.fill"]), "\(names.sorted())")
+        for name in names.sorted() {
+            #expect(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil, "no SF Symbol named \(name)")
+        }
     }
 
     /// Run in Terminal is one button (TerminalButton) wherever it appears: a row whose cask needs a password, a run that

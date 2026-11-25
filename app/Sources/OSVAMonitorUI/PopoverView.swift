@@ -52,6 +52,7 @@ public struct PopoverView: View {
     @State private var listHeight: CGFloat = 0
     @State private var cardHeight: CGFloat = 0
     @State private var gearFrame: CGRect = .zero
+    @Environment(\.drawsOffScreen) private var drawsOffScreen
 
     /// Lists opened from the start (`coverageOpen`: bucket titles, and "notInIndex" or "updatedElsewhere" for the quiet
     /// sections), for renders.
@@ -74,7 +75,14 @@ public struct PopoverView: View {
             }
             HeroView(content: content, fixAll: content.hasReport ? fixAll : .none, openFixAll: actions.fixAll.open).padding(.leading, 4)
             if content.isScanning {
-                ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
+                if drawsOffScreen {
+                    // the system bar's frame, with a still accent bar in it: off-screen, the bar itself is a placeholder
+                    Capsule().fill(.tertiary).frame(height: 5)
+                        .overlay(alignment: .leading) { Capsule().fill(Color.accentColor).frame(width: 110, height: 5) }
+                        .frame(height: 20).padding(.horizontal, 4)
+                } else {
+                    ProgressView().progressViewStyle(.linear).padding(.horizontal, 4)
+                }
             }
             if fixAll.batch != nil {
                 FixAllCard(panel: fixAll, actions: actions.fixAll)
@@ -126,12 +134,12 @@ public struct PopoverView: View {
         }
     }
 
-    /// What could not be vouched for: what nothing classifies, what something else keeps up to date, then what was
-    /// never reported. None of it is "clean".
+    /// What could not be vouched for: what nothing classifies ("No record"), what something else keeps up to date, then
+    /// what was never reported. None of it is "clean".
     @ViewBuilder private var coverage: some View {
         let c = content.coverage
         if c.notCheckedCount > 0 {
-            GroupContainer(.notChecked, count: c.notCheckedCount) {
+            GroupContainer(.noRecord, count: c.notCheckedCount) {
                 ForEach(Array(c.notChecked.enumerated()), id: \.element.id) { i, bucket in
                     if i > 0 { Divider().padding(.leading, 12) }
                     ListDisclosureRow(CoverageLists.list(bucket, in: .notChecked), open: coverageOpen.contains(bucket.id), openList: actions.openList)
@@ -176,11 +184,13 @@ public struct PopoverView: View {
         }
     }
 
+    /// A quiet symbol button, `.plain` like the rows' own: `.borderless` is an AppKit button on macOS, which anything
+    /// that draws the panel as SwiftUI (osva-render's ImageRenderer) leaves as a placeholder.
     private func quiet(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 15)).frame(width: 30, height: 28).contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .symbolRenderingMode(.hierarchical)
         .foregroundStyle(.secondary)
         .help(help)

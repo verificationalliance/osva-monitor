@@ -35,6 +35,7 @@ func capture<V: View>(_ view: V, appearance: NSAppearance, method: Method, scale
     let root = sized
         .background(Color(nsColor: backdrop ?? .windowBackgroundColor))
         .environment(\.colorScheme, dark ? .dark : .light)
+        .environment(\.drawsOffScreen, true)
     var result: Result<NSBitmapImageRep, Error> = .failure(CocoaError(.fileWriteUnknown))
     appearance.performAsCurrentDrawingAppearance {
         result = Result { try draw(root, appearance: appearance, method: method, scale: scale, width: width) }
@@ -84,8 +85,15 @@ private func draw<V: View>(_ root: V, appearance: NSAppearance, method: Method, 
     }
 }
 
+/// Views drawn with SwiftUI's placeholder for a control it cannot draw off-screen: osva-render fails when there are any.
+var placeholders: [String] = []
+
 @MainActor
 func write(_ rep: NSBitmapImageRep, _ name: String, into dir: URL) throws {
+    if let image = rep.cgImage, case let n = PreviewData.placeholderPixels(image), n > 0 {
+        FileHandle.standardError.write(Data("osva-render: \(name) draws a placeholder (\(n) px of its yellow): an AppKit control ImageRenderer cannot draw\n".utf8))
+        placeholders.append(name)
+    }
     let file = dir.appendingPathComponent(name + ".png")
     guard let png = rep.representation(using: .png, properties: [:]) else {   // a real report's whole popover can be too tall
         FileHandle.standardError.write(Data("osva-render: \(name) is too large to encode (\(rep.pixelsWide)×\(rep.pixelsHigh) px), skipped\n".utf8))
@@ -127,7 +135,7 @@ struct ComponentSheet: View {
     }
 }
 
-/// Rows with the pointer over the middle one (findings, Not checked), and the site link: hover may only raise contrast.
+/// Rows with the pointer over the middle one (findings, No record), and the site link: hover may only raise contrast.
 struct HoverSheet: View {
     var body: some View {
         let ids = [PreviewData.FixID.nginx, PreviewData.FixID.openssh, PreviewData.FixID.cpython]
@@ -139,7 +147,7 @@ struct HoverSheet: View {
                     FindingRow(finding: f, expanded: false, actions: .none) {}.environment(\.showsHover, i == 1)
                 }
             }
-            GroupContainer(.notChecked, count: 8) {
+            GroupContainer(.noRecord, count: 8) {
                 ListDisclosureRow(NameList(title: "Homebrew packages with no graded project", explanation: "", count: 2,
                                            sections: [.init(title: nil, items: ["abseil 20260817.0", "ack 3.10.0"])], style: .code))
                 Divider().padding(.leading, 12)
@@ -362,4 +370,10 @@ func main() throws {
     }
 }
 
-try MainActor.assumeIsolated { try main() }
+try MainActor.assumeIsolated {
+    try main()
+    if !placeholders.isEmpty {
+        FileHandle.standardError.write(Data("osva-render: \(placeholders.count) views draw a placeholder\n".utf8))
+        exit(1)
+    }
+}

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import OSVAKit
 
@@ -387,6 +388,27 @@ public enum PreviewData {
     /// The installed app's updater, checked this morning.
     public static let updates = UpdateState(isAvailable: true, canCheck: true, checksAutomatically: true, version: "0.1.1",
                                             lastChecked: now.addingTimeInterval(-3 * 3600))
+}
+
+extension PreviewData {
+    /// How many pixels of a render are SwiftUI's placeholder for a view it cannot draw off-screen (an AppKit control:
+    /// a `.borderless` button, a linear progress bar): the yellow (255, 204, 0) square behind its red "no" sign. A render of
+    /// the panel has none (osva-render fails on one, and PopoverContentTests/thePanelDrawsNoPlaceholder).
+    public static func placeholderPixels(_ image: CGImage) -> Int {
+        let width = image.width, height = image.height
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let bytes = context.makeImage()!.dataProvider!.data! as Data, row = context.bytesPerRow
+        var count = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = y * row + x * 4
+                if bytes[i] >= 252 && abs(Int(bytes[i + 1]) - 204) <= 3 && bytes[i + 2] <= 3 && bytes[i + 3] == 255 { count += 1 }
+            }
+        }
+        return count
+    }
 }
 
 /// What `PreviewData.offMain` made: written once by the worker, read only after it signals.

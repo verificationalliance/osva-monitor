@@ -35,10 +35,10 @@ public struct SeverityLabel: View {
 
 /// The small status labels. `.exploited` is the site's `.chip-kev` and the only solid red in the panel; `.malicious`
 /// is the clay word with its octagon; `.count` is a hero summary chip, a faint capsule of the status colour with a
-/// mark and a `.primary` label. `.notChecked` is the amber mark of an exploited or critical flaw the core could not
-/// check against published ranges: the exploited chip's size, in the summary chips' form (a faint amber capsule, an
-/// amber shield, a `.primary` label), laid on `Surface.control` so it reads on grey glass, and the only way the panel
-/// draws that mark.
+/// mark and a `.primary` label, on `Surface.control` so it reads on grey glass. `.notChecked` is the amber mark of an
+/// exploited or critical flaw the core could not check against published ranges: the exploited chip's size, in the
+/// summary chips' form (a faint amber capsule, an amber shield, a `.primary` label), and the only way the panel draws
+/// that mark.
 public struct StatusChip: View {
     public enum Kind: Sendable, Hashable {
         case exploited
@@ -76,7 +76,7 @@ public struct StatusChip: View {
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 5.5).padding(.vertical, 2.5)
-            .background(Capsule().fill(tint(tally).opacity(light: 0.15, dark: 0.25).color))
+            .background { Self.capsule(tally.tint) }
             .accessibilityElement(children: .combine)
         case let .notChecked(alert, namesCritical):
             Label {
@@ -87,13 +87,16 @@ public struct StatusChip: View {
             .labelStyle(TightLabel())
             .font(Typeface.statusChip)
             .padding(.horizontal, 6).padding(.vertical, 2.5)
-            .background {
-                // the site link's surface under the tint, so the shield and the words read on grey glass too
-                Capsule().fill(Surface.control.color)
-                Capsule().fill(Tokens.NotChecked.tint.color)
-            }
+            .background { Self.capsule(Tokens.NotChecked.tint) }
             .help(alert.chipHelp)
         }
+    }
+
+    /// A tinted chip's capsule (the summary chips, the not-checked chip): the site link's surface under a faint tint of
+    /// the status colour, so the `.primary` words read on grey glass too.
+    @ViewBuilder static func capsule(_ tint: Tone) -> some View {
+        Capsule().fill(Surface.control.color)
+        Capsule().fill(tint.color)
     }
 
     @ViewBuilder private func mark(_ tally: PopoverContent.Tally) -> some View {
@@ -104,12 +107,18 @@ public struct StatusChip: View {
         }
     }
 
-    private func tint(_ tally: PopoverContent.Tally) -> Tone {
-        switch tally {
-        case .malicious: return Tokens.Malicious.glyph
-        case .exploited: return Tokens.Exploited.glyph
-        case let .severity(s): return Tokens.severity(s).fill
+}
+
+extension PopoverContent.Tally {
+    /// A summary chip's capsule tint: a faint wash of its status colour (15% light, 25% dark).
+    public var tint: Tone {
+        let colour: Tone
+        switch self {
+        case .malicious: colour = Tokens.Malicious.glyph
+        case .exploited: colour = Tokens.Exploited.glyph
+        case let .severity(s): colour = Tokens.severity(s).fill
         }
+        return colour.opacity(light: 0.15, dark: 0.25)
     }
 }
 
@@ -202,8 +211,13 @@ extension Finding.Group {
 public struct GroupContainer<Content: View>: View {
     public enum Heading: Equatable, Sendable {
         case findings(Finding.Group)
-        /// What the app cannot classify: never counted as clean.
-        case notChecked
+        /// What the app cannot classify ("No record"; `Coverage.notChecked`): never counted as clean.
+        case noRecord
+
+        /// "Critical and high", "Not checked against published ranges", "No record".
+        public var title: String {
+            switch self { case let .findings(g): return g.heading; case .noRecord: return "No record" }
+        }
     }
 
     public var heading: Heading
@@ -222,7 +236,7 @@ public struct GroupContainer<Content: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 glyph.font(.system(size: 12, weight: .semibold))
-                Text(title).font(Typeface.groupTitle).foregroundStyle(.primary)
+                Text(heading.title).font(Typeface.groupTitle).foregroundStyle(.primary)
                 if let n = Self.countText(count) { Text(n).font(Typeface.count(12, weight: .medium)).foregroundStyle(.secondary) }
             }
             .padding(.leading, 4)
@@ -231,10 +245,6 @@ public struct GroupContainer<Content: View>: View {
             VStack(spacing: 0) { content }
                 .panelCard(heading == .findings(.malicious) ? .malicious : .plain)
         }
-    }
-
-    private var title: String {
-        switch heading { case let .findings(g): return g.heading; case .notChecked: return "Not checked" }
     }
 
     /// The number beside the heading: what still needs action. None when every row it shows was fixed or removed and
@@ -253,7 +263,7 @@ public struct GroupContainer<Content: View>: View {
             Image(systemName: "info.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         case .findings(.likely), .findings(.reported):
             Image(systemName: "exclamationmark.shield").symbolRenderingMode(.monochrome).foregroundStyle(Tokens.NotChecked.glyph.color)
-        case .notChecked:
+        case .noRecord:
             Image(systemName: "questionmark.circle").symbolRenderingMode(.monochrome).foregroundStyle(.secondary)
         }
     }
@@ -444,7 +454,7 @@ struct WrapAtSpaces: Layout {
     }
 }
 
-/// The one hover of the panel's rows (findings, Not checked, the not-in-index lists): the row takes a little more of
+/// The one hover of the panel's rows (findings, No record, the not-in-index lists): the row takes a little more of
 /// `Surface.hover`, which raises its text's contrast in either appearance and never lowers it. `hovering` lets the row
 /// brighten its own chevron too.
 struct RowHover: ViewModifier {
@@ -462,6 +472,9 @@ struct RowHover: ViewModifier {
 extension EnvironmentValues {
     /// Draws rows as if the pointer were over them (osva-render's hover sheet: off-screen there is no pointer).
     @Entry public var showsHover = false
+    /// Drawn off-screen as SwiftUI alone (osva-render's ImageRenderer, the render test), which leaves an AppKit control
+    /// as a placeholder: the panel draws a stand-in, in the same frame, for the one it has, the scan's progress bar.
+    @Entry public var drawsOffScreen = false
 }
 
 /// The panel's one container: `Surface.card` with a hairline edge, in corners concentric with the panel's own. The

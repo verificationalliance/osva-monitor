@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import OSVAKit
@@ -32,7 +33,7 @@ import SwiftUI
         let c = PopoverContent(report: PreviewData.notCheckedReport(), isScanning: false, now: now)
         #expect(c.hero == .notChecked && c.hero.symbol == "exclamationmark.shield" && c.heroCount == nil)
         #expect(c.sentence == "Nothing checked needs action" && c.headline == "Nothing checked needs action")
-        #expect(c.subline.hasPrefix(PopoverContent.unbroken("2 not checked against published ranges") + " · 8\u{00A0}not\u{00A0}checked · Scanned"))
+        #expect(c.subline.hasPrefix(PopoverContent.unbroken("2 not checked against published ranges") + " · " + PopoverContent.unbroken("8 with no record") + " · Scanned"))
         #expect(c.menuBarState == .notChecked)
         // a report saved before `notChecked`: the reported finding's own exploited flaw keeps the hero amber
         let saved = PreviewData.notCheckedFindings.map { f in var x = f; x.notChecked = nil; return x }
@@ -48,9 +49,46 @@ import SwiftUI
         let clean = content(other + likely)
         #expect(clean.hero == .clean && clean.sentence == "Nothing needs action" && clean.menuBarState == .clean)
         #expect(clean.subline.hasPrefix([PopoverContent.unbroken("1 not checked against published ranges"), PopoverContent.unbroken("4 lower-severity findings"),
-                                         PopoverContent.unbroken("8 not checked"), "Scanned"].joined(separator: " · ")))
+                                         PopoverContent.unbroken("8 with no record"), "Scanned"].joined(separator: " · ")))
         // anything the core checked that needs action comes first
         #expect(content(PreviewData.findings).hero == .malicious)
+    }
+
+    /// What nothing here checks is "No record", never a second "Not checked" beside "Not checked against published
+    /// ranges"; the hero's subline says it in the same words.
+    @MainActor @Test func whatNothingChecksIsNoRecord() {
+        #expect(GroupContainer<EmptyView>.Heading.noRecord.title == "No record")
+        #expect(GroupContainer<EmptyView>.Heading.findings(.likely).title == "Not checked against published ranges")
+        let clean = PopoverContent(report: PreviewData.report(findings: []), isScanning: false, now: now)
+        #expect(clean.subline.hasPrefix(PopoverContent.unbroken("8 with no record") + " · Scanned") && !clean.subline.contains("not\u{00A0}checked"))
+    }
+
+    /// The panel is drawn by SwiftUI alone, as osva-render draws it: nothing in it is an AppKit control, which an
+    /// off-screen render leaves as SwiftUI's placeholder (a yellow square with a red "no" sign). The footer's gear and
+    /// power were `.borderless` buttons, which are; the scan's progress bar is drawn as a stand-in off-screen.
+    @MainActor @Test func thePanelDrawsNoPlaceholder() throws {
+        _ = NSApplication.shared
+        func panel(_ report: ScanReport?, scanning: Bool = false, expanded: Set<String> = [], fixes: [String: FixRowState] = [:],
+                   resolved: [Finding] = [], fixAll: FixAllPanel = .none) -> AnyView {
+            AnyView(PopoverView(content: PopoverContent(report: report, isScanning: scanning, progress: scanning ? "Checking…" : "", now: now, resolved: resolved),
+                                actions: .none, fixes: fixes, fixAll: fixAll, expanded: expanded, scrolls: false)
+                .environment(\.drawsOffScreen, true))
+        }
+        let offer = try #require(PreviewData.fixScene("offer")), review = try #require(PreviewData.fixAllScene("all-review"))
+        let views: [(String, AnyView)] = [
+            ("popover", panel(PreviewData.report(), expanded: [PreviewData.FixID.axios, PreviewData.FixID.nginx])),
+            ("not checked", panel(PreviewData.notCheckedReport(), expanded: [PreviewData.NotCheckedID.imagemagick, PreviewData.NotCheckedID.redis])),
+            ("scanning", panel(PreviewData.report(), scanning: true)),
+            ("first scan", panel(nil, scanning: true)),
+            ("fix offer", panel(offer.report(), expanded: offer.open, fixes: offer.fixes)),
+            ("fix all review", panel(review.scene.report(), expanded: review.scene.open, fixes: review.scene.fixes, fixAll: review.panel)),
+        ]
+        for (name, view) in views {
+            let renderer = ImageRenderer(content: view.frame(width: PopoverView.width))
+            renderer.scale = 1
+            let image = try #require(renderer.cgImage, "\(name) did not render")
+            #expect(PreviewData.placeholderPixels(image) == 0, "\(name) draws a placeholder")
+        }
     }
 
     /// The red "Exploited" chip and "Exploited flaw" are for a flaw the core checked. The amber chip marks an exploited
@@ -129,7 +167,7 @@ import SwiftUI
         #expect(high.hero.symbol == "exclamationmark.shield.fill")
         let clean = content(all.filter { $0.group == .other })
         #expect(clean.hero == .clean && clean.heroCount == nil && clean.sentence == "Nothing needs action")
-        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings · 8\u{00A0}not\u{00A0}checked · Scanned"))   // never "clean" without saying so
+        #expect(clean.subline.hasPrefix("4\u{00A0}lower-severity\u{00A0}findings · 8\u{00A0}with\u{00A0}no\u{00A0}record · Scanned"))   // never "clean" without saying so
         #expect(clean.menuBarState == .clean && clean.hero.symbol == "checkmark.shield.fill")
         let none = PopoverContent(report: nil, isScanning: false, now: now)
         #expect(none.hero == .notScanned && none.sentence == "Not scanned yet" && none.menuBarState == .notScanned)
