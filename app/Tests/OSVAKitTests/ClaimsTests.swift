@@ -380,6 +380,36 @@ import Testing
         #expect(Self.matches(of: /decode\s*\(\s*type\s*\(\s*of\s*:/) == [])
     }
 
+    /// A generic re-decode would forge any of them (B5): a value encoded, its JSON or property list edited, and decoded
+    /// again, its type never named. So a value is decoded, and a decoder made, only on known lines; nothing builds JSON or
+    /// a property list from a dictionary; the app has no decoder of its own, and makes no value from one but in a type's
+    /// own `init(from:)`; and the keys that carry a version, a command or its inputs are written only where they live.
+    @Test func decodingHappensOnlyOnKnownLines() {
+        let decodes = Self.allowed([
+            ("OSVAKit/API/APIClient.swift", "do { return try JSONDecoder().decode(type, from: data) }"),
+            ("OSVAKit/Index/IndexStore.swift", "var meta = (try? Data(contentsOf: metaURL)).flatMap { try? JSONDecoder().decode(Meta.self, from: $0) }"),
+            ("OSVAKit/Index/IndexStore.swift", "let index = try PublicIndex.decode(data)"),
+            ("OSVAKit/Index/IndexStore.swift", "let index = try PublicIndex.decode(Data(contentsOf: dataURL))"),
+            ("OSVAKit/Scan/Storage.swift", "let decoder = JSONDecoder()"),
+            ("OSVAKit/Scan/Storage.swift", "return try? decoder.decode(type, from: data)"),
+            ("OSVAKit/Scan/DiskCache.swift", "read(namespace, key, maxAge: maxAge).flatMap { try? JSONDecoder().decode(type, from: $0) }"),
+            ("OSVAKit/Fix/FixScript.swift", "let wire = try? JSONDecoder().decode(Wire.self, from: Data(buffer.prefix(n))),"),
+            ("OSVAMonitorUI/PreviewData+Java.swift", "return try! JSONDecoder().decode(ProjectResponse.self, from: Data(json.utf8))"),
+            ("osva-render/main.swift", "let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601"),
+            ("osva-render/main.swift", "let real = try decoder.decode(ScanReport.self, from: Data(contentsOf: URL(fileURLWithPath: reportPath)))"),
+        ])
+        // a container's own decode inside a type's init(from:) (`forKey:`, or a single value's) makes no new value
+        #expect(Self.lines(matching: /\.decode\s*\((?![^)]*forKey\s*:)|(?:^|[^A-Za-z0-9_])(?:JSONDecoder|PropertyListDecoder)(?![A-Za-z0-9_])/,
+                           except: { path, line in decodes(path, line) || line.contains("singleValueContainer().decode(") }) == [])
+        #expect(Self.lines(matching: /(?:JSONSerialization|PropertyListSerialization)\s*\.\s*data\s*\(/) == [])
+        #expect(Self.lines(matching: /(?:struct|class|enum|actor|extension|protocol)\s+[A-Za-z0-9_.]+\s*:[^{]*(?:^|[^A-Za-z0-9_])(?:TopLevelDecoder|Decoder)(?![A-Za-z0-9_])/) == [])
+        #expect(Self.lines(matching: /(?:^|[^A-Za-z0-9_.])(?:[A-Z][A-Za-z0-9_]*)\s*(?:\.init)?\s*\(\s*from\s*:/) == [])
+        let homes: Set = ["OSVAKit/Model/Finding.swift", "OSVAKit/Scan/UpgradeCommand.swift", "OSVAKit/Scan/Storage.swift"]
+        #expect(Self.lines(matching: /"(?:fixedVersion|upgradeCommand|commandInputs)"/, except: { path, _ in homes.contains(path) }) == [])
+        // "target" is read from Homebrew's cask records; written as a key, it is a command's version
+        #expect(Self.lines(matching: /\[\s*"target"\s*\]\s*=(?!=)|"target"\s*:/, except: { path, _ in homes.contains(path) }) == [])
+    }
+
     /// Only the command builders write a command: UpgradeCommand, its extensions for programs and tools and for Java
     /// runtimes, and BundleAdvice. Elsewhere an advice is withheld (`command: nil`) or passed on whole.
     @Test func onlyTheBuildersWriteACommand() {
