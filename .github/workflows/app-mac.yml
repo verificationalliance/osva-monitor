@@ -19,7 +19,7 @@ jobs:
   app:
     name: App tests (macOS)
     runs-on: [self-hosted, macOS, ARM64, osva-mac]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with:
@@ -34,3 +34,8 @@ jobs:
         run: cd core && lake build OSVACore:static
       - name: Swift tests
         run: cd app && swift test
+      - name: Build the app, with its link check
+        # An ad-hoc signed build, as anyone can make one: no keychain, no signing key, nothing published. It stops if
+        # the linker took a symbol the Lean archives define, or a name they import from the system, from other code
+        # (scripts/build-app.sh's header says what it checks).
+        run: ./scripts/build-app.sh
